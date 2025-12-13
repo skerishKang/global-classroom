@@ -12,6 +12,8 @@ import {
   backupToDrive, 
   exportToDocs, 
   downloadTranscriptLocally, 
+  listDriveSessions,
+  restoreDriveSession,
   listCourses,
   createCourseWork
 } from './utils/googleWorkspace';
@@ -127,6 +129,11 @@ export default function App() {
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [localHistoryPreview, setLocalHistoryPreview] = useState<ConversationItem[]>([]);
+  const [driveSessions, setDriveSessions] = useState<any[]>([]);
+  const [isLoadingDriveSessions, setIsLoadingDriveSessions] = useState(false);
+  const [selectedDriveSessionId, setSelectedDriveSessionId] = useState<string>('');
+  const [isRestoringDriveSession, setIsRestoringDriveSession] = useState(false);
+  const [driveRestoreMessage, setDriveRestoreMessage] = useState<string>('');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -511,7 +518,71 @@ export default function App() {
     } catch {
       setLocalHistoryPreview([]);
     }
+    setDriveRestoreMessage('');
+    setSelectedDriveSessionId('');
+
+    if (accessToken) {
+      setIsLoadingDriveSessions(true);
+      listDriveSessions(accessToken, 20)
+        .then((list) => {
+          setDriveSessions(list || []);
+        })
+        .catch((e) => {
+          console.error('Drive 세션 목록 조회 실패', e);
+          setDriveSessions([]);
+        })
+        .finally(() => {
+          setIsLoadingDriveSessions(false);
+        });
+    } else {
+      setDriveSessions([]);
+    }
     setIsHistoryModalOpen(true);
+  };
+
+  const handleRestoreFromDrive = async (includeAudio: boolean) => {
+    if (!accessToken) {
+      setIsLoginModalOpen(true);
+      return;
+    }
+    if (!selectedDriveSessionId) return;
+
+    setIsRestoringDriveSession(true);
+    setDriveRestoreMessage('복원 중...');
+    try {
+      const result = await restoreDriveSession(accessToken, selectedDriveSessionId, includeAudio);
+
+      if (result?.history) {
+        setHistory(result.history);
+      }
+
+      if (includeAudio) {
+        const voiceName = typeof result?.voiceName === 'string' ? result.voiceName : selectedVoice.name;
+        const ttsModel = typeof result?.ttsModel === 'string' ? result.ttsModel : MODEL_TTS;
+
+        const v = VOICE_OPTIONS.find(v => v.name === voiceName);
+        if (v) {
+          setSelectedVoice(v);
+        }
+
+        if (settings.audioCacheEnabled) {
+          for (const item of result.history || []) {
+            if (item.audioBase64) {
+              const cacheKey = `${item.id}:${voiceName}:${ttsModel}`;
+              await setCachedAudioBase64(cacheKey, item.audioBase64);
+            }
+          }
+        }
+      }
+
+      setDriveRestoreMessage(result?.message || '복원을 완료했습니다.');
+      setIsHistoryModalOpen(false);
+    } catch (e) {
+      console.error('Drive 복원 실패', e);
+      setDriveRestoreMessage('복원에 실패했습니다.');
+    } finally {
+      setIsRestoringDriveSession(false);
+    }
   };
 
   const handleLoadHistoryFromLocal = () => {
@@ -1297,50 +1368,122 @@ export default function App() {
 
             <div className="px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-between gap-2">
               <div className="text-xs text-gray-500">
-                저장된 항목: <span className="font-bold text-gray-800">{localHistoryPreview.length}</span>
+                Drive 세션: <span className="font-bold text-gray-800">{driveSessions.length}</span>
               </div>
 
               <div className="flex items-center gap-2">
                 <button
-                  onClick={handleLoadHistoryFromLocal}
-                  disabled={localHistoryPreview.length === 0}
+                  onClick={() => handleRestoreFromDrive(false)}
+                  disabled={!selectedDriveSessionId || isRestoringDriveSession}
                   className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-indigo-50 border-indigo-200 text-indigo-700 disabled:opacity-40"
                 >
-                  불러오기
+                  대화만 복원
                 </button>
 
                 <button
-                  onClick={handleClearLocalHistory}
-                  disabled={localHistoryPreview.length === 0}
+                  onClick={() => handleRestoreFromDrive(true)}
+                  disabled={!selectedDriveSessionId || isRestoringDriveSession}
                   className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-white border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
                 >
-                  삭제
+                  음성도 복원
                 </button>
               </div>
             </div>
 
+            {driveRestoreMessage && (
+              <div className="px-6 py-2 border-b border-gray-100 bg-white text-xs text-gray-500">
+                {isRestoringDriveSession ? (
+                  <span className="font-bold text-indigo-600">{driveRestoreMessage}</span>
+                ) : (
+                  <span>{driveRestoreMessage}</span>
+                )}
+              </div>
+            )}
+
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              {localHistoryPreview.length === 0 ? (
-                <div className="text-center py-10 text-gray-400 text-sm">
-                  저장된 히스토리가 없습니다.
-                </div>
+              {accessToken ? (
+                isLoadingDriveSessions ? (
+                  <div className="text-center py-8 text-gray-400 text-sm">Drive 세션을 불러오는 중...</div>
+                ) : driveSessions.length === 0 ? (
+                  <div className="text-center py-8 text-gray-400 text-sm">Drive에 저장된 세션이 없습니다.</div>
+                ) : (
+                  <div className="space-y-2">
+                    {driveSessions.map((s: any) => (
+                      <button
+                        key={s.folderId}
+                        onClick={() => setSelectedDriveSessionId(s.folderId)}
+                        className={`w-full text-left px-4 py-3 rounded-xl border transition-colors ${
+                          selectedDriveSessionId === s.folderId
+                            ? 'bg-indigo-50 border-indigo-200'
+                            : 'bg-white border-gray-100 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="min-w-0">
+                            <div className="text-sm font-bold text-gray-800 truncate">{s.folderName}</div>
+                            <div className="text-xs text-gray-400 truncate">{s.createdTime || ''}</div>
+                          </div>
+                          <a
+                            href={s.folderUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className="text-xs font-bold text-indigo-600 hover:text-indigo-800"
+                          >
+                            Drive 열기
+                          </a>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )
               ) : (
-                localHistoryPreview
-                  .slice()
-                  .reverse()
-                  .map((item) => (
-                    <div key={item.id} className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-gray-100 rounded-xl p-3 bg-white">
-                      <div className="text-sm text-gray-800 leading-relaxed">
-                        <div className="text-[10px] text-gray-400 font-bold mb-1">원문</div>
-                        <div className="whitespace-pre-wrap break-words">{item.original}</div>
-                      </div>
-                      <div className="text-sm text-indigo-900 leading-relaxed">
-                        <div className="text-[10px] text-gray-400 font-bold mb-1">번역</div>
-                        <div className="whitespace-pre-wrap break-words">{item.translated || '...'}</div>
-                      </div>
-                    </div>
-                  ))
+                <div className="text-center py-8 text-gray-400 text-sm">Drive 세션을 보려면 Google 로그인이 필요합니다.</div>
               )}
+
+              <div className="pt-4 mt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="text-xs text-gray-500">로컬 저장: <span className="font-bold text-gray-800">{localHistoryPreview.length}</span></div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleLoadHistoryFromLocal}
+                      disabled={localHistoryPreview.length === 0}
+                      className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-indigo-50 border-indigo-200 text-indigo-700 disabled:opacity-40"
+                    >
+                      불러오기
+                    </button>
+
+                    <button
+                      onClick={handleClearLocalHistory}
+                      disabled={localHistoryPreview.length === 0}
+                      className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-white border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                    >
+                      삭제
+                    </button>
+                  </div>
+                </div>
+
+                {localHistoryPreview.length === 0 ? (
+                  <div className="text-center py-6 text-gray-400 text-sm">저장된 로컬 히스토리가 없습니다.</div>
+                ) : (
+                  localHistoryPreview
+                    .slice()
+                    .reverse()
+                    .slice(0, 10)
+                    .map((item) => (
+                      <div key={item.id} className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-gray-100 rounded-xl p-3 bg-white mb-2">
+                        <div className="text-sm text-gray-800 leading-relaxed">
+                          <div className="text-[10px] text-gray-400 font-bold mb-1">원문</div>
+                          <div className="whitespace-pre-wrap break-words">{item.original}</div>
+                        </div>
+                        <div className="text-sm text-indigo-900 leading-relaxed">
+                          <div className="text-[10px] text-gray-400 font-bold mb-1">번역</div>
+                          <div className="whitespace-pre-wrap break-words">{item.translated || '...'}</div>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </div>
             </div>
           </div>
         </div>
