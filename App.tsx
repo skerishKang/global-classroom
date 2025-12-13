@@ -6,7 +6,7 @@ import {
   logOut, 
   signInAsGuest 
 } from './utils/firebase';
-import { loadHistory, saveHistory } from './utils/localStorage';
+import { loadHistory, saveHistory, clearHistory } from './utils/localStorage';
 import { 
   backupToDrive, 
   exportToDocs, 
@@ -117,6 +117,8 @@ export default function App() {
   const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
+  const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
+  const [localHistoryPreview, setLocalHistoryPreview] = useState<ConversationItem[]>([]);
   const [courses, setCourses] = useState<any[]>([]);
   const [isLoadingCourses, setIsLoadingCourses] = useState(false);
   
@@ -445,6 +447,34 @@ export default function App() {
     return null;
   };
 
+  const handleOpenHistory = () => {
+    try {
+      const data = loadHistory();
+      setLocalHistoryPreview(data);
+    } catch {
+      setLocalHistoryPreview([]);
+    }
+    setIsHistoryModalOpen(true);
+  };
+
+  const handleLoadHistoryFromLocal = () => {
+    setHistory(localHistoryPreview);
+    setIsHistoryModalOpen(false);
+  };
+
+  const handleClearLocalHistory = () => {
+    clearHistory();
+    setLocalHistoryPreview([]);
+  };
+
+  const handleOpenNewWindow = () => {
+    try {
+      window.open(window.location.href, '_blank');
+    } catch (e) {
+      console.error('Failed to open new window', e);
+    }
+  };
+
   const playTTS = async (text: string, id?: string): Promise<void> => {
     if (!text) return Promise.resolve();
     if (id) {
@@ -721,7 +751,27 @@ export default function App() {
                </div>
              )}
            </div>
-          
+
+           <button
+             onClick={handleOpenHistory}
+             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
+           >
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+             </svg>
+             <span className="hidden sm:inline">이전 히스토리</span>
+           </button>
+
+           <button
+             onClick={handleOpenNewWindow}
+             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
+           >
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3h7v7m0-7L10 14m-4 7h12a2 2 0 002-2V9a2 2 0 00-2-2h-3" />
+             </svg>
+             <span className="hidden sm:inline">새창</span>
+           </button>
+
            {/* AUTH BUTTON */}
            {user ? (
              <div className="flex items-center gap-2 bg-gray-50 rounded-full pl-1 pr-3 py-1 border border-gray-200 whitespace-nowrap">
@@ -1123,6 +1173,77 @@ export default function App() {
                 Cancel
               </button>
            </div>
+        </div>
+      )}
+
+      {/* --- 히스토리 모달 --- */}
+      {isHistoryModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[80vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                이전 히스토리
+              </h2>
+
+              <button
+                onClick={() => setIsHistoryModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600 p-1 bg-white rounded-full shadow-sm"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            <div className="px-6 py-3 border-b border-gray-100 bg-white flex items-center justify-between gap-2">
+              <div className="text-xs text-gray-500">
+                저장된 항목: <span className="font-bold text-gray-800">{localHistoryPreview.length}</span>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleLoadHistoryFromLocal}
+                  disabled={localHistoryPreview.length === 0}
+                  className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-indigo-50 border-indigo-200 text-indigo-700 disabled:opacity-40"
+                >
+                  불러오기
+                </button>
+
+                <button
+                  onClick={handleClearLocalHistory}
+                  disabled={localHistoryPreview.length === 0}
+                  className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-white border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
+                >
+                  삭제
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {localHistoryPreview.length === 0 ? (
+                <div className="text-center py-10 text-gray-400 text-sm">
+                  저장된 히스토리가 없습니다.
+                </div>
+              ) : (
+                localHistoryPreview
+                  .slice()
+                  .reverse()
+                  .map((item) => (
+                    <div key={item.id} className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-gray-100 rounded-xl p-3 bg-white">
+                      <div className="text-sm text-gray-800 leading-relaxed">
+                        <div className="text-[10px] text-gray-400 font-bold mb-1">원문</div>
+                        <div className="whitespace-pre-wrap break-words">{item.original}</div>
+                      </div>
+                      <div className="text-sm text-indigo-900 leading-relaxed">
+                        <div className="text-[10px] text-gray-400 font-bold mb-1">번역</div>
+                        <div className="whitespace-pre-wrap break-words">{item.translated || '...'}</div>
+                      </div>
+                    </div>
+                  ))
+              )}
+            </div>
+          </div>
         </div>
       )}
 
