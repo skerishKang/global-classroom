@@ -2,7 +2,7 @@ import { Language, TranslationMap, VoiceOption } from './types';
 
 // TODO: Replace with your actual Google Cloud OAuth 2.0 Client ID
 // Format: "1234567890-abcdefg.apps.googleusercontent.com"
-export const GOOGLE_CLIENT_ID = "322060753872-placeholder-client-id.apps.googleusercontent.com"; 
+export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || "";
 
 export const GOOGLE_SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
