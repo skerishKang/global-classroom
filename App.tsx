@@ -104,7 +104,13 @@ export default function App() {
   const [accessToken, setAccessToken] = useState<string | null>(null); 
   const [history, setHistory] = useState<ConversationItem[]>([]);
   const [currentTurnText, setCurrentTurnText] = useState('');
+  const currentTurnTextRef = useRef('');
   const historyRef = useRef<HTMLDivElement>(null);
+  const langInputRef = useRef<Language>(langInput);
+  const langOutputRef = useRef<Language>(langOutput);
+  const isLangAutoRef = useRef(true);
+
+  const [isOutputOnly, setIsOutputOnly] = useState(false);
 
   // --- Modals State ---
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
@@ -224,6 +230,14 @@ export default function App() {
       saveHistory(history);
     }
   }, [history]);
+
+  useEffect(() => {
+    langInputRef.current = langInput;
+  }, [langInput]);
+
+  useEffect(() => {
+    langOutputRef.current = langOutput;
+  }, [langOutput]);
 
   // Close export menu
   useEffect(() => {
@@ -419,6 +433,18 @@ export default function App() {
     return json as T;
   };
 
+  const detectLanguageCode = async (text: string): Promise<string | null> => {
+    try {
+      const data = await postApi<{ code: string; confidence: number }>('detect-language', { text });
+      if (data?.code && typeof data.confidence === 'number' && data.confidence >= 0.6) {
+        return data.code;
+      }
+    } catch (e) {
+      console.error('Language detection failed', e);
+    }
+    return null;
+  };
+
   const playTTS = async (text: string, id?: string): Promise<void> => {
     if (!text) return Promise.resolve();
     if (id) {
@@ -457,12 +483,12 @@ export default function App() {
     }
   };
 
-  const translateText = async (text: string, id: string) => {
+  const translateText = async (text: string, id: string, fromLang: Language, toLang: Language) => {
     try {
       const data = await postApi<{ translated: string }>('translate', {
         text,
-        from: langInput.name,
-        to: langOutput.name,
+        from: fromLang.name,
+        to: toLang.name,
         model: MODEL_TRANSLATE,
       });
       const translated = data.translated?.trim() || "";
@@ -561,25 +587,49 @@ export default function App() {
           onmessage: async (message: LiveServerMessage) => {
             const transcription = message.serverContent?.inputTranscription?.text;
             if (transcription) {
-              setCurrentTurnText(prev => prev + transcription);
+              setCurrentTurnText(prev => {
+                const next = prev + transcription;
+                currentTurnTextRef.current = next;
+                return next;
+              });
             }
 
             if (message.serverContent?.turnComplete) {
-              setCurrentTurnText(finalText => {
-                if (finalText.trim()) {
-                  const newItem: ConversationItem = {
-                    id: Date.now().toString(),
-                    original: finalText.trim(),
-                    translated: "",
-                    isTranslating: true,
-                    timestamp: Date.now()
-                  };
+              const finalText = currentTurnTextRef.current.trim();
+              currentTurnTextRef.current = '';
+              setCurrentTurnText('');
 
-                  setHistory(prev => [...prev, newItem]);
-                  translateText(newItem.original, newItem.id);
+              if (!finalText) return;
+
+              const curInput = langInputRef.current;
+              const curOutput = langOutputRef.current;
+
+              let fromLang = curInput;
+              let toLang = curOutput;
+
+              if (isLangAutoRef.current) {
+                const detectedCode = await detectLanguageCode(finalText);
+                if (detectedCode && detectedCode !== curInput.code) {
+                  const detectedLang = SUPPORTED_LANGUAGES.find(l => l.code === detectedCode);
+                  if (detectedLang) {
+                    fromLang = detectedLang;
+                    toLang = curInput;
+                    setLangInput(detectedLang);
+                    setLangOutput(curInput);
+                  }
                 }
-                return "";
-              });
+              }
+
+              const newItem: ConversationItem = {
+                id: Date.now().toString(),
+                original: finalText,
+                translated: "",
+                isTranslating: true,
+                timestamp: Date.now()
+              };
+
+              setHistory(prev => [...prev, newItem]);
+              translateText(newItem.original, newItem.id, fromLang, toLang);
             }
           },
           onclose: () => {
@@ -725,20 +775,33 @@ export default function App() {
             </select>
           </div>
 
-          {/* UI Language */}
-          <div className="flex items-center gap-1 bg-white rounded-full px-2 py-1.5 border border-gray-200 cursor-pointer hover:bg-gray-50 min-w-[70px]">
-            <GlobeIcon />
-            <select 
-              value={uiLangCode}
-              onChange={(e) => setUiLangCode(e.target.value)}
-              className="bg-transparent text-xs font-medium text-gray-600 outline-none cursor-pointer w-full"
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setIsOutputOnly(!isOutputOnly)}
+              className={`px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap ${
+                isOutputOnly
+                  ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                  : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+              }`}
             >
-              <option value="ko">한국어</option>
-              <option value="en">Eng</option>
-              <option value="ja">日本語</option>
-              <option value="zh">中文</option>
-              <option value="es">Esp</option>
-            </select>
+              출력만
+            </button>
+
+            {/* UI Language */}
+            <div className="flex items-center gap-1 bg-white rounded-full px-2 py-1.5 border border-gray-200 cursor-pointer hover:bg-gray-50 min-w-[70px]">
+              <GlobeIcon />
+              <select 
+                value={uiLangCode}
+                onChange={(e) => setUiLangCode(e.target.value)}
+                className="bg-transparent text-xs font-medium text-gray-600 outline-none cursor-pointer w-full"
+              >
+                <option value="ko">한국어</option>
+                <option value="en">Eng</option>
+                <option value="ja">日本語</option>
+                <option value="zh">中文</option>
+                <option value="es">Esp</option>
+              </select>
+            </div>
           </div>
         </div>
       </header>
@@ -754,6 +817,7 @@ export default function App() {
                  <select
                   value={langInput.code}
                   onChange={(e) => {
+                    isLangAutoRef.current = false;
                     const l = SUPPORTED_LANGUAGES.find(l => l.code === e.target.value);
                     if (l) setLangInput(l);
                   }}
@@ -776,6 +840,7 @@ export default function App() {
                  <select
                   value={langOutput.code}
                   onChange={(e) => {
+                    isLangAutoRef.current = false;
                     const l = SUPPORTED_LANGUAGES.find(l => l.code === e.target.value);
                     if (l) setLangOutput(l);
                   }}
@@ -818,61 +883,100 @@ export default function App() {
 
            <div className="flex flex-col gap-4">
              {history.map((item) => (
-               <div key={item.id} className="grid grid-cols-2 gap-4 items-stretch border-b border-gray-100 pb-4 last:border-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  
-                  {/* Left Column: Original Text */}
-                  <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm text-gray-800 leading-relaxed text-sm md:text-base">
-                    {item.original}
-                  </div>
-
-                  {/* Right Column: Translated Text */}
-                  <div 
-                    role={!item.isTranslating && !!item.translated ? 'button' : undefined}
-                    tabIndex={!item.isTranslating && !!item.translated ? 0 : undefined}
-                    onClick={() => {
-                      if (!item.isTranslating && item.translated) {
-                        playTTS(item.translated, item.id);
-                      }
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault();
-                        if (!item.isTranslating && item.translated) {
-                          playTTS(item.translated, item.id);
-                        }
-                      }
-                    }}
-                    className={`relative p-4 rounded-xl shadow-sm flex flex-col justify-between transition-colors ${
-                      item.isTranslating ? 'bg-gray-100 border border-gray-200' : 'bg-indigo-50 border border-indigo-100'
-                    } ${
-                      !item.isTranslating && item.translated ? 'cursor-pointer hover:bg-indigo-100 active:scale-[0.99]' : ''
-                    }`}
-                  >
+               isOutputOnly ? (
+                 <div key={item.id} className="border-b border-gray-100 pb-4 last:border-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                   <div 
+                     role={!item.isTranslating && !!item.translated ? 'button' : undefined}
+                     tabIndex={!item.isTranslating && !!item.translated ? 0 : undefined}
+                     onClick={() => {
+                       if (!item.isTranslating && item.translated) {
+                         playTTS(item.translated, item.id);
+                       }
+                     }}
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter' || e.key === ' ') {
+                         e.preventDefault();
+                         if (!item.isTranslating && item.translated) {
+                           playTTS(item.translated, item.id);
+                         }
+                       }
+                     }}
+                     className={`relative p-4 rounded-xl shadow-sm flex flex-col justify-between transition-colors ${
+                       item.isTranslating ? 'bg-gray-100 border border-gray-200' : 'bg-indigo-50 border border-indigo-100'
+                     } ${
+                       !item.isTranslating && item.translated ? 'cursor-pointer hover:bg-indigo-100 active:scale-[0.99]' : ''
+                     }`}
+                   >
                      {item.isTranslating ? (
-                        <div className="flex gap-1 h-6 items-center">
-                          <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
-                          <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div>
-                          <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div>
-                        </div>
+                       <div className="flex gap-1 h-6 items-center">
+                         <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                         <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div>
+                         <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div>
+                       </div>
                      ) : (
-                       <>
-                         <span className="text-indigo-900 font-medium leading-relaxed text-sm md:text-base">{item.translated}</span>
-                       </>
+                       <span className="text-indigo-900 font-medium leading-relaxed text-sm md:text-base">{item.translated}</span>
                      )}
-                  </div>
-               </div>
+                   </div>
+                 </div>
+               ) : (
+                 <div key={item.id} className="grid grid-cols-2 gap-4 items-stretch border-b border-gray-100 pb-4 last:border-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                   <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm text-gray-800 leading-relaxed text-sm md:text-base">
+                     {item.original}
+                   </div>
+                   <div 
+                     role={!item.isTranslating && !!item.translated ? 'button' : undefined}
+                     tabIndex={!item.isTranslating && !!item.translated ? 0 : undefined}
+                     onClick={() => {
+                       if (!item.isTranslating && item.translated) {
+                         playTTS(item.translated, item.id);
+                       }
+                     }}
+                     onKeyDown={(e) => {
+                       if (e.key === 'Enter' || e.key === ' ') {
+                         e.preventDefault();
+                         if (!item.isTranslating && item.translated) {
+                           playTTS(item.translated, item.id);
+                         }
+                       }
+                     }}
+                     className={`relative p-4 rounded-xl shadow-sm flex flex-col justify-between transition-colors ${
+                       item.isTranslating ? 'bg-gray-100 border border-gray-200' : 'bg-indigo-50 border border-indigo-100'
+                     } ${
+                       !item.isTranslating && item.translated ? 'cursor-pointer hover:bg-indigo-100 active:scale-[0.99]' : ''
+                     }`}
+                   >
+                     {item.isTranslating ? (
+                       <div className="flex gap-1 h-6 items-center">
+                         <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
+                         <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-75"></div>
+                         <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce delay-150"></div>
+                       </div>
+                     ) : (
+                       <span className="text-indigo-900 font-medium leading-relaxed text-sm md:text-base">{item.translated}</span>
+                     )}
+                   </div>
+                 </div>
+               )
              ))}
 
              {/* Live Transcription Placeholder (Left Side) */}
              {currentTurnText && (
-               <div className="grid grid-cols-2 gap-4 opacity-70">
-                  <div className="bg-gray-50 border border-gray-300 border-dashed p-4 rounded-xl text-gray-600 italic animate-pulse">
-                    {currentTurnText}
-                  </div>
-                  <div className="flex items-center justify-center text-gray-300 text-sm italic">
-                    ...
-                  </div>
-               </div>
+               isOutputOnly ? (
+                 <div className="opacity-70">
+                   <div className="flex items-center justify-center text-gray-300 text-sm italic border border-gray-200 border-dashed p-4 rounded-xl bg-white">
+                     ...
+                   </div>
+                 </div>
+               ) : (
+                 <div className="grid grid-cols-2 gap-4 opacity-70">
+                    <div className="bg-gray-50 border border-gray-300 border-dashed p-4 rounded-xl text-gray-600 italic animate-pulse">
+                      {currentTurnText}
+                    </div>
+                    <div className="flex items-center justify-center text-gray-300 text-sm italic">
+                      ...
+                    </div>
+                 </div>
+               )
              )}
            </div>
 
