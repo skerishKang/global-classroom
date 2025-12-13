@@ -826,9 +826,28 @@ export default function App() {
                   </div>
 
                   {/* Right Column: Translated Text */}
-                  <div className={`relative p-4 rounded-xl shadow-sm flex flex-col justify-between transition-colors ${
+                  <div 
+                    role={!item.isTranslating && !!item.translated ? 'button' : undefined}
+                    tabIndex={!item.isTranslating && !!item.translated ? 0 : undefined}
+                    onClick={() => {
+                      if (!item.isTranslating && item.translated) {
+                        playTTS(item.translated, item.id);
+                      }
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        if (!item.isTranslating && item.translated) {
+                          playTTS(item.translated, item.id);
+                        }
+                      }
+                    }}
+                    className={`relative p-4 rounded-xl shadow-sm flex flex-col justify-between transition-colors ${
                       item.isTranslating ? 'bg-gray-100 border border-gray-200' : 'bg-indigo-50 border border-indigo-100'
-                    }`}>
+                    } ${
+                      !item.isTranslating && item.translated ? 'cursor-pointer hover:bg-indigo-100 active:scale-[0.99]' : ''
+                    }`}
+                  >
                      {item.isTranslating ? (
                         <div className="flex gap-1 h-6 items-center">
                           <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></div>
@@ -838,12 +857,6 @@ export default function App() {
                      ) : (
                        <>
                          <span className="text-indigo-900 font-medium leading-relaxed text-sm md:text-base">{item.translated}</span>
-                         <button 
-                            onClick={() => playTTS(item.translated, item.id)}
-                            className="self-end mt-2 p-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-600 rounded-full transition-colors active:scale-95"
-                         >
-                           <SpeakerIcon />
-                         </button>
                        </>
                      )}
                   </div>
