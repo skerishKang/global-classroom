@@ -226,13 +226,23 @@ export default function App() {
   // --- Logic ---
   
   const handleLoginSelection = async (type: 'google' | 'guest') => {
+    console.log('Login selection:', type);
+    console.log('google object:', typeof google !== 'undefined' ? 'loaded' : 'not loaded');
+    console.log('tokenClientRef.current:', tokenClientRef.current ? 'initialized' : 'not initialized');
+
     if (type === 'google') {
-      if (tokenClientRef.current) {
-        // Trigger GIS flow
-        // Using requestAccessToken to get the token for Drive/Classroom
+      if (!tokenClientRef.current) {
+        alert("Google Auth가 아직 초기화되지 않았습니다. 페이지를 새로고침해주세요.");
+        console.error('TokenClient not initialized');
+        return;
+      }
+
+      try {
+        console.log('Requesting access token...');
         tokenClientRef.current.requestAccessToken();
-      } else {
-        alert("Google Auth is initializing... please wait.");
+      } catch (error) {
+        console.error('requestAccessToken failed:', error);
+        alert('Google 로그인 오류: ' + (error as Error).message);
       }
     } else {
       // Guest
