@@ -34,7 +34,7 @@ const MicIcon = () => <svg className="w-8 h-8" fill="none" stroke="currentColor"
 const MicOffIcon = () => <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.586 5.586a2 2 0 012.828 0l-.793.793-2.828-2.828.793-.793zM11 18.172l-6.586-6.586a2 2 0 002.828 2.828L11 18.172zm9.9-9.9l-6.586 6.586a2 2 0 01-2.828-2.828l6.586-6.586a2 2 0 012.828 2.828z" /><line x1="1" y1="1" x2="23" y2="23" strokeWidth={2} /></svg>;
 const CameraIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" /><circle cx="12" cy="13" r="3" /></svg>;
 const ArrowRightIcon = () => <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>;
-const SpeakerIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>;
+const SpeakerIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>;
 const PlayAllIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 const GlobeIcon = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 const ExportIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>;
@@ -87,8 +87,8 @@ export default function App() {
   // --- Translation Logic Settings ---
   const [langInput, setLangInput] = useState<Language>(SUPPORTED_LANGUAGES[0]); // Default: Korean
   const [langOutput, setLangOutput] = useState<Language>(SUPPORTED_LANGUAGES[1]); // Default: English
-  const [isAutoPlay, setIsAutoPlay] = useState(true);
-  const [isScrollLocked, setIsScrollLocked] = useState(false);
+  const [isAutoPlay, setIsAutoPlay] = useState(false);
+  const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICE_OPTIONS[0]);
 
   // --- Status & Media ---
@@ -627,20 +627,20 @@ export default function App() {
     <div className="h-full flex flex-col bg-slate-50 text-slate-900 font-sans overflow-hidden">
       
       {/* --- HEADER --- */}
-      <header className="px-5 py-3 bg-white border-b border-gray-100 flex flex-wrap sm:flex-nowrap justify-between items-center z-20 shadow-sm shrink-0 gap-3">
-        {/* Title & Logo */}
-        <div className="flex items-center gap-2">
-           <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-sm">
-             <GlobeIcon />
-           </div>
-           <div className="flex flex-col leading-tight">
-             <h1 className="font-bold text-sm sm:text-md text-slate-800 whitespace-nowrap">{t.appTitle}</h1>
-             <div className="text-[11px] text-slate-400 font-medium whitespace-nowrap hidden sm:block">{t.subtitle}</div>
-           </div>
-        </div>
+      <header className="px-5 py-3 bg-white border-b border-gray-100 flex flex-col z-20 shadow-sm shrink-0 gap-2">
+        <div className="flex items-center justify-between gap-3">
+          {/* Title & Logo */}
+          <div className="flex items-center gap-2">
+            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-sm">
+              <GlobeIcon />
+            </div>
+            <div className="flex flex-col leading-tight">
+              <h1 className="font-bold text-sm sm:text-md text-slate-800 whitespace-nowrap">{t.appTitle}</h1>
+              <div className="text-[11px] text-slate-400 font-medium whitespace-nowrap hidden sm:block">{t.subtitle}</div>
+            </div>
+          </div>
 
-        {/* Global Settings (Right Side) */}
-        <div className="flex items-center gap-2 sm:gap-3 flex-wrap sm:flex-nowrap justify-end flex-1">
+          <div className="flex items-center gap-2 sm:gap-3 justify-end">
 
            {/* Export Dropdown */}
            <div className="relative" ref={exportMenuRef}>
@@ -704,26 +704,29 @@ export default function App() {
            ) : (
              <div className="text-xs text-gray-400 whitespace-nowrap">Loading...</div>
            )}
+          </div>
+        </div>
 
-           {/* Voice Selector */}
-           <div className="flex items-center bg-gray-100 rounded-full px-3 py-1.5 border border-gray-200">
-             <span className="text-[10px] text-gray-500 font-bold mr-2 uppercase tracking-wide whitespace-nowrap">{t.voiceLabel}</span>
-             <select 
-               value={selectedVoice.name}
-               onChange={(e) => {
-                 const v = VOICE_OPTIONS.find(v => v.name === e.target.value);
-                 if (v) setSelectedVoice(v);
-               }}
-               className="bg-transparent text-xs font-bold text-indigo-600 outline-none cursor-pointer w-20"
-             >
-               {VOICE_OPTIONS.map(v => (
-                 <option key={v.name} value={v.name}>{v.label} ({v.gender})</option>
-               ))}
-             </select>
-           </div>
-           
-           {/* UI Language */}
-           <div className="flex items-center gap-1 bg-white rounded-full px-2 py-1.5 border border-gray-200 cursor-pointer hover:bg-gray-50 min-w-[70px]">
+        <div className="flex items-center justify-between gap-2">
+          {/* Voice Selector */}
+          <div className="flex items-center bg-gray-100 rounded-full px-3 py-1.5 border border-gray-200">
+            <span className="text-[10px] text-gray-500 font-bold mr-2 uppercase tracking-wide whitespace-nowrap">{t.voiceLabel}</span>
+            <select 
+              value={selectedVoice.name}
+              onChange={(e) => {
+                const v = VOICE_OPTIONS.find(v => v.name === e.target.value);
+                if (v) setSelectedVoice(v);
+              }}
+              className="bg-transparent text-xs font-bold text-indigo-600 outline-none cursor-pointer w-20"
+            >
+              {VOICE_OPTIONS.map(v => (
+                <option key={v.name} value={v.name}>{v.label} ({v.gender})</option>
+              ))}
+            </select>
+          </div>
+
+          {/* UI Language */}
+          <div className="flex items-center gap-1 bg-white rounded-full px-2 py-1.5 border border-gray-200 cursor-pointer hover:bg-gray-50 min-w-[70px]">
             <GlobeIcon />
             <select 
               value={uiLangCode}
@@ -867,17 +870,7 @@ export default function App() {
       {/* --- BOTTOM CONTROLS --- */}
       <div className="bg-white px-6 py-4 rounded-t-[2rem] shadow-[0_-5px_20px_rgba(0,0,0,0.05)] flex items-center justify-between z-30 shrink-0">
           
-          <div className="flex items-center gap-2">
-            <button 
-              onClick={playAll}
-              className="flex flex-col items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors w-16"
-            >
-              <div className="p-3 bg-gray-100 rounded-full">
-                <PlayAllIcon />
-              </div>
-              <span className="text-[10px] font-bold">{t.playAll}</span>
-            </button>
-
+          <div className="flex items-center gap-0">
             <button 
               onClick={() => setIsAutoPlay(!isAutoPlay)}
               className={`flex flex-col items-center gap-1 transition-colors w-16 ${
@@ -887,9 +880,31 @@ export default function App() {
               <div className={`p-3 rounded-full ${
                 isAutoPlay ? 'bg-indigo-100' : 'bg-gray-100'
               }`}>
-                <div className={`w-2 h-2 rounded-full ${isAutoPlay ? 'bg-indigo-500 animate-pulse' : 'bg-gray-300'}`}></div>
+                <SpeakerIcon />
               </div>
               <span className="text-[10px] font-bold">{t.autoPlay}</span>
+            </button>
+
+            <button 
+              onClick={() => setIsScrollLocked(!isScrollLocked)}
+              className={`flex flex-col items-center gap-1 transition-colors w-16 ${
+                !isScrollLocked ? 'text-indigo-600' : 'text-gray-500'
+              }`}
+            >
+              <div className={`p-3 rounded-full ${
+                !isScrollLocked ? 'bg-indigo-100' : 'bg-gray-100'
+              }`}>
+                {isScrollLocked ? (
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                  </svg>
+                ) : (
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                  </svg>
+                )}
+              </div>
+              <span className="text-[10px] font-bold">자동스크롤</span>
             </button>
           </div>
 
@@ -911,7 +926,17 @@ export default function App() {
             )}
           </button>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-0">
+            <button 
+              onClick={playAll}
+              className="flex flex-col items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors w-16"
+            >
+              <div className="p-3 bg-gray-100 rounded-full">
+                <PlayAllIcon />
+              </div>
+              <span className="text-[10px] font-bold">{t.playAll}</span>
+            </button>
+
             <button 
               onClick={() => setIsCameraOpen(true)}
               className="flex flex-col items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors w-16"
@@ -920,28 +945,6 @@ export default function App() {
                  <CameraIcon />
                </div>
                <span className="text-[10px] font-bold">{t.visionButton}</span>
-            </button>
-
-            <button 
-              onClick={() => setIsScrollLocked(!isScrollLocked)}
-              className={`flex flex-col items-center gap-1 transition-colors w-16 ${
-                isScrollLocked ? 'text-amber-600' : 'text-gray-500'
-              }`}
-            >
-              <div className={`p-3 rounded-full ${
-                isScrollLocked ? 'bg-amber-100' : 'bg-gray-100'
-              }`}>
-                {isScrollLocked ? (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                  </svg>
-                ) : (
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-                  </svg>
-                )}
-              </div>
-              <span className="text-[10px] font-bold">{isScrollLocked ? '고정됨' : '자동'}</span>
             </button>
           </div>
       </div>
