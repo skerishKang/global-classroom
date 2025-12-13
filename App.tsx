@@ -490,7 +490,7 @@ export default function App() {
         setStatus(ConnectionStatus.ERROR);
         return;
       }
-      const ai = new GoogleGenAI({ apiKey: tokenData.token });
+      const ai = new GoogleGenAI({ apiKey: tokenData.token, apiVersion: 'v1alpha' });
       
       inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
