@@ -366,7 +366,16 @@ export default function App() {
 
     try {
       if (type === 'drive') {
-        await backupToDrive(accessToken!, history);
+        const result = await backupToDrive(accessToken!, history, {
+          includeAudio: true,
+          generateMissingAudio: true,
+          voiceName: selectedVoice.name,
+          ttsModel: MODEL_TTS,
+        });
+
+        if (result?.folderUrl) {
+          window.open(result.folderUrl, '_blank');
+        }
         alert(`Drive: ${t.exportSuccess}`);
       } 
       else if (type === 'docs') {

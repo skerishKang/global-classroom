@@ -3,6 +3,26 @@ import { base64ToUint8Array } from './audioUtils';
 
 // --- Helpers ---
 
+type DriveBackupOptions = {
+  includeAudio?: boolean;
+  voiceName?: string;
+  ttsModel?: string;
+  generateMissingAudio?: boolean;
+};
+
+type DriveBackupResult = {
+  success: boolean;
+  message: string;
+  folderId: string;
+  folderUrl: string;
+  transcriptFileId?: string;
+  transcriptJsonFileId?: string;
+  manifestFileId?: string;
+  audioFolderId?: string;
+  audioUploadedCount: number;
+  audioFailedCount: number;
+};
+
 const getHeaders = (accessToken: string, contentType: string = 'application/json') => {
   return {
     'Authorization': `Bearer ${accessToken}`,
@@ -102,7 +122,7 @@ const uploadFile = async (name: string, mimeType: string, data: Blob, accessToke
   form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
   form.append('file', data);
 
-  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink,webContentLink', {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${accessToken}`
@@ -113,24 +133,183 @@ const uploadFile = async (name: string, mimeType: string, data: Blob, accessToke
   return await res.json();
 };
 
-export const backupToDrive = async (accessToken: string, history: ConversationItem[]) => {
+const pcm16Base64ToWavBlob = (base64Pcm16: string, sampleRate = 24000, numChannels = 1): Blob => {
+  const pcmBytes = base64ToUint8Array(base64Pcm16);
+
+  const bytesPerSample = 2;
+  const blockAlign = numChannels * bytesPerSample;
+  const byteRate = sampleRate * blockAlign;
+  const dataSize = pcmBytes.byteLength;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+
+  const writeString = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) {
+      view.setUint8(offset + i, s.charCodeAt(i));
+    }
+  };
+
+  writeString(0, 'RIFF');
+  view.setUint32(4, 36 + dataSize, true);
+  writeString(8, 'WAVE');
+  writeString(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, numChannels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, byteRate, true);
+  view.setUint16(32, blockAlign, true);
+  view.setUint16(34, 16, true);
+  writeString(36, 'data');
+  view.setUint32(40, dataSize, true);
+
+  new Uint8Array(buffer, 44).set(pcmBytes);
+  return new Blob([buffer], { type: 'audio/wav' });
+};
+
+const generateTtsBase64 = async (text: string, voiceName: string, model: string): Promise<string | null> => {
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voiceName, model }),
+    });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error((json as any)?.error || 'TTS 요청에 실패했습니다.');
+    }
+    return typeof (json as any).audioBase64 === 'string' ? (json as any).audioBase64 : null;
+  } catch (e) {
+    console.error('TTS 생성 실패', e);
+    return null;
+  }
+};
+
+export const backupToDrive = async (accessToken: string, history: ConversationItem[], options?: DriveBackupOptions): Promise<DriveBackupResult> => {
   try {
     const today = new Date().toISOString().split('T')[0];
-    const rootId = await findOrCreateFolder("Global Classroom", accessToken);
+    const now = new Date();
+    const sessionName = `Session_${now.toISOString().replace(/[:.]/g, '-')}`;
+    const rootId = await findOrCreateFolder('Global Classroom', accessToken);
     const dateFolderId = await findOrCreateFolder(today, accessToken, rootId);
+    const sessionFolderId = await findOrCreateFolder(sessionName, accessToken, dateFolderId);
 
-    let textContent = "Global Classroom - Translation Log\n";
-    textContent += `Date: ${today}\n\n`;
+    const includeAudio = options?.includeAudio !== false;
+    const generateMissingAudio = options?.generateMissingAudio !== false;
+    const voiceName = options?.voiceName || 'Kore';
+    const ttsModel = options?.ttsModel || 'gemini-2.5-flash-preview-tts';
+
+    const folderUrl = `https://drive.google.com/drive/folders/${sessionFolderId}`;
+
+    const transcript = {
+      app: 'Global Classroom',
+      createdAt: now.toISOString(),
+      date: today,
+      history: history.map(({ audioBase64, ...rest }) => rest),
+    };
+
+    let textContent = 'Global Classroom - Translation Log\n';
+    textContent += `Date: ${today}\n`;
+    textContent += `Session: ${sessionName}\n\n`;
     history.forEach((item) => {
       textContent += `[${new Date(item.timestamp).toLocaleTimeString()}]\n`;
       textContent += `Original: ${item.original}\n`;
       textContent += `Translated: ${item.translated}\n\n`;
     });
-    
-    const textBlob = new Blob([textContent], { type: 'text/plain' });
-    await uploadFile(`Transcript_${Date.now()}.txt`, 'text/plain', textBlob, accessToken, dateFolderId);
 
-    return { success: true, message: "Backup complete." };
+    const transcriptBlob = new Blob([textContent], { type: 'text/plain' });
+    const transcriptJsonBlob = new Blob([JSON.stringify(transcript, null, 2)], { type: 'application/json' });
+
+    const transcriptRes = await uploadFile('transcript.txt', 'text/plain', transcriptBlob, accessToken, sessionFolderId);
+    const transcriptJsonRes = await uploadFile('transcript.json', 'application/json', transcriptJsonBlob, accessToken, sessionFolderId);
+
+    let audioFolderId: string | undefined;
+    if (includeAudio) {
+      audioFolderId = await findOrCreateFolder('audio', accessToken, sessionFolderId);
+    }
+
+    let audioUploadedCount = 0;
+    let audioFailedCount = 0;
+
+    const manifestItems: Array<any> = [];
+
+    for (let i = 0; i < history.length; i++) {
+      const item = history[i];
+      const manifestItem: any = {
+        id: item.id,
+        timestamp: item.timestamp,
+        original: item.original,
+        translated: item.translated,
+      };
+
+      if (includeAudio && audioFolderId && item.translated) {
+        const order = String(i + 1).padStart(4, '0');
+        const fileName = `${order}_${item.id}.wav`;
+
+        let audioBase64 = item.audioBase64;
+        if (!audioBase64 && generateMissingAudio) {
+          audioBase64 = await generateTtsBase64(item.translated, voiceName, ttsModel);
+        }
+
+        if (audioBase64) {
+          try {
+            const wavBlob = pcm16Base64ToWavBlob(audioBase64, 24000, 1);
+            const uploadRes = await uploadFile(fileName, 'audio/wav', wavBlob, accessToken, audioFolderId);
+            manifestItem.audio = {
+              fileId: uploadRes?.id,
+              fileName,
+              mimeType: 'audio/wav',
+              voiceName,
+              ttsModel,
+              sampleRate: 24000,
+              channels: 1,
+            };
+            audioUploadedCount += 1;
+          } catch (e) {
+            console.error('Drive 오디오 업로드 실패', e);
+            audioFailedCount += 1;
+          }
+        } else {
+          manifestItem.audio = {
+            missing: true,
+            voiceName,
+            ttsModel,
+          };
+          audioFailedCount += 1;
+        }
+      }
+
+      manifestItems.push(manifestItem);
+    }
+
+    const manifest = {
+      app: 'Global Classroom',
+      createdAt: now.toISOString(),
+      date: today,
+      sessionName,
+      folderId: sessionFolderId,
+      folderUrl,
+      includeAudio,
+      voiceName,
+      ttsModel,
+      items: manifestItems,
+    };
+
+    const manifestBlob = new Blob([JSON.stringify(manifest, null, 2)], { type: 'application/json' });
+    const manifestRes = await uploadFile('manifest.json', 'application/json', manifestBlob, accessToken, sessionFolderId);
+
+    return {
+      success: true,
+      message: 'Backup complete.',
+      folderId: sessionFolderId,
+      folderUrl,
+      transcriptFileId: transcriptRes?.id,
+      transcriptJsonFileId: transcriptJsonRes?.id,
+      manifestFileId: manifestRes?.id,
+      audioFolderId,
+      audioUploadedCount,
+      audioFailedCount,
+    };
 
   } catch (error) {
     console.error("Drive Backup Error", error);
