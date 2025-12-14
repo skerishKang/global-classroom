@@ -28,7 +28,7 @@ import {
   GOOGLE_CLIENT_ID,
   GOOGLE_SCOPES
 } from './constants';
-import { createPcmBlob, decodeAudioData, base64ToUint8Array } from './utils/audioUtils';
+import { createPcmBlob, decodeAudioData, base64ToUint8Array, arrayBufferToBase64 } from './utils/audioUtils';
 import Visualizer from './components/Visualizer';
 import CameraView from './components/CameraView';
 
@@ -578,7 +578,9 @@ export default function App() {
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
-      throw new Error((json as any)?.error || '요청에 실패했습니다.');
+      const errorMessage = (json as any)?.error || '요청에 실패했습니다.';
+      const detailMessage = (json as any)?.detail;
+      throw new Error(detailMessage ? `${errorMessage} (${detailMessage})` : errorMessage);
     }
     return json as T;
   };
@@ -728,8 +730,69 @@ export default function App() {
     setHistory([]);
   };
 
-  const playTTS = async (text: string, id?: string): Promise<void> => {
-    if (!text) return Promise.resolve();
+  const splitTextForTts = (text: string, maxLen: number): string[] => {
+    const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!normalized) return [];
+    if (normalized.length <= maxLen) return [normalized];
+
+    const separators = new Set(['.', '!', '?', '。', '！', '？', '\n']);
+    const sentences: string[] = [];
+    let current = '';
+    for (let i = 0; i < normalized.length; i++) {
+      const ch = normalized[i];
+      current += ch;
+      if (separators.has(ch)) {
+        const s = current.trim();
+        if (s) sentences.push(s);
+        current = '';
+      }
+    }
+    if (current.trim()) sentences.push(current.trim());
+
+    const chunks: string[] = [];
+    let buf = '';
+
+    const pushHardSplit = (s: string) => {
+      for (let i = 0; i < s.length; i += maxLen) {
+        const part = s.slice(i, i + maxLen).trim();
+        if (part) chunks.push(part);
+      }
+    };
+
+    for (const s of sentences) {
+      if (!buf) {
+        if (s.length <= maxLen) {
+          buf = s;
+        } else {
+          pushHardSplit(s);
+          buf = '';
+        }
+        continue;
+      }
+
+      const next = `${buf} ${s}`;
+      if (next.length <= maxLen) {
+        buf = next;
+        continue;
+      }
+
+      chunks.push(buf);
+      if (s.length <= maxLen) {
+        buf = s;
+      } else {
+        pushHardSplit(s);
+        buf = '';
+      }
+    }
+
+    if (buf) chunks.push(buf);
+    return chunks;
+  };
+
+  const playTTS = async (text: string, id?: string, notifyOnError: boolean = false): Promise<void> => {
+    const normalized = String(text || '').trim();
+    if (!normalized) return Promise.resolve();
+
     const cacheKey = id ? `${id}:${selectedVoice.name}:${MODEL_TTS}` : null;
     if (id) {
       const item = history.find(i => i.id === id);
@@ -746,26 +809,53 @@ export default function App() {
         return playAudioFromBase64(cached);
       }
     }
+
+    const MAX_TTS_CHARS = 200;
+    const chunks = splitTextForTts(normalized, MAX_TTS_CHARS);
+    if (chunks.length === 0) return Promise.resolve();
+
     try {
-      const data = await postApi<{ audioBase64: string }>('tts', {
-        text,
-        voiceName: selectedVoice.name,
-        model: MODEL_TTS,
-      });
-      const base64Audio = data.audioBase64;
-      if (base64Audio) {
-        if (id) {
-          setHistory(prev => prev.map(item => 
-             item.id === id ? { ...item, audioBase64: base64Audio } : item
-          ));
-          if (cacheKey && settings.audioCacheEnabled) {
-            await setCachedAudioBase64(cacheKey, base64Audio);
-          }
+      const pcmChunks: Uint8Array[] = [];
+
+      for (const chunk of chunks) {
+        const data = await postApi<{ audioBase64: string }>('tts', {
+          text: chunk,
+          voiceName: selectedVoice.name,
+          model: MODEL_TTS,
+        });
+
+        const base64Audio = data.audioBase64;
+        if (!base64Audio) {
+          throw new Error('TTS 오디오 생성 결과가 비어있습니다.');
         }
-        return playAudioFromBase64(base64Audio);
+
+        pcmChunks.push(base64ToUint8Array(base64Audio));
+        await playAudioFromBase64(base64Audio);
+      }
+
+      if (id) {
+        const totalLen = pcmChunks.reduce((sum, x) => sum + x.byteLength, 0);
+        const merged = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const x of pcmChunks) {
+          merged.set(x, offset);
+          offset += x.byteLength;
+        }
+        const mergedBase64 = arrayBufferToBase64(merged.buffer);
+
+        setHistory(prev => prev.map(item => 
+           item.id === id ? { ...item, audioBase64: mergedBase64 } : item
+        ));
+        if (cacheKey && settings.audioCacheEnabled) {
+          await setCachedAudioBase64(cacheKey, mergedBase64);
+        }
       }
     } catch (e) {
       console.error("TTS failed", e);
+      if (notifyOnError) {
+        const msg = e instanceof Error ? e.message : String(e);
+        alert(`TTS 실패: ${msg}`);
+      }
     }
     return Promise.resolve();
   };
@@ -1233,14 +1323,14 @@ export default function App() {
                      tabIndex={!item.isTranslating && !!item.translated ? 0 : undefined}
                      onClick={() => {
                        if (!item.isTranslating && item.translated) {
-                         playTTS(item.translated, item.id);
+                         playTTS(item.translated, item.id, true);
                        }
                      }}
                      onKeyDown={(e) => {
                        if (e.key === 'Enter' || e.key === ' ') {
                          e.preventDefault();
                          if (!item.isTranslating && item.translated) {
-                           playTTS(item.translated, item.id);
+                           playTTS(item.translated, item.id, true);
                          }
                        }
                      }}
