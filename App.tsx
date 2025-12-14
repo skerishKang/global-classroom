@@ -6,7 +6,7 @@ import {
   logOut, 
   signInAsGuest 
 } from './utils/firebase';
-import { loadHistory, saveHistory, clearHistory } from './utils/localStorage';
+import { loadSessions, saveSessions, clearSessions } from './utils/localStorage';
 import { getCachedAudioBase64, setCachedAudioBase64, clearCachedAudio } from './utils/idbAudioCache';
 import { 
   backupToDrive, 
@@ -17,7 +17,7 @@ import {
   listCourses,
   createCourseWork
 } from './utils/googleWorkspace';
-import { Language, ConnectionStatus, VoiceOption, ConversationItem } from './types';
+import { Language, ConnectionStatus, VoiceOption, ConversationItem, ConversationSession } from './types';
 import { 
   SUPPORTED_LANGUAGES, 
   MODEL_LIVE, 
@@ -113,12 +113,16 @@ export default function App() {
   const [user, setUser] = useState<User | any | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null); 
   const [history, setHistory] = useState<ConversationItem[]>([]);
+  const [sessions, setSessions] = useState<ConversationSession[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string>('');
+  const [isSessionsReady, setIsSessionsReady] = useState(false);
   const [currentTurnText, setCurrentTurnText] = useState('');
   const currentTurnTextRef = useRef('');
   const historyRef = useRef<HTMLDivElement>(null);
   const langInputRef = useRef<Language>(langInput);
   const langOutputRef = useRef<Language>(langOutput);
   const isLangAutoRef = useRef(true);
+  const isHydratingHistoryRef = useRef(false);
 
   const [isOutputOnly, setIsOutputOnly] = useState(false);
 
@@ -128,7 +132,8 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
-  const [localHistoryPreview, setLocalHistoryPreview] = useState<ConversationItem[]>([]);
+  const [localSessionsPreview, setLocalSessionsPreview] = useState<ConversationSession[]>([]);
+  const [selectedLocalSessionId, setSelectedLocalSessionId] = useState<string>('');
   const [driveSessions, setDriveSessions] = useState<any[]>([]);
   const [isLoadingDriveSessions, setIsLoadingDriveSessions] = useState(false);
   const [selectedDriveSessionId, setSelectedDriveSessionId] = useState<string>('');
@@ -164,6 +169,53 @@ export default function App() {
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const tokenClientRef = useRef<any>(null); // GIS Token Client
+
+  useEffect(() => {
+    try {
+      const loaded = loadSessions();
+      if (loaded.length === 0) {
+        const now = Date.now();
+        const initial: ConversationSession = {
+          id: `local_${now}`,
+          createdAt: now,
+          updatedAt: now,
+          items: [],
+          title: '새 대화',
+        };
+        setSessions([initial]);
+        setCurrentSessionId(initial.id);
+        isHydratingHistoryRef.current = true;
+        setHistory([]);
+      } else {
+        const latest = loaded.reduce((acc, cur) => {
+          const a = typeof acc.updatedAt === 'number' ? acc.updatedAt : acc.createdAt;
+          const b = typeof cur.updatedAt === 'number' ? cur.updatedAt : cur.createdAt;
+          return b > a ? cur : acc;
+        }, loaded[0]);
+
+        setSessions(loaded);
+        setCurrentSessionId(latest.id);
+        isHydratingHistoryRef.current = true;
+        setHistory([...(latest.items || [])]);
+      }
+    } catch (e) {
+      console.error('로컬 세션 로드 실패', e);
+      const now = Date.now();
+      const initial: ConversationSession = {
+        id: `local_${now}`,
+        createdAt: now,
+        updatedAt: now,
+        items: [],
+        title: '새 대화',
+      };
+      setSessions([initial]);
+      setCurrentSessionId(initial.id);
+      isHydratingHistoryRef.current = true;
+      setHistory([]);
+    } finally {
+      setIsSessionsReady(true);
+    }
+  }, []);
 
   // 1. Initialize Auth on Mount
   useEffect(() => {
@@ -247,24 +299,56 @@ export default function App() {
       if (!accessToken) {
          setUser(firebaseUser);
       }
-      
-      if (firebaseUser) {
-        const localData = loadHistory();
-        setHistory(localData);
-      } else if (!accessToken) {
-        // Only clear if neither auth is active
-        setHistory([]); 
-      }
     });
     return () => unsubscribe();
   }, [accessToken]);
 
   // 3. Save to Local Storage
   useEffect(() => {
-    if (history.length > 0) {
-      saveHistory(history);
+    if (!isSessionsReady) return;
+    if (!currentSessionId) return;
+    if (isHydratingHistoryRef.current) {
+      isHydratingHistoryRef.current = false;
+      return;
     }
-  }, [history]);
+
+    const now = Date.now();
+    const titleCandidate = history.length > 0
+      ? String(history[0].original || '').trim().slice(0, 24)
+      : undefined;
+
+    setSessions((prev) => {
+      const idx = prev.findIndex((s) => s.id === currentSessionId);
+      if (idx >= 0) {
+        const prevSession = prev[idx];
+        const nextTitle = prevSession.title || titleCandidate || '새 대화';
+        const nextSession: ConversationSession = {
+          ...prevSession,
+          updatedAt: now,
+          items: history,
+          title: nextTitle,
+        };
+        const next = prev.slice();
+        next[idx] = nextSession;
+        return next;
+      }
+
+      const nextTitle = titleCandidate || '새 대화';
+      const newSession: ConversationSession = {
+        id: currentSessionId,
+        createdAt: now,
+        updatedAt: now,
+        items: history,
+        title: nextTitle,
+      };
+      return [newSession, ...prev];
+    });
+  }, [history, currentSessionId, isSessionsReady]);
+
+  useEffect(() => {
+    if (!isSessionsReady) return;
+    saveSessions(sessions);
+  }, [sessions, isSessionsReady]);
 
   useEffect(() => {
     langInputRef.current = langInput;
@@ -512,12 +596,10 @@ export default function App() {
   };
 
   const handleOpenHistory = () => {
-    try {
-      const data = loadHistory();
-      setLocalHistoryPreview(data);
-    } catch {
-      setLocalHistoryPreview([]);
-    }
+    const data = sessions;
+    setLocalSessionsPreview(data);
+    const fallbackId = data.length > 0 ? data[0].id : '';
+    setSelectedLocalSessionId(currentSessionId || fallbackId);
     setDriveRestoreMessage('');
     setSelectedDriveSessionId('');
 
@@ -553,6 +635,18 @@ export default function App() {
       const result = await restoreDriveSession(accessToken, selectedDriveSessionId, includeAudio);
 
       if (result?.history) {
+        const now = Date.now();
+        const newId = `drive_${now}`;
+        const newSession: ConversationSession = {
+          id: newId,
+          createdAt: now,
+          updatedAt: now,
+          items: result.history,
+          title: result.sessionName || (result.history[0]?.original ? String(result.history[0].original).slice(0, 24) : 'Drive 세션'),
+        };
+        setSessions((prev) => [newSession, ...prev]);
+        setCurrentSessionId(newId);
+        isHydratingHistoryRef.current = true;
         setHistory(result.history);
       }
 
@@ -585,23 +679,53 @@ export default function App() {
     }
   };
 
-  const handleLoadHistoryFromLocal = () => {
-    setHistory(localHistoryPreview);
+  const handleLoadSessionFromLocal = () => {
+    if (!selectedLocalSessionId) return;
+    const target = localSessionsPreview.find((s) => s.id === selectedLocalSessionId);
+    if (!target) return;
+    setCurrentSessionId(target.id);
+    isHydratingHistoryRef.current = true;
+    setHistory([...(target.items || [])]);
     setIsHistoryModalOpen(false);
   };
 
-  const handleClearLocalHistory = () => {
-    clearHistory();
-    setLocalHistoryPreview([]);
+  const handleClearLocalSessions = () => {
+    clearSessions();
+    setLocalSessionsPreview([]);
+    setSelectedLocalSessionId('');
     clearCachedAudio();
+
+    const now = Date.now();
+    const initial: ConversationSession = {
+      id: `local_${now}`,
+      createdAt: now,
+      updatedAt: now,
+      items: [],
+      title: '새 대화',
+    };
+    setSessions([initial]);
+    setCurrentSessionId(initial.id);
+    isHydratingHistoryRef.current = true;
+    setHistory([]);
   };
 
-  const handleOpenNewWindow = () => {
-    try {
-      window.open(window.location.href, '_blank');
-    } catch (e) {
-      console.error('Failed to open new window', e);
-    }
+  const handleNewConversation = () => {
+    const now = Date.now();
+    const newId = `local_${now}`;
+    const newSession: ConversationSession = {
+      id: newId,
+      createdAt: now,
+      updatedAt: now,
+      items: [],
+      title: '새 대화',
+    };
+    setSessions((prev) => [newSession, ...prev]);
+    setCurrentSessionId(newId);
+    setSelectedLocalSessionId(newId);
+    currentTurnTextRef.current = '';
+    setCurrentTurnText('');
+    isHydratingHistoryRef.current = true;
+    setHistory([]);
   };
 
   const playTTS = async (text: string, id?: string): Promise<void> => {
@@ -832,7 +956,6 @@ export default function App() {
        setStatus(ConnectionStatus.DISCONNECTED);
        setIsMicOn(false);
     } else {
-      if (!user) setHistory([]); 
       connectToGemini();
     }
   };
@@ -864,6 +987,26 @@ export default function App() {
 
           <div className="flex items-center gap-2 sm:gap-3 justify-end">
 
+           <button
+             onClick={handleNewConversation}
+             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
+           >
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+             </svg>
+             <span className="hidden sm:inline">새 대화</span>
+           </button>
+
+           <button
+             onClick={handleOpenHistory}
+             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
+           >
+             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+             </svg>
+             <span className="hidden sm:inline">이전 히스토리</span>
+           </button>
+
            {/* Export Dropdown */}
            <div className="relative" ref={exportMenuRef}>
              <button 
@@ -893,26 +1036,6 @@ export default function App() {
                </div>
              )}
            </div>
-
-           <button
-             onClick={handleOpenHistory}
-             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
-           >
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-             </svg>
-             <span className="hidden sm:inline">이전 히스토리</span>
-           </button>
-
-           <button
-             onClick={handleOpenNewWindow}
-             className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
-           >
-             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 3h7v7m0-7L10 14m-4 7h12a2 2 0 002-2V9a2 2 0 00-2-2h-3" />
-             </svg>
-             <span className="hidden sm:inline">새창</span>
-           </button>
 
            {/* AUTH BUTTON */}
            {user ? (
@@ -1443,19 +1566,19 @@ export default function App() {
 
               <div className="pt-4 mt-4 border-t border-gray-100">
                 <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="text-xs text-gray-500">로컬 저장: <span className="font-bold text-gray-800">{localHistoryPreview.length}</span></div>
+                  <div className="text-xs text-gray-500">로컬 세션: <span className="font-bold text-gray-800">{localSessionsPreview.length}</span></div>
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={handleLoadHistoryFromLocal}
-                      disabled={localHistoryPreview.length === 0}
+                      onClick={handleLoadSessionFromLocal}
+                      disabled={!selectedLocalSessionId || localSessionsPreview.length === 0}
                       className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-indigo-50 border-indigo-200 text-indigo-700 disabled:opacity-40"
                     >
                       불러오기
                     </button>
 
                     <button
-                      onClick={handleClearLocalHistory}
-                      disabled={localHistoryPreview.length === 0}
+                      onClick={handleClearLocalSessions}
+                      disabled={localSessionsPreview.length === 0}
                       className="px-3 py-1.5 rounded-full text-xs font-bold border transition-colors whitespace-nowrap bg-white border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-40"
                     >
                       삭제
@@ -1463,25 +1586,36 @@ export default function App() {
                   </div>
                 </div>
 
-                {localHistoryPreview.length === 0 ? (
-                  <div className="text-center py-6 text-gray-400 text-sm">저장된 로컬 히스토리가 없습니다.</div>
+                {localSessionsPreview.length === 0 ? (
+                  <div className="text-center py-6 text-gray-400 text-sm">저장된 로컬 세션이 없습니다.</div>
                 ) : (
-                  localHistoryPreview
-                    .slice()
-                    .reverse()
-                    .slice(0, 10)
-                    .map((item) => (
-                      <div key={item.id} className="grid grid-cols-1 sm:grid-cols-2 gap-3 border border-gray-100 rounded-xl p-3 bg-white mb-2">
-                        <div className="text-sm text-gray-800 leading-relaxed">
-                          <div className="text-[10px] text-gray-400 font-bold mb-1">원문</div>
-                          <div className="whitespace-pre-wrap break-words">{item.original}</div>
-                        </div>
-                        <div className="text-sm text-indigo-900 leading-relaxed">
-                          <div className="text-[10px] text-gray-400 font-bold mb-1">번역</div>
-                          <div className="whitespace-pre-wrap break-words">{item.translated || '...'}</div>
-                        </div>
-                      </div>
-                    ))
+                  <div className="space-y-2">
+                    {localSessionsPreview
+                      .slice()
+                      .sort((a, b) => Number(b.updatedAt || b.createdAt) - Number(a.updatedAt || a.createdAt))
+                      .slice(0, 20)
+                      .map((s) => (
+                        <button
+                          key={s.id}
+                          onClick={() => setSelectedLocalSessionId(s.id)}
+                          className={`w-full text-left px-4 py-3 rounded-xl border transition-colors ${
+                            selectedLocalSessionId === s.id
+                              ? 'bg-indigo-50 border-indigo-200'
+                              : 'bg-white border-gray-100 hover:bg-gray-50'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-gray-800 truncate">{s.title || '대화'}</div>
+                              <div className="text-xs text-gray-400 truncate">
+                                {new Date(Number(s.updatedAt || s.createdAt)).toLocaleString()} · {Array.isArray(s.items) ? s.items.length : 0}개
+                              </div>
+                            </div>
+                            <div className="text-xs font-bold text-gray-400">{selectedLocalSessionId === s.id ? '선택됨' : ''}</div>
+                          </div>
+                        </button>
+                      ))}
+                  </div>
                 )}
               </div>
             </div>

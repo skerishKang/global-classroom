@@ -31,6 +31,14 @@ export interface ConversationItem {
   audioUrl?: string; // Firebase Storage URL
 }
 
+export interface ConversationSession {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  items: ConversationItem[];
+  title?: string;
+}
+
 export interface VoiceOption {
   name: string;
   label: string;
