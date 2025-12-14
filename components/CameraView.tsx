@@ -17,6 +17,47 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<VisionResult | null>(null);
 
+  const blobToBase64Data = async (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+        resolve(dataUrl.split(',')[1] || '');
+      };
+      reader.onerror = () => reject(reader.error || new Error('이미지 변환에 실패했습니다.'));
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const captureJpegBase64 = async (): Promise<string> => {
+    if (!videoRef.current || !canvasRef.current) return '';
+
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+    if (!context) return '';
+
+    const srcW = video.videoWidth;
+    const srcH = video.videoHeight;
+    if (!srcW || !srcH) return '';
+
+    const MAX_DIMENSION = 1280;
+    const scale = Math.min(1, MAX_DIMENSION / Math.max(srcW, srcH));
+    const dstW = Math.max(1, Math.round(srcW * scale));
+    const dstH = Math.max(1, Math.round(srcH * scale));
+
+    canvas.width = dstW;
+    canvas.height = dstH;
+    context.drawImage(video, 0, 0, dstW, dstH);
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.72);
+    });
+    if (!blob) return '';
+
+    return blobToBase64Data(blob);
+  };
+
   const postApi = async <T,>(path: string, payload: unknown): Promise<T> => {
     const res = await fetch(`/api/${path}`, {
       method: 'POST',
@@ -43,7 +84,11 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
   const startCamera = async () => {
     try {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' }
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
+        }
       });
       setStream(mediaStream);
       if (videoRef.current) {
@@ -66,14 +111,19 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
     if (!videoRef.current || !canvasRef.current) return;
 
     setIsProcessing(true);
-    const context = canvasRef.current.getContext('2d');
-    if (context) {
-      canvasRef.current.width = videoRef.current.videoWidth;
-      canvasRef.current.height = videoRef.current.videoHeight;
-      context.drawImage(videoRef.current, 0, 0);
-
-      const base64Data = canvasRef.current.toDataURL('image/jpeg', 0.8).split(',')[1];
+    try {
+      const base64Data = await captureJpegBase64();
+      if (!base64Data) {
+        throw new Error('이미지 캡처에 실패했습니다.');
+      }
       await analyzeImage(base64Data);
+    } catch (error) {
+      console.error('Capture Error:', error);
+      setResult({
+        originalText: t.visionError,
+        translatedText: t.retry
+      });
+      setIsProcessing(false);
     }
   };
 
