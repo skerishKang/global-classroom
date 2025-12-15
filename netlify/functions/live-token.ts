@@ -29,7 +29,7 @@ export const handler = async (event: any) => {
     const client = new GoogleGenAI({ apiKey });
 
     const expireTime = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-    const newSessionExpireTime = new Date(Date.now() + 1 * 60 * 1000);
+    const newSessionExpireTime = new Date(Date.now() + 1 * 60 * 1000).toISOString();
 
     const token = await client.authTokens.create({
       config: {

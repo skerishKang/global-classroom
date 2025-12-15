@@ -13,7 +13,7 @@ test('헤더 아이콘 순서(새 대화/이전 히스토리/내보내기/로그
   const newChatButton = topRow.getByRole('button', { name: '새 대화' });
   const historyButton = topRow.getByRole('button', { name: '이전 히스토리' });
   const exportButton = topRow.getByRole('button', { name: '내보내기' });
-  const loginButton = topRow.getByRole('button', { name: /Login|Google로 로그인/ });
+  const loginButton = topRow.getByRole('button', { name: /로그인|Login|Google로 로그인/ });
 
   await expect(newChatButton).toBeVisible();
   await expect(historyButton).toBeVisible();
@@ -60,11 +60,11 @@ test('새 대화 생성 시 로컬 세션이 증가하고, 히스토리 모달�
   await expect(page.getByRole('heading', { name: '이전 히스토리' })).toHaveCount(0);
 });
 
-test('게스트 로그인 선택 시 헤더에 Guest 표시', async ({ page }) => {
+test('게스트 로그인 선택 후 로그인 버튼이 유지되고 모달이 닫힌다', async ({ page }) => {
   const header = page.locator('header');
 
   const openLogin = header
-    .getByRole('button', { name: 'Login' })
+    .getByRole('button', { name: /로그인|Login/ })
     .or(header.getByRole('button', { name: /Google로 로그인/ }));
 
   await expect(openLogin.first()).toBeVisible({ timeout: 10000 });
@@ -77,7 +77,7 @@ test('게스트 로그인 선택 시 헤더에 Guest 표시', async ({ page }) =
   await guestButton.click();
 
   await expect(page.getByRole('heading', { name: /로그인 방법 선택/ })).toHaveCount(0);
-  await expect(header.getByText('Guest')).toBeVisible({ timeout: 10000 });
+  await expect(header.getByRole('button', { name: /로그인|Login|Google로 로그인/ })).toBeVisible({ timeout: 10000 });
 });
 
 test('페이지에 Loading... 텍스트가 노출되지 않는다', async ({ page }) => {

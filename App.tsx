@@ -107,6 +107,8 @@ type AppSettings = {
 };
 
 const SETTINGS_KEY = 'global_classroom_settings';
+const ACCESS_TOKEN_STORAGE_KEY = 'global_classroom_google_access_token';
+const GOOGLE_USER_STORAGE_KEY = 'global_classroom_google_user';
 
 export default function App() {
   // --- UI Settings ---
@@ -129,8 +131,22 @@ export default function App() {
 
   // --- Auth & Data ---
   // We use `any` here to support both Firebase User (Guest) and our custom Google User object
-  const [user, setUser] = useState<User | any | null>(null);
-  const [accessToken, setAccessToken] = useState<string | null>(null); 
+  const [user, setUser] = useState<User | any | null>(() => {
+    try {
+      const raw = sessionStorage.getItem(GOOGLE_USER_STORAGE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  });
+  const [accessToken, setAccessToken] = useState<string | null>(() => {
+    try {
+      return sessionStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  }); 
   const [isAuthReady, setIsAuthReady] = useState(true);
   const [history, setHistory] = useState<ConversationItem[]>([]);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
@@ -294,6 +310,11 @@ export default function App() {
                       providerId: 'google.com'
                     };
                     setUser(googleUser);
+                    try {
+                      sessionStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, tokenResponse.access_token);
+                      sessionStorage.setItem(GOOGLE_USER_STORAGE_KEY, JSON.stringify(googleUser));
+                    } catch {
+                    }
                     setIsLoginModalOpen(false);
                   } catch (e) {
                     console.error("Failed to fetch Google profile", e);
@@ -453,6 +474,11 @@ export default function App() {
         const current = auth.currentUser;
         const guest = current?.isAnonymous ? current : await signInAsGuest();
         setAccessToken(null);
+        try {
+          sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+          sessionStorage.removeItem(GOOGLE_USER_STORAGE_KEY);
+        } catch {
+        }
         setUser(guest);
       } catch (e) {
         console.error('게스트 로그인 실패', e);
@@ -469,6 +495,12 @@ export default function App() {
         google.accounts.oauth2.revoke(accessToken, () => { console.log('Token revoked') });
       }
       setAccessToken(null);
+    }
+
+    try {
+      sessionStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+      sessionStorage.removeItem(GOOGLE_USER_STORAGE_KEY);
+    } catch {
     }
     
     // 2. Firebase Logout
@@ -1341,24 +1373,12 @@ export default function App() {
            </div>
 
            {/* AUTH BUTTON */}
-           {user ? (
-             user.isAnonymous ? (
-              <button
-                onClick={() => setIsLoginModalOpen(true)}
-                aria-label="로그인"
-                className="flex items-center gap-2 bg-gray-50 rounded-full px-3 py-1 border border-gray-200 whitespace-nowrap hover:bg-gray-100 transition-colors"
-              >
-                <span className="text-xs text-gray-500 font-medium">Guest</span>
-                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
-             ) : (
-               <div className="relative" ref={profileMenuRef}>
-                 <button
-                   onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
-                   className="flex items-center gap-2 bg-gray-50 rounded-full pl-1 pr-2 py-1 border border-gray-200 whitespace-nowrap hover:bg-gray-100 transition-colors"
-                 >
+           {user && !user.isAnonymous ? (
+             <div className="relative" ref={profileMenuRef}>
+               <button
+                 onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
+                 className="flex items-center gap-2 bg-gray-50 rounded-full pl-1 pr-2 py-1 border border-gray-200 whitespace-nowrap hover:bg-gray-100 transition-colors"
+               >
                    {user.photoURL ? (
                      <img src={user.photoURL} alt="Profile" className="w-7 h-7 rounded-full" />
                    ) : (
@@ -1367,43 +1387,43 @@ export default function App() {
                    <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                    </svg>
-                 </button>
+               </button>
 
-                 {isProfileMenuOpen && (
-                   <div className="absolute top-full right-0 mt-2 w-44 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50 animate-in fade-in zoom-in-95 duration-200">
-                     <button
-                       onClick={openSettings}
-                       className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700 font-medium border-b border-gray-50"
-                     >
+               {isProfileMenuOpen && (
+                 <div className="absolute top-full right-0 mt-2 w-44 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50 animate-in fade-in zoom-in-95 duration-200">
+                   <button
+                     onClick={openSettings}
+                     className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700 font-medium border-b border-gray-50"
+                   >
                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                        </svg>
                        설정
-                     </button>
+                   </button>
 
-                     <button
-                       onClick={() => {
-                         setIsProfileMenuOpen(false);
-                         handleLogout();
-                       }}
-                       className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700 font-medium"
-                     >
+                   <button
+                     onClick={() => {
+                       setIsProfileMenuOpen(false);
+                       handleLogout();
+                     }}
+                     className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 text-sm text-gray-700 font-medium"
+                   >
                        <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
                        </svg>
                        로그아웃
-                     </button>
-                   </div>
-                 )}
-               </div>
-             )
+                   </button>
+                 </div>
+               )}
+             </div>
            ) : (
              <button
                onClick={() => setIsLoginModalOpen(true)}
-               className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors whitespace-nowrap"
+               aria-label="로그인"
+               className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-indigo-600 whitespace-nowrap"
              >
-               Login
+               {uiLangCode === 'ko' ? '로그인' : 'Login'}
              </button>
            )}
           </div>
