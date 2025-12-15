@@ -125,7 +125,11 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
       {/* Header */}
       <div className="absolute top-0 w-full p-4 flex justify-between items-center z-30 bg-gradient-to-b from-black/50 to-transparent">
-        <button onClick={handleClose} className="text-white bg-white/20 p-2 rounded-full backdrop-blur-md active:bg-white/30 transition-colors">
+        <button
+          onClick={handleClose}
+          aria-label="카메라 닫기"
+          className="text-white bg-white/20 p-2 rounded-full backdrop-blur-md active:bg-white/30 transition-colors"
+        >
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
         <span className="text-white font-medium text-lg drop-shadow-md">{t.visionTitle}</span>
@@ -154,6 +158,7 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
       <div className="h-40 bg-black flex items-center justify-center pb-8 pt-4">
         <button 
           onClick={handleCapture}
+          aria-label="촬영"
           disabled={isProcessing}
           className="w-20 h-20 rounded-full border-[5px] border-white flex items-center justify-center group active:scale-95 transition-transform"
         >

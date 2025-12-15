@@ -1214,10 +1214,11 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 justify-end">
+           <div className="flex items-center gap-2 sm:gap-3 justify-end">
 
            <button
              onClick={handleNewConversation}
+             aria-label="새 대화"
              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
            >
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1228,6 +1229,7 @@ export default function App() {
 
            <button
              onClick={handleOpenHistory}
+             aria-label="이전 히스토리"
              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
            >
              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1240,6 +1242,7 @@ export default function App() {
            <div className="relative" ref={exportMenuRef}>
              <button 
                 onClick={() => setIsExportMenuOpen(!isExportMenuOpen)}
+                aria-label={t.exportMenu}
                 disabled={isExporting}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600 whitespace-nowrap"
              >
@@ -1269,6 +1272,7 @@ export default function App() {
            <div className="relative" ref={notificationMenuRef}>
              <button
                onClick={() => setIsNotificationMenuOpen(!isNotificationMenuOpen)}
+               aria-label="알림"
                className="relative flex items-center justify-center w-9 h-9 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors"
              >
                <BellIcon />
