@@ -8,7 +8,7 @@ import {
 } from './utils/firebase';
 import { loadSessions, saveSessions, clearSessions } from './utils/localStorage';
 import { getCachedAudioBase64, hasCachedAudio, setCachedAudioBase64, clearCachedAudio } from './utils/idbAudioCache';
-import { 
+import {
   backupToDrive, 
   exportToDocs, 
   downloadTranscriptLocally, 
@@ -17,11 +17,12 @@ import {
   listCourses,
   createCourseWork
 } from './utils/googleWorkspace';
-import { Language, ConnectionStatus, VoiceOption, ConversationItem, ConversationSession } from './types';
+import { Language, ConnectionStatus, VoiceOption, ConversationItem, ConversationSession, VisionResult } from './types';
 import { 
   SUPPORTED_LANGUAGES, 
   MODEL_LIVE, 
   MODEL_TRANSLATE, 
+  MODEL_VISION,
   MODEL_TTS, 
   TRANSLATIONS, 
   VOICE_OPTIONS,
@@ -41,6 +42,11 @@ const SpeakerIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentCo
 const PlayAllIcon = () => <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 012 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 const GlobeIcon = () => <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
 const ExportIcon = () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>;
+const BellIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+  </svg>
+);
 
 // --- Brand Icons (Official Colors) ---
 const DocsIcon = () => (
@@ -82,6 +88,19 @@ const GoogleLogo = () => (
   </svg>
 );
 
+type VisionNotificationStatus = 'processing' | 'done' | 'error';
+
+type VisionNotification = {
+  id: string;
+  createdAt: number;
+  status: VisionNotificationStatus;
+  langA: string;
+  langB: string;
+  result?: VisionResult;
+  error?: string;
+  isRead: boolean;
+};
+
 type AppSettings = {
   driveBackupMode: 'manual' | 'auto';
   audioCacheEnabled: boolean;
@@ -112,6 +131,7 @@ export default function App() {
   // We use `any` here to support both Firebase User (Guest) and our custom Google User object
   const [user, setUser] = useState<User | any | null>(null);
   const [accessToken, setAccessToken] = useState<string | null>(null); 
+  const [isAuthReady, setIsAuthReady] = useState(false);
   const [history, setHistory] = useState<ConversationItem[]>([]);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
@@ -141,6 +161,11 @@ export default function App() {
   const [driveRestoreMessage, setDriveRestoreMessage] = useState<string>('');
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false);
+  const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false);
+  const [visionNotifications, setVisionNotifications] = useState<VisionNotification[]>([]);
+  const [visionToastIds, setVisionToastIds] = useState<string[]>([]);
+  const [activeVisionNotificationId, setActiveVisionNotificationId] = useState<string | null>(null);
+  const toastTimeoutsRef = useRef<Record<string, number>>({});
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
@@ -161,6 +186,7 @@ export default function App() {
   
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const profileMenuRef = useRef<HTMLDivElement>(null);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
 
   // --- Refs ---
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -294,6 +320,7 @@ export default function App() {
   useEffect(() => {
     const auth = getAppAuth();
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
+      setIsAuthReady(true);
       // If we have an access token, it means we are using Google Login (GIS).
       // We prioritize GIS user state if accessToken exists.
       if (!accessToken) {
@@ -386,6 +413,16 @@ export default function App() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (notificationMenuRef.current && !notificationMenuRef.current.contains(event.target as Node)) {
+        setIsNotificationMenuOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
 
   // --- Logic ---
   
@@ -434,6 +471,12 @@ export default function App() {
     setUser(null);
     
     // 4. Re-initiate Guest login if needed by effect
+    try {
+      const guest = await signInAsGuest();
+      setUser(guest);
+    } catch (e) {
+      console.error('게스트 로그인 재시도 실패', e);
+    }
   };
 
   const openSettings = () => {
@@ -583,6 +626,74 @@ export default function App() {
       throw new Error(detailMessage ? `${errorMessage} (${detailMessage})` : errorMessage);
     }
     return json as T;
+  };
+
+  const unreadVisionCount = visionNotifications.filter((n) => !n.isRead && n.status !== 'processing').length;
+
+  const enqueueVisionToast = (id: string) => {
+    setVisionToastIds((prev) => {
+      if (prev.includes(id)) return prev;
+      const next = [id, ...prev];
+      return next.slice(0, 3);
+    });
+
+    if (toastTimeoutsRef.current[id]) {
+      window.clearTimeout(toastTimeoutsRef.current[id]);
+    }
+
+    toastTimeoutsRef.current[id] = window.setTimeout(() => {
+      setVisionToastIds((prev) => prev.filter((x) => x !== id));
+      delete toastTimeoutsRef.current[id];
+    }, 7000);
+  };
+
+  const dismissVisionToast = (id: string) => {
+    setVisionToastIds((prev) => prev.filter((x) => x !== id));
+    if (toastTimeoutsRef.current[id]) {
+      window.clearTimeout(toastTimeoutsRef.current[id]);
+      delete toastTimeoutsRef.current[id];
+    }
+  };
+
+  const openVisionNotification = (id: string) => {
+    setActiveVisionNotificationId(id);
+    setIsNotificationMenuOpen(false);
+    setVisionNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, isRead: true } : n)));
+    dismissVisionToast(id);
+  };
+
+  const handleVisionCaptured = (payload: { base64Image: string; blob: Blob }) => {
+    const createdAt = Date.now();
+    const id = `vision_${createdAt}_${Math.random().toString(16).slice(2)}`;
+    const langA = langInputRef.current.code;
+    const langB = langOutputRef.current.code;
+
+    const item: VisionNotification = {
+      id,
+      createdAt,
+      status: 'processing',
+      langA,
+      langB,
+      isRead: false,
+    };
+
+    setVisionNotifications((prev) => [item, ...prev]);
+
+    postApi<VisionResult>('vision', {
+      base64Image: payload.base64Image,
+      langA,
+      langB,
+      model: MODEL_VISION,
+    })
+      .then((result) => {
+        setVisionNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, status: 'done', result } : n)));
+        enqueueVisionToast(id);
+      })
+      .catch((e) => {
+        const message = (e as Error)?.message || String(e);
+        setVisionNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, status: 'error', error: message } : n)));
+        enqueueVisionToast(id);
+      });
   };
 
   const detectLanguageCode = async (text: string): Promise<string | null> => {
@@ -1130,8 +1241,80 @@ export default function App() {
              )}
            </div>
 
+           <div className="relative" ref={notificationMenuRef}>
+             <button
+               onClick={() => setIsNotificationMenuOpen(!isNotificationMenuOpen)}
+               className="relative flex items-center justify-center w-9 h-9 bg-white border border-gray-200 rounded-full shadow-sm hover:bg-gray-50 transition-colors"
+             >
+               <BellIcon />
+               {unreadVisionCount > 0 && (
+                 <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                   {unreadVisionCount}
+                 </span>
+               )}
+             </button>
+
+             {isNotificationMenuOpen && (
+               <div className="absolute top-full right-0 mt-2 w-80 bg-white rounded-xl shadow-xl border border-gray-100 py-1 z-50 animate-in fade-in zoom-in-95 duration-200">
+                 {visionNotifications.length === 0 ? (
+                   <div className="px-4 py-3 text-xs text-gray-400">알림이 없습니다.</div>
+                 ) : (
+                   <div className="max-h-[60vh] overflow-y-auto">
+                     {visionNotifications.slice(0, 20).map((n) => {
+                       const statusLabel =
+                         n.status === 'processing'
+                           ? t.visionAnalyzing
+                           : n.status === 'done'
+                             ? t.exportSuccess
+                             : t.visionFail;
+
+                       const statusClass =
+                         n.status === 'processing'
+                           ? 'text-gray-500'
+                           : n.status === 'done'
+                             ? 'text-emerald-600'
+                             : 'text-red-600';
+
+                       const snippet =
+                         n.status === 'done'
+                           ? (n.result?.translatedText || n.result?.originalText || '').trim().slice(0, 60)
+                           : n.status === 'error'
+                             ? (n.error || '').trim().slice(0, 60)
+                             : '';
+
+                       return (
+                         <button
+                           key={n.id}
+                           onClick={() => openVisionNotification(n.id)}
+                           className="w-full text-left px-4 py-3 hover:bg-gray-50 flex flex-col gap-1 border-b border-gray-50 last:border-0"
+                         >
+                           <div className="flex items-center justify-between gap-2">
+                             <div className="flex items-center gap-2 min-w-0">
+                               {!n.isRead && n.status !== 'processing' ? (
+                                 <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                               ) : (
+                                 <span className="w-2 h-2 rounded-full bg-transparent shrink-0" />
+                               )}
+                               <div className="text-xs font-bold text-gray-700 truncate">{t.visionTitle}</div>
+                             </div>
+                             <div className={`text-[10px] font-bold shrink-0 ${statusClass}`}>{statusLabel}</div>
+                           </div>
+                           {snippet ? (
+                             <div className="text-[11px] text-gray-500 whitespace-pre-wrap break-words">{snippet}</div>
+                           ) : null}
+                         </button>
+                       );
+                     })}
+                   </div>
+                 )}
+               </div>
+             )}
+           </div>
+
            {/* AUTH BUTTON */}
-           {user ? (
+           {!isAuthReady ? (
+             <div className="text-xs text-gray-400 whitespace-nowrap">Loading...</div>
+           ) : user ? (
              user.isAnonymous ? (
                <div className="flex items-center gap-2 bg-gray-50 rounded-full pl-1 pr-3 py-1 border border-gray-200 whitespace-nowrap">
                  <span className="text-xs text-gray-400 font-medium px-2 hidden sm:inline">Guest</span>
@@ -1188,7 +1371,12 @@ export default function App() {
                </div>
              )
            ) : (
-             <div className="text-xs text-gray-400 whitespace-nowrap">Loading...</div>
+             <button
+               onClick={() => setIsLoginModalOpen(true)}
+               className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors whitespace-nowrap"
+             >
+               Login
+             </button>
            )}
           </div>
         </div>
@@ -1241,6 +1429,49 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {visionToastIds.length > 0 && (
+        <div className="fixed top-20 right-4 z-40 flex flex-col gap-2 w-[320px] max-w-[calc(100vw-2rem)]">
+          {visionToastIds.map((id) => {
+            const n = visionNotifications.find((x) => x.id === id);
+            if (!n) return null;
+            const title = t.visionTitle;
+            const message =
+              n.status === 'done'
+                ? (n.result?.translatedText || n.result?.originalText || t.exportSuccess)
+                : n.status === 'error'
+                  ? (n.error || t.visionFail)
+                  : t.visionAnalyzing;
+
+            const statusClass =
+              n.status === 'done'
+                ? 'text-emerald-700'
+                : n.status === 'error'
+                  ? 'text-red-700'
+                  : 'text-gray-600';
+
+            return (
+              <div key={id} className="bg-white border border-gray-200 shadow-lg rounded-xl p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <button onClick={() => openVisionNotification(id)} className="flex-1 text-left">
+                    <div className="text-xs font-bold text-gray-800">{title}</div>
+                    <div className={`text-[11px] mt-1 whitespace-pre-wrap break-words line-clamp-3 ${statusClass}`}>{String(message).trim().slice(0, 160)}</div>
+                  </button>
+                  <button
+                    onClick={() => dismissVisionToast(id)}
+                    className="text-gray-400 hover:text-gray-600 p-1"
+                    aria-label="닫기"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* --- LANGUAGE & MODE CONTROLS --- */}
       <div className="bg-white px-4 py-4 shadow-sm z-10 flex flex-col gap-3 shrink-0">
@@ -1505,10 +1736,65 @@ export default function App() {
       <CameraView 
         isOpen={isCameraOpen} 
         onClose={() => setIsCameraOpen(false)}
-        langA={langInput}
-        langB={langOutput}
+        onCaptured={handleVisionCaptured}
         t={t}
       />
+
+      {activeVisionNotificationId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <div className="bg-white rounded-2xl w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]">
+            <div className="px-6 py-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+              <h2 className="text-lg font-bold text-gray-800">{t.visionTitle}</h2>
+              <button
+                onClick={() => setActiveVisionNotificationId(null)}
+                className="text-gray-400 hover:text-gray-600 p-1 bg-white rounded-full shadow-sm"
+              >
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+              </button>
+            </div>
+
+            {(() => {
+              const n = visionNotifications.find((x) => x.id === activeVisionNotificationId);
+              if (!n) {
+                return <div className="p-6 text-sm text-gray-500">알림을 찾을 수 없습니다.</div>;
+              }
+
+              if (n.status === 'processing') {
+                return <div className="p-6 text-sm text-gray-500">{t.visionAnalyzing}</div>;
+              }
+
+              if (n.status === 'error') {
+                return (
+                  <div className="p-6 space-y-2">
+                    <div className="text-sm font-bold text-red-600">{t.visionFail}</div>
+                    <div className="text-xs text-gray-500 whitespace-pre-wrap break-words">{n.error || t.visionError}</div>
+                  </div>
+                );
+              }
+
+              const originalText = (n.result?.originalText || '').trim();
+              const translatedText = (n.result?.translatedText || '').trim();
+
+              return (
+                <div className="p-6 space-y-4 overflow-y-auto">
+                  <div>
+                    <div className="text-xs font-bold text-gray-500 mb-1">{t.visionDetected}</div>
+                    <div className="bg-gray-50 border border-gray-200 p-4 rounded-xl text-sm text-gray-800 whitespace-pre-wrap break-words">
+                      {originalText || t.visionNoText}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-gray-500 mb-1">{t.visionTranslated}</div>
+                    <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl text-sm text-indigo-900 whitespace-pre-wrap break-words">
+                      {translatedText || t.visionNoText}
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
 
       {/* --- LOGIN MODAL --- */}
       {isLoginModalOpen && (

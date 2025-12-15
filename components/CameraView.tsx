@@ -1,22 +1,18 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { MODEL_VISION } from '../constants';
-import { VisionResult, Language, TranslationMap } from '../types';
+import { TranslationMap } from '../types';
 
 interface CameraViewProps {
   isOpen: boolean;
   onClose: () => void;
-  langA: Language;
-  langB: Language;
+  onCaptured: (payload: { base64Image: string; blob: Blob }) => void;
   t: TranslationMap;
 }
 
-const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, t }) => {
+const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const capturedBlobRef = useRef<Blob | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [result, setResult] = useState<VisionResult | null>(null);
 
   const blobToBase64Data = async (blob: Blob): Promise<string> => {
     return new Promise((resolve, reject) => {
@@ -64,56 +60,6 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
     return { base64, blob };
   };
 
-  const shareCapturedImage = async (): Promise<void> => {
-    const blob = capturedBlobRef.current;
-    if (!blob) {
-      alert('먼저 사진을 찍어주세요.');
-      return;
-    }
-
-    const file = new File([blob], `global-classroom_${Date.now()}.jpg`, { type: 'image/jpeg' });
-    const navAny = navigator as any;
-
-    try {
-      if (typeof navAny.share === 'function') {
-        const canShareFiles = typeof navAny.canShare === 'function'
-          ? navAny.canShare({ files: [file] })
-          : true;
-
-        if (canShareFiles) {
-          await navAny.share({
-            files: [file],
-            title: 'Global Classroom',
-          });
-          return;
-        }
-      }
-    } catch {
-    }
-
-    const url = URL.createObjectURL(file);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const postApi = async <T,>(path: string, payload: unknown): Promise<T> => {
-    const res = await fetch(`/api/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      throw new Error((json as any)?.error || '요청에 실패했습니다.');
-    }
-    return json as T;
-  };
-
   useEffect(() => {
     if (isOpen) {
       startCamera();
@@ -147,8 +93,6 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
       stream.getTracks().forEach(track => track.stop());
       setStream(null);
     }
-    capturedBlobRef.current = null;
-    setResult(null);
   };
 
   const handleCapture = async () => {
@@ -160,37 +104,11 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
       if (!captured?.base64) {
         throw new Error('이미지 캡처에 실패했습니다.');
       }
-      capturedBlobRef.current = captured.blob;
-      await analyzeImage(captured.base64);
+      onCaptured({ base64Image: captured.base64, blob: captured.blob });
+      onClose();
     } catch (error) {
       console.error('Capture Error:', error);
-      setResult({
-        originalText: t.visionError,
-        translatedText: t.retry
-      });
-      setIsProcessing(false);
-    }
-  };
-
-  const analyzeImage = async (base64Image: string) => {
-    try {
-      const data = await postApi<{ originalText: string; translatedText: string }>('vision', {
-        base64Image,
-        langA: langA.name,
-        langB: langB.name,
-        model: MODEL_VISION,
-      });
-      setResult({
-        originalText: data.originalText || t.visionNoText,
-        translatedText: data.translatedText || t.visionFail
-      });
-
-    } catch (error) {
-      console.error("Vision Error:", error);
-      setResult({
-        originalText: t.visionError,
-        translatedText: t.retry
-      });
+      alert(t.visionError);
     } finally {
       setIsProcessing(false);
     }
@@ -215,34 +133,6 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
         <canvas ref={canvasRef} className="hidden" />
         
         {/* Overlay Result */}
-        {result && (
-          <div className="absolute inset-x-4 top-1/4 bg-white/95 backdrop-blur-xl rounded-2xl p-6 shadow-2xl border border-gray-100 animate-in fade-in slide-in-from-bottom-10 duration-300">
-            <div className="mb-4">
-              <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">{t.visionDetected}</h3>
-              <p className="text-gray-800 text-lg leading-relaxed max-h-40 overflow-y-auto">{result.originalText}</p>
-            </div>
-            <div className="w-full h-px bg-gray-200 my-4"></div>
-            <div>
-              <h3 className="text-xs font-bold text-indigo-600 uppercase tracking-wider mb-1">{t.visionTranslated}</h3>
-              <p className="text-indigo-900 text-xl font-medium leading-relaxed max-h-40 overflow-y-auto">{result.translatedText}</p>
-            </div>
-            <button
-              onClick={() => shareCapturedImage()}
-              className="mt-6 w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-medium transition-colors"
-            >
-              Google Lens로 공유/열기
-            </button>
-            <button
-              onClick={() => {
-                capturedBlobRef.current = null;
-                setResult(null);
-              }}
-              className="mt-3 w-full py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-colors"
-            >
-              {t.visionRetake}
-            </button>
-          </div>
-        )}
 
         {/* Loading */}
         {isProcessing && (
@@ -256,17 +146,15 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, langA, langB, 
       </div>
 
       {/* Controls */}
-      {!result && (
-        <div className="h-40 bg-black flex items-center justify-center pb-8 pt-4">
-          <button 
-            onClick={handleCapture}
-            disabled={isProcessing}
-            className="w-20 h-20 rounded-full border-[5px] border-white flex items-center justify-center group active:scale-95 transition-transform"
-          >
-            <div className="w-16 h-16 bg-white rounded-full group-hover:scale-90 transition-transform shadow-inner"></div>
-          </button>
-        </div>
-      )}
+      <div className="h-40 bg-black flex items-center justify-center pb-8 pt-4">
+        <button 
+          onClick={handleCapture}
+          disabled={isProcessing}
+          className="w-20 h-20 rounded-full border-[5px] border-white flex items-center justify-center group active:scale-95 transition-transform"
+        >
+          <div className="w-16 h-16 bg-white rounded-full group-hover:scale-90 transition-transform shadow-inner"></div>
+        </button>
+      </div>
     </div>
   );
 };
