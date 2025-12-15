@@ -321,11 +321,12 @@ export default function App() {
     const auth = getAppAuth();
     const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
       setIsAuthReady(true);
-      // If we have an access token, it means we are using Google Login (GIS).
-      // We prioritize GIS user state if accessToken exists.
-      if (!accessToken) {
-         setUser(firebaseUser);
-      }
+      setUser((prev) => {
+        if (accessToken && prev && !prev.isAnonymous) {
+          return prev;
+        }
+        return firebaseUser;
+      });
     });
     return () => unsubscribe();
   }, [accessToken]);
@@ -447,8 +448,14 @@ export default function App() {
       }
     } else {
       // Guest
-      if (!user || !user.isAnonymous) {
-        await signInAsGuest();
+      try {
+        const auth = getAppAuth();
+        const current = auth.currentUser;
+        const guest = current?.isAnonymous ? current : await signInAsGuest();
+        setAccessToken(null);
+        setUser(guest);
+      } catch (e) {
+        console.error('게스트 로그인 실패', e);
       }
       setIsLoginModalOpen(false);
     }
@@ -1295,9 +1302,9 @@ export default function App() {
 
                        const snippet =
                          n.status === 'done'
-                           ? (n.result?.translatedText || n.result?.originalText || '').trim().slice(0, 60)
+                           ? (n.result?.translatedText || n.result?.originalText || t.visionNoText).trim().slice(0, 60)
                            : n.status === 'error'
-                             ? (n.error || '').trim().slice(0, 60)
+                             ? (n.error || t.visionFail).trim().slice(0, 60)
                              : '';
 
                        return (
@@ -1330,17 +1337,15 @@ export default function App() {
            </div>
 
            {/* AUTH BUTTON */}
-           {!isAuthReady ? (
-             <div className="text-xs text-gray-400 whitespace-nowrap">Loading...</div>
-           ) : user ? (
+           {user ? (
              user.isAnonymous ? (
                <div className="flex items-center gap-2 bg-gray-50 rounded-full pl-1 pr-3 py-1 border border-gray-200 whitespace-nowrap">
-                 <span className="text-xs text-gray-400 font-medium px-2 hidden sm:inline">Guest</span>
+                 <span className="text-xs text-gray-400 font-medium px-2">Guest</span>
                  <button 
                    onClick={() => setIsLoginModalOpen(true)}
                    className="text-xs font-bold text-indigo-600 hover:text-indigo-800 transition-colors whitespace-nowrap"
                  >
-                   Login
+                   {t.loginGoogle}
                  </button>
                </div>
              ) : (
@@ -1449,14 +1454,16 @@ export default function App() {
       </header>
 
       {visionToastIds.length > 0 && (
-        <div className="fixed top-20 right-4 z-40 flex flex-col gap-2 w-[320px] max-w-[calc(100vw-2rem)]">
+        <div className="fixed top-20 right-4 z-[60] flex flex-col gap-2 w-[320px] max-w-[calc(100vw-2rem)]">
           {visionToastIds.map((id) => {
             const n = visionNotifications.find((x) => x.id === id);
             if (!n) return null;
             const title = t.visionTitle;
+            const originalText = (n.result?.originalText || '').trim();
+            const translatedText = (n.result?.translatedText || '').trim();
             const message =
               n.status === 'done'
-                ? (n.result?.translatedText || n.result?.originalText || t.exportSuccess)
+                ? (translatedText || originalText || t.visionNoText)
                 : n.status === 'error'
                   ? (n.error || t.visionFail)
                   : t.visionAnalyzing;

@@ -12,9 +12,11 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const mountedRef = useRef(false);
 
-  const captureJpegBlob = async (): Promise<Blob | null> => {
+  const captureJpegBlob = async (onAfterDraw?: () => void): Promise<Blob | null> => {
     if (!videoRef.current || !canvasRef.current) return null;
 
     const video = videoRef.current;
@@ -35,19 +37,46 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
     canvas.height = dstH;
     context.drawImage(video, 0, 0, dstW, dstH);
 
+    if (onAfterDraw) {
+      onAfterDraw();
+    }
+
     const blob = await new Promise<Blob | null>((resolve) => {
       canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.72);
     });
     return blob;
   };
 
+  const stopCamera = () => {
+    const current = streamRef.current || stream || (videoRef.current?.srcObject as MediaStream | null);
+    if (current) {
+      current.getTracks().forEach((track) => track.stop());
+    }
+    streamRef.current = null;
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    if (stream) {
+      setStream(null);
+    }
+  };
+
+  const handleClose = () => {
+    stopCamera();
+    onClose();
+  };
+
   useEffect(() => {
+    mountedRef.current = true;
     if (isOpen) {
       startCamera();
     } else {
       stopCamera();
     }
-    return () => stopCamera();
+    return () => {
+      mountedRef.current = false;
+      stopCamera();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
@@ -61,6 +90,7 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
         }
       });
       setStream(mediaStream);
+      streamRef.current = mediaStream;
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
@@ -69,30 +99,23 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
     }
   };
 
-  const stopCamera = () => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
-    }
-  };
-
   const handleCapture = async () => {
     if (!videoRef.current || !canvasRef.current) return;
 
     setIsProcessing(true);
     try {
-      const blob = await captureJpegBlob();
+      const blob = await captureJpegBlob(handleClose);
       if (!blob) {
         throw new Error('이미지 캡처에 실패했습니다.');
       }
-      onClose();
-
       onCaptured({ blob });
     } catch (error) {
       console.error('Capture Error:', error);
       alert(t.visionError);
     } finally {
-      setIsProcessing(false);
+      if (mountedRef.current) {
+        setIsProcessing(false);
+      }
     }
   };
 
@@ -101,8 +124,8 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
   return (
     <div className="fixed inset-0 z-50 bg-black flex flex-col">
       {/* Header */}
-      <div className="absolute top-0 w-full p-4 flex justify-between items-center z-10 bg-gradient-to-b from-black/50 to-transparent">
-        <button onClick={onClose} className="text-white bg-white/20 p-2 rounded-full backdrop-blur-md active:bg-white/30 transition-colors">
+      <div className="absolute top-0 w-full p-4 flex justify-between items-center z-30 bg-gradient-to-b from-black/50 to-transparent">
+        <button onClick={handleClose} className="text-white bg-white/20 p-2 rounded-full backdrop-blur-md active:bg-white/30 transition-colors">
           <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
         </button>
         <span className="text-white font-medium text-lg drop-shadow-md">{t.visionTitle}</span>
