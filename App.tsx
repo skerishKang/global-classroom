@@ -220,6 +220,12 @@ export default function App() {
   const streamRef = useRef<MediaStream | null>(null);
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const geminiReconnectTimeoutRef = useRef<number | null>(null);
+  const geminiReconnectAttemptRef = useRef(0);
+  const geminiMicDesiredRef = useRef(false);
+  const isGeminiConnectingRef = useRef(false);
+  const geminiConnectIdRef = useRef(0);
+  const connectToGeminiRef = useRef<(opts?: { isRetry?: boolean }) => Promise<void>>(async () => {});
   const tokenClientRef = useRef<any>(null); // GIS Token Client
   const isGuestSigningInRef = useRef(false);
 
@@ -1199,22 +1205,61 @@ export default function App() {
     }
   };
 
-  const connectToGemini = useCallback(async () => {
+  const connectToGemini = useCallback(async (opts?: { isRetry?: boolean }) => {
+    let connectId = 0;
+    const isCurrentAttempt = () => geminiConnectIdRef.current === connectId;
+
     try {
+      const isRetry = opts?.isRetry === true;
+      if (!isRetry) {
+        geminiMicDesiredRef.current = true;
+        geminiReconnectAttemptRef.current = 0;
+      }
+
+      if (isGeminiConnectingRef.current) return;
+      isGeminiConnectingRef.current = true;
+
+      connectId = geminiConnectIdRef.current + 1;
+      geminiConnectIdRef.current = connectId;
+
+      if (geminiReconnectTimeoutRef.current) {
+        window.clearTimeout(geminiReconnectTimeoutRef.current);
+        geminiReconnectTimeoutRef.current = null;
+      }
+
       cleanupAudio();
       setStatus(ConnectionStatus.CONNECTING);
 
       const tokenData = await postApi<{ token: string }>('live-token', { model: MODEL_LIVE });
+      if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
+        if (isCurrentAttempt()) {
+          cleanupAudio();
+          isGeminiConnectingRef.current = false;
+        }
+        return;
+      }
       if (!tokenData?.token) {
         setStatus(ConnectionStatus.ERROR);
+        setIsMicOn(false);
+        geminiMicDesiredRef.current = false;
+        if (isCurrentAttempt()) isGeminiConnectingRef.current = false;
         return;
       }
       const ai = new GoogleGenAI({ apiKey: tokenData.token, apiVersion: 'v1alpha' });
       
       inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
       audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
-      await inputAudioContextRef.current.resume();
-      await audioContextRef.current.resume();
+      const inputCtx = inputAudioContextRef.current;
+      const audioCtx = audioContextRef.current;
+      await inputCtx?.resume();
+      await audioCtx?.resume();
+      if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
+        if (isCurrentAttempt()) {
+          cleanupAudio();
+          isGeminiConnectingRef.current = false;
+        }
+        return;
+      }
 
       const analyserNode = audioContextRef.current.createAnalyser();
       analyserNode.fftSize = 256;
@@ -1225,6 +1270,35 @@ export default function App() {
         Your task is to listen to the user speaking in ${langInput.name}.
         Just listen and let the transcription engine handle the text.
       `;
+
+      const scheduleReconnect = (reason?: unknown) => {
+        if (!isCurrentAttempt()) return;
+        if (!geminiMicDesiredRef.current) return;
+
+        const attempt = geminiReconnectAttemptRef.current;
+        const maxAttempts = 3;
+        if (attempt >= maxAttempts) {
+          geminiMicDesiredRef.current = false;
+          setStatus(ConnectionStatus.ERROR);
+          setIsMicOn(false);
+          const msg = reason instanceof Error ? reason.message : String(reason || '연결 오류');
+          setErrorMessage(msg);
+          return;
+        }
+
+        const delayMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+        geminiReconnectAttemptRef.current = attempt + 1;
+        setStatus(ConnectionStatus.CONNECTING);
+        setIsMicOn(false);
+
+        if (geminiReconnectTimeoutRef.current) {
+          window.clearTimeout(geminiReconnectTimeoutRef.current);
+        }
+
+        geminiReconnectTimeoutRef.current = window.setTimeout(() => {
+          connectToGeminiRef.current({ isRetry: true });
+        }, delayMs);
+      };
 
       const sessionPromise = ai.live.connect({
         model: MODEL_LIVE,
@@ -1238,13 +1312,35 @@ export default function App() {
         },
         callbacks: {
           onopen: async () => {
+            if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
+              try {
+                const session = await sessionPromise;
+                session.close();
+              } catch {
+              }
+              return;
+            }
             console.log("Gemini Live Connected");
+            geminiReconnectAttemptRef.current = 0;
+            if (geminiReconnectTimeoutRef.current) {
+              window.clearTimeout(geminiReconnectTimeoutRef.current);
+              geminiReconnectTimeoutRef.current = null;
+            }
             setStatus(ConnectionStatus.CONNECTED);
             setIsMicOn(true);
             try {
               const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+              if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
+                stream.getTracks().forEach(track => track.stop());
+                try {
+                  const session = await sessionPromise;
+                  session.close();
+                } catch {
+                }
+                return;
+              }
               streamRef.current = stream;
-              if (!inputAudioContextRef.current) return;
+              if (!inputAudioContextRef.current || !audioContextRef.current) return;
               
               const source = inputAudioContextRef.current.createMediaStreamSource(stream);
               const inputGain = inputAudioContextRef.current.createGain();
@@ -1261,6 +1357,7 @@ export default function App() {
               processorRef.current = processor;
 
               processor.onaudioprocess = (e) => {
+                if (!geminiMicDesiredRef.current || !isCurrentAttempt()) return;
                 const inputData = e.inputBuffer.getChannelData(0);
                 const pcmBlob = createPcmBlob(inputData);
                 if (sessionPromiseRef.current) {
@@ -1274,10 +1371,16 @@ export default function App() {
               processor.connect(inputAudioContextRef.current.destination);
             } catch (err) {
               console.error("Mic Error:", err);
-              setStatus(ConnectionStatus.ERROR);
+              if (isCurrentAttempt()) {
+                cleanupAudio();
+                setStatus(ConnectionStatus.ERROR);
+                setIsMicOn(false);
+                geminiMicDesiredRef.current = false;
+              }
             }
           },
           onmessage: async (message: LiveServerMessage) => {
+            if (!isCurrentAttempt()) return;
             const transcription = message.serverContent?.inputTranscription?.text;
             if (transcription) {
               setCurrentTurnText(prev => {
@@ -1326,26 +1429,71 @@ export default function App() {
             }
           },
           onclose: () => {
+            if (!isCurrentAttempt()) return;
             console.log("Session Closed");
+            cleanupAudio();
             setStatus(ConnectionStatus.DISCONNECTED);
             setIsMicOn(false);
+            scheduleReconnect('세션이 종료되었습니다.');
           },
           onerror: (err) => {
+            if (!isCurrentAttempt()) return;
             console.error("Session Error:", err);
+            cleanupAudio();
             setStatus(ConnectionStatus.ERROR);
             setIsMicOn(false);
+            scheduleReconnect(err);
           }
         }
       });
       sessionPromiseRef.current = sessionPromise;
+      if (isCurrentAttempt()) isGeminiConnectingRef.current = false;
     } catch (error) {
+      if (connectId !== 0 && !isCurrentAttempt()) {
+        return;
+      }
+      if (!geminiMicDesiredRef.current) {
+        cleanupAudio();
+        isGeminiConnectingRef.current = false;
+        return;
+      }
       console.error("Connection setup failed:", error);
+      cleanupAudio();
       setStatus(ConnectionStatus.ERROR);
+      setIsMicOn(false);
+      isGeminiConnectingRef.current = false;
+
+      if (geminiMicDesiredRef.current) {
+        const attempt = geminiReconnectAttemptRef.current;
+        const maxAttempts = 3;
+        if (attempt < maxAttempts) {
+          const delayMs = Math.min(1000 * Math.pow(2, attempt), 8000);
+          geminiReconnectAttemptRef.current = attempt + 1;
+          if (geminiReconnectTimeoutRef.current) {
+            window.clearTimeout(geminiReconnectTimeoutRef.current);
+          }
+          geminiReconnectTimeoutRef.current = window.setTimeout(() => {
+            connectToGeminiRef.current({ isRetry: true });
+          }, delayMs);
+        } else {
+          geminiMicDesiredRef.current = false;
+        }
+      }
     }
   }, [langInput, langOutput, selectedVoice, cleanupAudio]); 
 
+  connectToGeminiRef.current = connectToGemini;
+
   const toggleMic = () => {
-    if (status === ConnectionStatus.CONNECTED) {
+    if (status === ConnectionStatus.CONNECTED || status === ConnectionStatus.CONNECTING) {
+       geminiMicDesiredRef.current = false;
+       geminiConnectIdRef.current += 1;
+       isGeminiConnectingRef.current = false;
+       geminiReconnectAttemptRef.current = 0;
+       if (geminiReconnectTimeoutRef.current) {
+         window.clearTimeout(geminiReconnectTimeoutRef.current);
+         geminiReconnectTimeoutRef.current = null;
+       }
        if (sessionPromiseRef.current) {
           sessionPromiseRef.current.then(session => session.close());
        }
@@ -1363,7 +1511,16 @@ export default function App() {
     }
   }, [history, currentTurnText, isScrollLocked]);
 
-  useEffect(() => () => cleanupAudio(), [cleanupAudio]);
+  useEffect(() => () => {
+    geminiMicDesiredRef.current = false;
+    geminiConnectIdRef.current += 1;
+    isGeminiConnectingRef.current = false;
+    if (geminiReconnectTimeoutRef.current) {
+      window.clearTimeout(geminiReconnectTimeoutRef.current);
+      geminiReconnectTimeoutRef.current = null;
+    }
+    cleanupAudio();
+  }, [cleanupAudio]);
 
   return (
     <div className="h-full flex flex-col bg-slate-50 text-slate-900 font-sans overflow-hidden">
