@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality } from '@google/genai';
 import { User, onAuthStateChanged } from 'firebase/auth';
 import {
@@ -114,6 +114,7 @@ const SETTINGS_KEY = 'global_classroom_settings';
 const ACCESS_TOKEN_STORAGE_KEY = 'global_classroom_google_access_token';
 const GOOGLE_USER_STORAGE_KEY = 'global_classroom_google_user';
 const ADMIN_EMAIL = 'padiemipu@gmail.com';
+const HISTORY_RENDER_STEP = 200;
 
 export default function App() {
   // --- UI Settings ---
@@ -159,12 +160,14 @@ export default function App() {
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isAuthReady, setIsAuthReady] = useState(true);
   const [history, setHistory] = useState<ConversationItem[]>([]);
+  const [historyRenderLimit, setHistoryRenderLimit] = useState<number>(HISTORY_RENDER_STEP);
   const [sessions, setSessions] = useState<ConversationSession[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string>('');
   const [isSessionsReady, setIsSessionsReady] = useState(false);
   const [currentTurnText, setCurrentTurnText] = useState('');
   const currentTurnTextRef = useRef('');
   const historyRef = useRef<HTMLDivElement>(null);
+  const pendingHistoryExpandRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null);
   const langInputRef = useRef<Language>(langInput);
   const langOutputRef = useRef<Language>(langOutput);
   const isLangAutoRef = useRef(true);
@@ -509,6 +512,31 @@ export default function App() {
       setIsEmailAuthBusy(false);
     }
   };
+
+  const visibleHistory =
+    historyRenderLimit >= history.length
+      ? history
+      : history.slice(Math.max(0, history.length - historyRenderLimit));
+  const hiddenHistoryCount = Math.max(0, history.length - visibleHistory.length);
+
+  const handleLoadMoreHistory = () => {
+    const nextLimit = Math.min(historyRenderLimit + HISTORY_RENDER_STEP, history.length);
+    if (nextLimit === historyRenderLimit) return;
+
+    if (historyRef.current) {
+      pendingHistoryExpandRef.current = {
+        prevScrollHeight: historyRef.current.scrollHeight,
+        prevScrollTop: historyRef.current.scrollTop,
+      };
+    }
+
+    setHistoryRenderLimit(nextLimit);
+  };
+
+  useEffect(() => {
+    setHistoryRenderLimit(HISTORY_RENDER_STEP);
+    pendingHistoryExpandRef.current = null;
+  }, [currentSessionId]);
 
   const handleEmailSignUp = async () => {
     if (isEmailAuthBusy) return;
@@ -1511,6 +1539,17 @@ export default function App() {
     }
   }, [history, currentTurnText, isScrollLocked]);
 
+  useLayoutEffect(() => {
+    const pending = pendingHistoryExpandRef.current;
+    if (!pending) return;
+    pendingHistoryExpandRef.current = null;
+    if (!historyRef.current) return;
+
+    const newScrollHeight = historyRef.current.scrollHeight;
+    const delta = newScrollHeight - pending.prevScrollHeight;
+    historyRef.current.scrollTop = pending.prevScrollTop + delta;
+  }, [historyRenderLimit]);
+
   useEffect(() => () => {
     geminiMicDesiredRef.current = false;
     geminiConnectIdRef.current += 1;
@@ -1908,7 +1947,18 @@ export default function App() {
            )}
 
            <div className="flex flex-col gap-4">
-             {history.map((item) => (
+             {hiddenHistoryCount > 0 && (
+               <div className="flex justify-center">
+                 <button
+                   onClick={handleLoadMoreHistory}
+                   className="px-4 py-2 rounded-full bg-white border border-gray-200 shadow-sm hover:bg-gray-50 transition-colors text-xs font-bold text-gray-600"
+                 >
+                   {t.loadMoreHistory}
+                 </button>
+               </div>
+             )}
+
+             {visibleHistory.map((item) => (
                isOutputOnly ? (
                  <div key={item.id} className="border-b border-gray-100 pb-4 last:border-0 animate-in fade-in slide-in-from-bottom-2 duration-300">
                    <div 

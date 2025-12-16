@@ -69,6 +69,7 @@ export interface TranslationMap {
   visionError: string;
   voiceLabel: string;
   emptyHint: string;
+  loadMoreHistory: string;
   // Export & Login
   exportMenu: string;
   exportDocs: string;
