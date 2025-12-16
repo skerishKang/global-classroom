@@ -32,6 +32,7 @@ import {
   GOOGLE_SCOPES
 } from './constants';
 import { createPcmBlob, decodeAudioData, base64ToUint8Array, arrayBufferToBase64 } from './utils/audioUtils';
+import { retry } from './utils/retry';
 import Visualizer from './components/Visualizer';
 import CameraView from './components/CameraView';
 import AdminPanelModal from './components/AdminPanelModal';
@@ -743,19 +744,63 @@ export default function App() {
     });
   };
 
-  const postApi = async <T,>(path: string, payload: unknown): Promise<T> => {
-    const res = await fetch(`/api/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const json = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      const errorMessage = (json as any)?.error || '요청에 실패했습니다.';
-      const detailMessage = (json as any)?.detail;
-      throw new Error(detailMessage ? `${errorMessage} (${detailMessage})` : errorMessage);
+  const postApi = async <T,>(
+    path: string,
+    payload: unknown,
+    options?: { timeoutMs?: number; retries?: number }
+  ): Promise<T> => {
+    const timeoutMs = typeof options?.timeoutMs === 'number' ? options.timeoutMs : 15000;
+    const retries = typeof options?.retries === 'number' ? options.retries : 2;
+
+    try {
+      return await retry(
+        async (_attempt) => {
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+          try {
+            const res = await fetch(`/api/${path}`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+              signal: controller.signal,
+            });
+
+            const json = await res.json().catch(() => ({}));
+            if (!res.ok) {
+              const errorMessage = (json as any)?.error || '요청에 실패했습니다.';
+              const detailMessage = (json as any)?.detail;
+              const err: any = new Error(detailMessage ? `${errorMessage} (${detailMessage})` : errorMessage);
+              err.status = res.status;
+              throw err;
+            }
+
+            return json as T;
+          } finally {
+            window.clearTimeout(timeoutId);
+          }
+        },
+        {
+          retries,
+          shouldRetry: (err) => {
+            if (err instanceof DOMException && err.name === 'AbortError') return true;
+            if (err instanceof TypeError) return true;
+            const status = (err as any)?.status;
+            if (status === 408 || status === 429) return true;
+            if (typeof status === 'number' && status >= 500) return true;
+            return false;
+          },
+        }
+      );
+    } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        throw new Error('요청 시간이 초과되었습니다.');
+      }
+      if (e instanceof TypeError) {
+        throw new Error('네트워크 오류가 발생했습니다.');
+      }
+      throw e;
     }
-    return json as T;
   };
 
   const unreadVisionCount = visionNotifications.filter((n) => !n.isRead && n.status !== 'processing').length;
