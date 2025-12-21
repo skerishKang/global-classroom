@@ -1,0 +1,72 @@
+import React from 'react';
+import { ArrowRightIcon } from './Icons';
+import { Language, TranslationMap } from '../types';
+import { SUPPORTED_LANGUAGES } from '../constants';
+
+interface LanguageSelectorProps {
+    langInput: Language;
+    setLangInput: (l: Language) => void;
+    langOutput: Language;
+    setLangOutput: (l: Language) => void;
+    t: TranslationMap;
+    onLanguageManualSelect: () => void;
+}
+
+const LanguageSelector: React.FC<LanguageSelectorProps> = ({
+    langInput,
+    setLangInput,
+    langOutput,
+    setLangOutput,
+    t,
+    onLanguageManualSelect,
+}) => {
+    return (
+        <div className="bg-white px-4 py-4 shadow-sm z-10 flex flex-col gap-3 shrink-0">
+            <div className="flex items-center justify-between gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-200">
+                <div className="flex-1 flex flex-col items-center min-w-0 hover:bg-white hover:shadow-sm rounded-xl transition-all cursor-pointer group py-1">
+                    <span className="text-[10px] text-gray-800 font-bold mb-1 whitespace-nowrap group-hover:text-indigo-600 transition-colors">{t.inputLang}</span>
+                    <div className="w-full relative px-2 py-1">
+                        <select
+                            value={langInput.code}
+                            onChange={(e) => {
+                                onLanguageManualSelect();
+                                const l = SUPPORTED_LANGUAGES.find(l => l.code === e.target.value);
+                                if (l) setLangInput(l);
+                            }}
+                            className="opacity-0 absolute inset-0 w-full h-full z-10 cursor-pointer"
+                        >
+                            {SUPPORTED_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
+                        </select>
+                        <div className="text-sm font-bold text-gray-900 truncate max-w-[120px] sm:max-w-xs text-center group-hover:scale-105 transition-transform">
+                            {langInput.flag} {langInput.name}
+                        </div>
+                    </div>
+                </div>
+
+                <div className="text-gray-300 shrink-0"><ArrowRightIcon /></div>
+
+                <div className="flex-1 flex flex-col items-center min-w-0 hover:bg-white hover:shadow-sm rounded-xl transition-all cursor-pointer group py-1">
+                    <span className="text-[10px] text-gray-800 font-bold mb-1 whitespace-nowrap group-hover:text-indigo-600 transition-colors">{t.outputLang}</span>
+                    <div className="w-full relative px-2 py-1">
+                        <select
+                            value={langOutput.code}
+                            onChange={(e) => {
+                                onLanguageManualSelect();
+                                const l = SUPPORTED_LANGUAGES.find(l => l.code === e.target.value);
+                                if (l) setLangOutput(l);
+                            }}
+                            className="opacity-0 absolute inset-0 w-full h-full z-10 cursor-pointer"
+                        >
+                            {SUPPORTED_LANGUAGES.map(l => <option key={l.code} value={l.code}>{l.flag} {l.name}</option>)}
+                        </select>
+                        <div className="text-sm font-bold text-gray-900 truncate max-w-[120px] sm:max-w-xs text-center group-hover:scale-105 transition-transform">
+                            {langOutput.flag} {langOutput.name}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+export default LanguageSelector;

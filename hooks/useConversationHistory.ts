@@ -141,6 +141,24 @@ export function useConversationHistory() {
         });
     }, []);
 
+    const handleMergeWithBelow = useCallback((id: string) => {
+        setHistory(prev => {
+            const idx = prev.findIndex(item => item.id === id);
+            if (idx === -1 || idx === prev.length - 1) return prev;
+            const current = prev[idx];
+            const below = prev[idx + 1];
+            const merged: ConversationItem = {
+                ...current,
+                original: (current.original + ' ' + below.original).trim(),
+                translated: ((current.translated || '') + ' ' + (below.translated || '')).trim(),
+                updatedAt: Date.now(),
+            };
+            const next = [...prev];
+            next.splice(idx, 2, merged);
+            return next;
+        });
+    }, []);
+
     const handleSplitItem = useCallback((id: string, originalSplitIdx: number, translatedSplitIdx: number) => {
         setHistory(prev => {
             const idx = prev.findIndex(item => item.id === id);
@@ -216,6 +234,7 @@ export function useConversationHistory() {
         setIsOutputOnly,
         handleNewConversation,
         handleMergeWithAbove,
+        handleMergeWithBelow,
         handleSplitItem,
         loadSession,
         deleteSession
