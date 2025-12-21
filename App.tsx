@@ -1343,7 +1343,15 @@ export default function App() {
         }
       };
       recorder.onstop = () => {
-        console.log('Original recording stopped. Chunks:', originalAudioChunksRef.current.length);
+        const blob = new Blob(originalAudioChunksRef.current, { type: 'audio/webm' });
+        console.log('Original recording saved. Size:', blob.size);
+        // Save to state or auto-download for now to verify
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `original_session_${Date.now()}.webm`;
+        // Optional: Auto download can be annoying, maybe we just save the URL
+        // setLastRecordingUrl(url); 
       };
       recorder.start();
       originalMediaRecorderRef.current = recorder;
