@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { ConnectionStatus, Language, ConversationItem } from '../types';
 import { MODEL_LIVE } from '../constants';
-import { createPcmBlob } from '../utils/audioUtils';
+import { createPcmBlob, float32ToInt16, arrayBufferToBase64, base64ToUint8Array, decodeAudioData } from '../utils/audioUtils';
 
 interface UseGeminiLiveProps {
     langInput: Language;
@@ -192,26 +192,23 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                             const session = await sessionPromise;
                             if (session && geminiMicDesiredRef.current) {
                                 const inputData = e.inputBuffer.getChannelData(0);
-                                const pcm16 = new Int16Array(inputData.length);
-                                for (let i = 0; i < inputData.length; i++) {
-                                    pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-                                }
-                                session.sendAudio({ data: (window as any).arrayBufferToBase64 ? (window as any).arrayBufferToBase64(pcm16.buffer) : btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer))) });
+                                const pcm16 = float32ToInt16(inputData);
+                                session.sendAudio({ data: arrayBufferToBase64(pcm16.buffer) });
                             }
                         };
 
                         source.connect(processor);
                         processor.connect(inputCtx.destination);
                     },
-                    onmessage: (msg: any) => {
+                    onmessage: async (msg: any) => {
                         if (!isCurrentAttempt()) return;
                         if (msg.serverContent?.modelTurn?.parts) {
-                            msg.serverContent.modelTurn.parts.forEach((part: any) => {
+                            for (const part of msg.serverContent.modelTurn.parts) {
                                 if (part.inlineData) {
                                     onAudioReceived(part.inlineData.data);
-                                    playPCM(part.inlineData.data);
+                                    await playPCM(part.inlineData.data);
                                 }
-                            });
+                            }
                         }
                         if (msg.serverContent?.interruption) {
                             // Handle interruption if needed
@@ -286,8 +283,8 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                 const ctx = audioContextRef.current;
                 if (ctx.state === 'suspended') await ctx.resume();
 
-                const arrayBuffer = (window as any).base64ToUint8Array ? (window as any).base64ToUint8Array(base64String) : Uint8Array.from(atob(base64String), c => c.charCodeAt(0));
-                const audioBuffer = (window as any).decodeAudioData ? await (window as any).decodeAudioData(arrayBuffer, ctx, 24000) : await ctx.decodeAudioData(arrayBuffer.buffer);
+                const arrayBuffer = base64ToUint8Array(base64String);
+                const audioBuffer = await decodeAudioData(arrayBuffer, ctx, 24000);
                 const source = ctx.createBufferSource();
                 source.buffer = audioBuffer;
                 source.connect(ctx.destination);

@@ -1,5 +1,5 @@
 import { ConversationItem } from '../types';
-import { arrayBufferToBase64, base64ToUint8Array } from './audioUtils';
+import { arrayBufferToBase64, base64ToUint8Array, wavArrayBufferToPcmBase64, pcm16Base64ToWavBlob } from './audioUtils';
 import { getCachedAudioBase64 } from './idbAudioCache';
 import { generateTtsBase64 } from './tts';
 
@@ -157,86 +157,6 @@ const downloadDriveFileArrayBuffer = async (accessToken: string, fileId: string)
         throw new Error('Drive 파일 다운로드에 실패했습니다.');
     }
     return await res.arrayBuffer();
-};
-
-// --- Audio conversion helpers ---
-
-const wavArrayBufferToPcmBase64 = (wavArrayBuffer: ArrayBuffer): { base64: string; sampleRate: number; channels: number } => {
-    const view = new DataView(wavArrayBuffer);
-
-    const readStr = (offset: number, len: number) => {
-        let s = '';
-        for (let i = 0; i < len; i++) s += String.fromCharCode(view.getUint8(offset + i));
-        return s;
-    };
-
-    const riff = readStr(0, 4);
-    const wave = readStr(8, 4);
-    if (riff !== 'RIFF' || wave !== 'WAVE') {
-        return { base64: '', sampleRate: 24000, channels: 1 };
-    }
-
-    const channels = view.getUint16(22, true);
-    const sampleRate = view.getUint32(24, true);
-
-    let offset = 12;
-    let dataOffset = -1;
-    let dataSize = 0;
-    while (offset + 8 <= view.byteLength) {
-        const chunkId = readStr(offset, 4);
-        const chunkSize = view.getUint32(offset + 4, true);
-        if (chunkId === 'data') {
-            dataOffset = offset + 8;
-            dataSize = chunkSize;
-            break;
-        }
-        offset += 8 + chunkSize + (chunkSize % 2);
-    }
-
-    if (dataOffset < 0 || dataSize <= 0) {
-        return { base64: '', sampleRate, channels };
-    }
-
-    const pcmBuffer = wavArrayBuffer.slice(dataOffset, dataOffset + dataSize);
-    const bytes = new Uint8Array(pcmBuffer);
-    let binary = '';
-    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-    const base64 = btoa(binary);
-    return { base64, sampleRate, channels };
-};
-
-const pcm16Base64ToWavBlob = (base64Pcm16: string, sampleRate = 24000, numChannels = 1): Blob => {
-    const pcmBytes = base64ToUint8Array(base64Pcm16);
-
-    const bytesPerSample = 2;
-    const blockAlign = numChannels * bytesPerSample;
-    const byteRate = sampleRate * blockAlign;
-    const dataSize = pcmBytes.byteLength;
-    const buffer = new ArrayBuffer(44 + dataSize);
-    const view = new DataView(buffer);
-
-    const writeString = (offset: number, s: string) => {
-        for (let i = 0; i < s.length; i++) {
-            view.setUint8(offset + i, s.charCodeAt(i));
-        }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + dataSize, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, byteRate, true);
-    view.setUint16(32, blockAlign, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, dataSize, true);
-
-    new Uint8Array(buffer, 44).set(pcmBytes);
-    return new Blob([buffer], { type: 'audio/wav' });
 };
 
 // --- Main Drive Functions ---

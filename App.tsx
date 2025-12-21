@@ -8,12 +8,12 @@ import { getCachedAudioBase64, setCachedAudioBase64, clearCachedAudio } from './
 import {
   backupToDrive,
   exportToDocs,
-  downloadTranscriptLocally,
   listDriveSessions,
   restoreDriveSession,
   listCourses,
   createCourseWork
 } from './utils/googleWorkspace';
+import { downloadTranscriptLocally } from './utils/fileExport';
 import { Language, ConnectionStatus, VoiceOption, ConversationItem, ConversationSession, VisionResult } from './types';
 import {
   SUPPORTED_LANGUAGES,

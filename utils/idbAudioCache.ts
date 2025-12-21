@@ -89,7 +89,8 @@ export const setCachedAudioBase64 = async (id: string, audioBase64: string): Pro
     const record: AudioRecord = { id, audioBase64, updatedAt: Date.now() };
     await requestToPromise(store.put(record));
     await txDone(tx);
-  } catch {
+  } catch (e) {
+    console.warn('indexedDB 오디오 캐시 저장 실패', e);
   }
 };
 
@@ -100,6 +101,7 @@ export const clearCachedAudio = async (): Promise<void> => {
     const store = tx.objectStore(STORE_NAME);
     await requestToPromise(store.clear());
     await txDone(tx);
-  } catch {
+  } catch (e) {
+    console.warn('indexedDB 오디오 캐시 삭제 실패', e);
   }
 };
