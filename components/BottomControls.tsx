@@ -40,19 +40,19 @@ const BottomControls: React.FC<BottomControlsProps> = ({
             <div className="flex flex-1 justify-around items-center">
                 <button
                     onClick={() => setIsAutoPlay(!isAutoPlay)}
-                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 group ${isAutoPlay ? 'text-indigo-600' : 'text-gray-400'
+                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-16 group ${isAutoPlay ? 'text-indigo-600' : 'text-gray-400'
                         }`}
                     title={isAutoPlay ? (uiLangCode === 'ko' ? '자동 읽기 끄기' : 'Turn off auto-play') : (uiLangCode === 'ko' ? '자동 읽기 켜기' : 'Turn on auto-play')}
                 >
                     <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${isAutoPlay ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
                         <SpeakerIcon />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tighter">{t.autoPlay}</span>
+                    <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">{t.autoPlay}</span>
                 </button>
 
                 <button
                     onClick={() => setIsScrollLocked(!isScrollLocked)}
-                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 group ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
+                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-16 group ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
                         }`}
                     title={isScrollLocked ? (uiLangCode === 'ko' ? '자동 스크롤 켜기' : 'Enable auto-scroll') : (uiLangCode === 'ko' ? '자동 스크롤 끄기' : 'Disable auto-scroll')}
                 >
@@ -67,7 +67,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                             </svg>
                         )}
                     </div>
-                    <span className="text-[9px] font-bold tracking-tighter">{t.autoScroll || '자동스크롤'}</span>
+                    <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">{t.autoScroll || '자동스크롤'}</span>
                 </button>
             </div>
 
@@ -127,7 +127,9 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                     <div className="p-2 rounded-xl group-hover:bg-emerald-50 transition-all">
                         <CameraIcon />
                     </div>
-                    <span className="text-[9px] font-bold tracking-tighter">{t.visionButton}</span>
+                    <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">
+                        {uiLangCode === 'jp' ? '撮影' : t.visionButton}
+                    </span>
                 </button>
             </div>
         </div>

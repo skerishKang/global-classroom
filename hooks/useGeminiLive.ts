@@ -157,7 +157,11 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             analyserNode.fftSize = 256;
             setAnalyser(analyserNode);
 
-            const instruction = `You are a helpful assistant acting as a transcriber. Your task is to listen to the user speaking in ${langInput.name}.`;
+            const instruction = langInput.code === 'auto'
+                ? `You are a highly capable AI assistant specializing in real-time transcription and translation. 
+                   Listen to the user's voice, detect the language, and provide an accurate transcription of what is said. 
+                   Do not provide commentary, only the transcription.`
+                : `You are a helpful assistant acting as a transcriber. Your task is to listen to the user speaking in ${langInput.name}.`;
 
             const sessionPromise = (ai as any).live.connect({
                 model: MODEL_LIVE,
@@ -206,6 +210,10 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                                         }]
                                     }
                                 });
+                                // Keep the camelCase but add a check for the session object readiness
+                                if (status !== ConnectionStatus.CONNECTED && isCurrentAttempt()) {
+                                    setStatus(ConnectionStatus.CONNECTED);
+                                }
                             }
                         };
 

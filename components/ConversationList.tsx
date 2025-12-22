@@ -342,7 +342,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                     )}
                 </div>
 
-                <div className="h-20"></div> {/* Spacer for bottom bar */}
+                <div className="h-32"></div> {/* Spacer for bottom bar */}
             </div>
         </div>
     );
