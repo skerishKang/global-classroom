@@ -49,6 +49,7 @@ import { useAuth } from './hooks/useAuth';
 import { useConversationHistory } from './hooks/useConversationHistory';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { AppSettings, VisionNotification } from './types';
+import { useExport } from './hooks/useExport';
 
 import {
   MicIcon,
@@ -72,7 +73,7 @@ import { mergeAudioBlobs } from './utils/audioMixer';
 export default function App() {
   // --- UI Translation State ---
   const [langInput, setLangInput] = useState<Language>(SUPPORTED_LANGUAGES[0]); // Default: Korean
-  const [langOutput, setLangOutput] = useState<Language>(SUPPORTED_LANGUAGES[1]); // Default: English
+  const [langOutput, setLangOutput] = useState<Language>(SUPPORTED_LANGUAGES[4]); // Default: Vietnamese
   const [isAutoPlay, setIsAutoPlay] = useState(false);
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICE_OPTIONS[0]);
@@ -222,11 +223,27 @@ export default function App() {
     settings
   });
 
-  // --- Remaining State ---
-  const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
-  const [isExporting, setIsExporting] = useState(false);
-  const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
-  const [isNotebookLMGuideOpen, setIsNotebookLMGuideOpen] = useState(false);
+  const {
+    isExportMenuOpen,
+    setIsExportMenuOpen,
+    isExporting,
+    isClassroomModalOpen,
+    setIsClassroomModalOpen,
+    isNotebookLMGuideOpen,
+    setIsNotebookLMGuideOpen,
+    courses,
+    isLoadingCourses,
+    exportMenuRef,
+    handleExport,
+    handleSubmitCourseWork
+  } = useExport({
+    accessToken,
+    history,
+    selectedVoice,
+    t,
+    setIsLoginModalOpen
+  });
+
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false);
@@ -280,7 +297,7 @@ export default function App() {
     }
   };
 
-  const exportMenuRef = useRef<HTMLDivElement>(null);
+  // const exportMenuRef = useRef<HTMLDivElement>(null); // Moved to useExport
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
 
@@ -354,89 +371,7 @@ export default function App() {
     setIsSettingsModalOpen(true);
   };
 
-  const handleExport = async (type: 'drive' | 'docs' | 'classroom' | 'notebooklm') => {
-    setIsExportMenuOpen(false);
-    if ((type === 'drive' || type === 'classroom' || type === 'notebooklm') && !accessToken) {
-      setIsLoginModalOpen(true);
-      return;
-    }
-
-    setIsExporting(true);
-    try {
-      if (type === 'drive') {
-        const result = await backupToDrive(accessToken!, history, {
-          includeAudio: true,
-          generateMissingAudio: true,
-          voiceName: selectedVoice.name,
-          ttsModel: MODEL_TTS,
-        });
-        if (result?.folderUrl) window.open(result.folderUrl, '_blank');
-        alert(`Drive: ${t.exportSuccess}`);
-      } else if (type === 'notebooklm') {
-        const result = await backupToDrive(accessToken!, history, {
-          includeAudio: false,
-          generateMissingAudio: false,
-          notebookLMMode: true,
-        });
-        if (result?.folderUrl) window.open(result.folderUrl, '_blank');
-        setIsNotebookLMGuideOpen(true);
-      } else if (type === 'docs') {
-        if (accessToken) {
-          await exportToDocs(accessToken, history);
-          alert(`Docs: ${t.exportSuccess}`);
-        } else {
-          downloadTranscriptLocally(history);
-          alert(t.offlineMode);
-        }
-      } else if (type === 'classroom') {
-        setIsClassroomModalOpen(true);
-        fetchCourses();
-      }
-    } catch (e) {
-      console.error("Export failed", e);
-      if (type === 'docs') {
-        downloadTranscriptLocally(history);
-        alert(t.offlineMode);
-      } else {
-        alert("Error: " + (e as Error).message);
-      }
-    } finally {
-      setIsExporting(false);
-    }
-  };
-
-  const [courses, setCourses] = useState<any[]>([]);
-  const [isLoadingCourses, setIsLoadingCourses] = useState(false);
-
-  const fetchCourses = async () => {
-    if (!accessToken) return;
-    setIsLoadingCourses(true);
-    try {
-      const list = await listCourses(accessToken);
-      setCourses(list);
-    } catch (e) {
-      console.error("Failed to fetch courses", e);
-      window.open('https://classroom.google.com', '_blank');
-      setIsClassroomModalOpen(false);
-    } finally {
-      setIsLoadingCourses(false);
-    }
-  };
-
-  const handleSubmitCourseWork = async (courseId: string) => {
-    if (!accessToken) return;
-    setIsExporting(true);
-    try {
-      await createCourseWork(accessToken, courseId, history);
-      alert(t.exportSuccess);
-      setIsClassroomModalOpen(false);
-    } catch (e) {
-      console.error(e);
-      alert("Failed to submit to Classroom");
-    } finally {
-      setIsExporting(false);
-    }
-  };
+  // Export logic moved to useExport.ts
 
 
   const splitTextForTts = (text: string, maxLen: number): string[] => {
@@ -716,8 +651,49 @@ export default function App() {
         setIsOutputOnly={setIsOutputOnly}
         uiLangCode={uiLangCode}
         setUiLangCode={setUiLangCode}
+        setIsExportMenuOpen={setIsExportMenuOpen}
         t={t}
       />
+
+      {/* --- EXPORT MENU (Popover) --- */}
+      {isExportMenuOpen && (
+        <div
+          ref={exportMenuRef}
+          className="fixed top-28 right-6 w-64 bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl border border-gray-100 py-3 z-[100] animate-in fade-in slide-in-from-top-4 duration-200"
+        >
+          <div className="px-4 py-2 border-b border-gray-50 mb-1">
+            <h3 className="text-xs font-black text-gray-900 uppercase tracking-widest">{t.exportMenu}</h3>
+          </div>
+          <button
+            onClick={() => handleExport('docs')}
+            className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+          >
+            <DocsIcon />
+            <span className="text-sm font-bold text-gray-700">{t.exportDocs}</span>
+          </button>
+          <button
+            onClick={() => handleExport('drive')}
+            className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+          >
+            <DriveIcon />
+            <span className="text-sm font-bold text-gray-700">{t.exportDrive}</span>
+          </button>
+          <button
+            onClick={() => handleExport('classroom')}
+            className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 transition-colors"
+          >
+            <ClassroomIcon />
+            <span className="text-sm font-bold text-gray-700">{t.exportClassroom}</span>
+          </button>
+          <button
+            onClick={() => handleExport('notebooklm')}
+            className="w-full text-left px-4 py-3 hover:bg-gray-50 flex items-center gap-3 transition-colors border-t border-gray-50 mt-1"
+          >
+            <NotebookLMIcon />
+            <span className="text-sm font-bold text-gray-700">{t.exportNotebookLM}</span>
+          </button>
+        </div>
+      )}
 
       {visionToastIds.length > 0 && (
         <div className="fixed top-20 right-4 z-[60] flex flex-col gap-2 w-[320px] max-w-[calc(100vw-2rem)]">

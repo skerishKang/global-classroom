@@ -1,5 +1,5 @@
 import React from 'react';
-import { GoogleLogo, GlobeIcon } from './Icons';
+import { GoogleLogo, GlobeIcon, ExportIcon } from './Icons';
 import { VoiceOption, TranslationMap } from '../types';
 import { VOICE_OPTIONS } from '../constants';
 
@@ -20,6 +20,7 @@ interface AppHeaderProps {
     setIsOutputOnly: (v: boolean) => void;
     uiLangCode: string;
     setUiLangCode: (v: string) => void;
+    setIsExportMenuOpen: (v: boolean) => void;
     t: TranslationMap;
 }
 
@@ -40,6 +41,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
     setIsOutputOnly,
     uiLangCode,
     setUiLangCode,
+    setIsExportMenuOpen,
     t,
 }) => {
     return (
@@ -158,12 +160,19 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                         className="bg-transparent text-xs font-bold text-indigo-600 outline-none cursor-pointer w-20"
                     >
                         {VOICE_OPTIONS.map(v => (
-                            <option key={v.name} value={v.name}>{v.label} ({v.gender})</option>
+                            <option key={v.name} value={v.name}>{v.label} ({v.gender.slice(0, 1)})</option>
                         ))}
                     </select>
                 </div>
 
                 <div className="flex items-center gap-2">
+                    <button
+                        onClick={() => setIsExportMenuOpen(true)}
+                        className="p-2 bg-gray-100 rounded-full border border-gray-200 text-gray-400 hover:bg-indigo-600 hover:text-white hover:border-indigo-700 hover:shadow-lg transition-all active:scale-90"
+                        title={t.exportMenu}
+                    >
+                        <ExportIcon />
+                    </button>
                     <button
                         onClick={() => setIsOutputOnly(!isOutputOnly)}
                         className={`px-4 py-2 rounded-full text-xs font-black border transition-all active:scale-90 shadow-sm whitespace-nowrap uppercase tracking-tighter ${isOutputOnly
@@ -184,6 +193,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                             className="bg-transparent text-xs font-bold text-gray-600 outline-none cursor-pointer w-full"
                         >
                             <option value="ko">Ko</option>
+                            <option value="vi">Vi</option>
                             <option value="en">En</option>
                             <option value="ja">Ja</option>
                             <option value="zh">Zh</option>
