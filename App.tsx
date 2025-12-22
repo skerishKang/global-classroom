@@ -205,10 +205,18 @@ export default function App() {
     roomId,
     isHost,
     roomStatus,
+    micRestricted,
+    handRaiseStatus,
+    pendingHandRaises,
     createRoom,
     joinRoom,
     broadcastMessage,
-    leaveRoom
+    leaveRoom,
+    toggleMicRestriction,
+    raiseHand,
+    lowerHand,
+    approveHandRaise,
+    denyHandRaise
   } = useLiveSharing({ user, onMessageReceived: onLiveMessageReceived });
 
   // Gemini Props Helpers
@@ -225,14 +233,14 @@ export default function App() {
       // Translate automatically
       translateText(text, newItem.id, langInput, langOutput);
 
-      // Broadcast if hosting
-      if (roomStatus === 'hosting') {
+      // Broadcast if hosting or if we are a student and allowed
+      if (roomStatus === 'hosting' || (roomStatus === 'joined' && (!micRestricted || handRaiseStatus === 'approved'))) {
         broadcastMessage(text, langInput.code);
       }
     } else {
       setCurrentTurnText(text);
     }
-  }, [langInput, langOutput, setHistory]);
+  }, [langInput, langOutput, setHistory, roomStatus, micRestricted, handRaiseStatus, broadcastMessage]);
 
   const onAudioReceived = useCallback((base64: string) => {
     // Gemini Live handles internal playback now
@@ -600,6 +608,9 @@ export default function App() {
         stopTTS={stopTTS}
         setIsCameraOpen={setIsCameraOpen}
         t={t}
+        micRestricted={micRestricted}
+        handRaiseStatus={handRaiseStatus}
+        isHost={isHost}
       />
 
       <CameraView
@@ -700,6 +711,14 @@ export default function App() {
         onJoin={joinRoom}
         onCreate={createRoom}
         onLeave={leaveRoom}
+        micRestricted={micRestricted}
+        handRaiseStatus={handRaiseStatus}
+        pendingHandRaises={pendingHandRaises}
+        onToggleMicRestriction={toggleMicRestriction}
+        onRaiseHand={raiseHand}
+        onLowerHand={lowerHand}
+        onApproveHandRaise={approveHandRaise}
+        onDenyHandRaise={denyHandRaise}
       />
 
       <ToastSystem toasts={toasts} onDismiss={dismissToast} />

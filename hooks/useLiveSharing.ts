@@ -13,15 +13,26 @@ import {
     Timestamp,
     limit,
     getDoc,
-    where
+    where,
+    updateDoc,
+    deleteDoc
 } from 'firebase/firestore';
 import { ConversationItem, Language } from '../types';
-
 interface RoomData {
     id: string;
     hostUid: string;
     createdAt: any;
     status: 'active' | 'closed';
+    micRestricted?: boolean;
+}
+
+export type HandRaiseStatus = 'idle' | 'pending' | 'approved' | 'denied';
+
+interface HandRaiseData {
+    studentUid: string;
+    displayName: string;
+    timestamp: any;
+    status: HandRaiseStatus;
 }
 
 interface UseLiveSharingProps {
@@ -33,17 +44,30 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
     const [roomId, setRoomId] = useState<string | null>(null);
     const [isHost, setIsHost] = useState(false);
     const [roomStatus, setRoomStatus] = useState<'idle' | 'hosting' | 'joined'>('idle');
+    const [micRestricted, setMicRestricted] = useState(false);
+    const [handRaiseStatus, setHandRaiseStatus] = useState<HandRaiseStatus>('idle');
+    const [pendingHandRaises, setPendingHandRaises] = useState<HandRaiseData[]>([]);
+
     const unsubscribeRef = useRef<(() => void) | null>(null);
+    const roomUnsubscribeRef = useRef<(() => void) | null>(null);
+    const handsUnsubscribeRef = useRef<(() => void) | null>(null);
     const lastMessageTimeRef = useRef<number>(0);
 
     const cleanup = useCallback(() => {
-        if (unsubscribeRef.current) {
-            unsubscribeRef.current();
-            unsubscribeRef.current = null;
-        }
+        if (unsubscribeRef.current) unsubscribeRef.current();
+        if (roomUnsubscribeRef.current) roomUnsubscribeRef.current();
+        if (handsUnsubscribeRef.current) handsUnsubscribeRef.current();
+
+        unsubscribeRef.current = null;
+        roomUnsubscribeRef.current = null;
+        handsUnsubscribeRef.current = null;
+
         setRoomId(null);
         setIsHost(false);
         setRoomStatus('idle');
+        setMicRestricted(false);
+        setHandRaiseStatus('idle');
+        setPendingHandRaises([]);
     }, []);
 
     // 1. Create a Room (Host)
@@ -59,7 +83,22 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
             id: newRoomId,
             hostUid: user.uid,
             createdAt: Timestamp.now(),
-            status: 'active'
+            status: 'active',
+            micRestricted: false
+        });
+
+        // Listen for hand raises (Host side)
+        const handsRef = collection(db, "rooms", newRoomId, "handRaises");
+        const qHands = query(handsRef, orderBy("timestamp", "asc"));
+        handsUnsubscribeRef.current = onSnapshot(qHands, (snapshot) => {
+            const list: HandRaiseData[] = [];
+            snapshot.forEach(doc => {
+                const data = doc.data() as HandRaiseData;
+                if (data.status === 'pending') {
+                    list.push(data);
+                }
+            });
+            setPendingHandRaises(list);
         });
 
         setRoomId(newRoomId);
@@ -83,6 +122,26 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         setIsHost(false);
         setRoomStatus('joined');
 
+        // Listen for room changes (especially micRestricted status)
+        roomUnsubscribeRef.current = onSnapshot(roomRef, (doc) => {
+            if (doc.exists()) {
+                const data = doc.data() as RoomData;
+                setMicRestricted(!!data.micRestricted);
+            }
+        });
+
+        // Listen for own hand raise status
+        if (user?.uid) {
+            const handRef = doc(db, "rooms", targetRoomId, "handRaises", user.uid);
+            onSnapshot(handRef, (doc) => {
+                if (doc.exists()) {
+                    setHandRaiseStatus(doc.data().status);
+                } else {
+                    setHandRaiseStatus('idle');
+                }
+            });
+        }
+
         // Listen for new messages
         const msgsRef = collection(db, "rooms", targetRoomId, "messages");
         const q = query(msgsRef, orderBy("timestamp", "asc"));
@@ -102,11 +161,55 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         });
 
         lastMessageTimeRef.current = Date.now();
-    }, [cleanup, onMessageReceived]);
+    }, [cleanup, onMessageReceived, user]);
 
-    // 3. Broadcast Message (Host)
-    const broadcastMessage = useCallback(async (text: string, langCode: string) => {
+    // 3. Moderation & Hand Raise Functions
+    const toggleMicRestriction = useCallback(async (restricted: boolean) => {
         if (!isHost || !roomId) return;
+        const db = getAppFirestore();
+        const roomRef = doc(db, "rooms", roomId);
+        await updateDoc(roomRef, { micRestricted: restricted });
+    }, [isHost, roomId]);
+
+    const raiseHand = useCallback(async () => {
+        if (isHost || !roomId || !user) return;
+        const db = getAppFirestore();
+        const handRef = doc(db, "rooms", roomId, "handRaises", user.uid);
+        await setDoc(handRef, {
+            studentUid: user.uid,
+            displayName: user.displayName || 'Guest',
+            timestamp: Timestamp.now(),
+            status: 'pending'
+        });
+    }, [isHost, roomId, user]);
+
+    const lowerHand = useCallback(async () => {
+        if (isHost || !roomId || !user) return;
+        const db = getAppFirestore();
+        const handRef = doc(db, "rooms", roomId, "handRaises", user.uid);
+        await deleteDoc(handRef);
+    }, [isHost, roomId, user]);
+
+    const approveHandRaise = useCallback(async (studentUid: string) => {
+        if (!isHost || !roomId) return;
+        const db = getAppFirestore();
+        const handRef = doc(db, "rooms", roomId, "handRaises", studentUid);
+        await updateDoc(handRef, { status: 'approved' });
+    }, [isHost, roomId]);
+
+    const denyHandRaise = useCallback(async (studentUid: string) => {
+        if (!isHost || !roomId) return;
+        const db = getAppFirestore();
+        const handRef = doc(db, "rooms", roomId, "handRaises", studentUid);
+        await updateDoc(handRef, { status: 'denied' });
+    }, [isHost, roomId]);
+
+    // 4. Broadcast Message
+    const broadcastMessage = useCallback(async (text: string, langCode: string) => {
+        if (!roomId) return;
+        // Host can always broadcast, Students only if not restricted or approved
+        if (!isHost && micRestricted && handRaiseStatus !== 'approved') return;
+
         const db = getAppFirestore();
         const msgsRef = collection(db, "rooms", roomId, "messages");
         await addDoc(msgsRef, {
@@ -115,7 +218,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
             timestamp: Timestamp.now(),
             senderUid: user?.uid
         });
-    }, [isHost, roomId, user]);
+    }, [isHost, roomId, user, micRestricted, handRaiseStatus]);
 
     // 4. Close/Leave Room
     const leaveRoom = useCallback(async () => {
@@ -135,9 +238,17 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         roomId,
         isHost,
         roomStatus,
+        micRestricted,
+        handRaiseStatus,
+        pendingHandRaises,
         createRoom,
         joinRoom,
         broadcastMessage,
-        leaveRoom
+        leaveRoom,
+        toggleMicRestriction,
+        raiseHand,
+        lowerHand,
+        approveHandRaise,
+        denyHandRaise
     };
 }

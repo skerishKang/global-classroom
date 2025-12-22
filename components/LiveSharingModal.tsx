@@ -1,24 +1,40 @@
 import React, { useState } from 'react';
 
-interface LiveSharingModalProps {
+type LiveSharingModalProps = {
     isOpen: boolean;
     onClose: () => void;
-    roomId: string | null;
+    roomId: string;
     roomStatus: 'idle' | 'hosting' | 'joined';
-    onJoin: (id: string) => Promise<void>;
-    onCreate: () => Promise<string | null>;
+    onJoin: (roomId: string) => Promise<void>;
+    onCreate: () => Promise<void>;
     onLeave: () => Promise<void>;
-}
+    micRestricted: boolean;
+    handRaiseStatus: 'idle' | 'pending' | 'approved' | 'denied';
+    pendingHandRaises: any[];
+    onToggleMicRestriction: (restricted: boolean) => Promise<void>;
+    onRaiseHand: () => Promise<void>;
+    onLowerHand: () => Promise<void>;
+    onApproveHandRaise: (uid: string) => Promise<void>;
+    onDenyHandRaise: (uid: string) => Promise<void>;
+};
 
-const LiveSharingModal: React.FC<LiveSharingModalProps> = ({
+const LiveSharingModal = ({
     isOpen,
     onClose,
     roomId,
     roomStatus,
     onJoin,
     onCreate,
-    onLeave
-}) => {
+    onLeave,
+    micRestricted,
+    handRaiseStatus,
+    pendingHandRaises,
+    onToggleMicRestriction,
+    onRaiseHand,
+    onLowerHand,
+    onApproveHandRaise,
+    onDenyHandRaise
+}: LiveSharingModalProps) => {
     const [joinId, setJoinId] = useState('');
     const [isBusy, setIsBusy] = useState(false);
     const [error, setError] = useState('');
@@ -115,26 +131,113 @@ const LiveSharingModal: React.FC<LiveSharingModalProps> = ({
                             </div>
                         </div>
                     ) : (
-                        <div className="text-center py-6">
-                            <div className="w-20 h-20 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4 animate-pulse">
-                                <span className="text-4xl">{roomStatus === 'hosting' ? '👑' : '👂'}</span>
+                        <div className="text-center py-4">
+                            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-3 animate-pulse">
+                                <span className="text-3xl">{roomStatus === 'hosting' ? '👑' : '👂'}</span>
                             </div>
-                            <h3 className="text-lg font-black text-gray-900 mb-1">
-                                {roomStatus === 'hosting' ? '강의를 공유 중입니다' : '강의를 시청 중입니다'}
+                            <h3 className="text-base font-black text-gray-900 mb-0.5">
+                                {roomStatus === 'hosting' ? '강의 공유 중' : '강의 시청 중'}
                             </h3>
-                            <p className="text-sm font-bold text-indigo-600 mb-6">
+                            <p className="text-sm font-bold text-indigo-600 mb-4">
                                 방 번호: {roomId}
                             </p>
 
-                            <div className="bg-gray-50 rounded-2xl p-4 mb-8 text-[11px] text-gray-500 font-medium leading-relaxed">
-                                {roomStatus === 'hosting'
-                                    ? "마이크를 켜고 말씀하시면 학생들에게 실시간으로 전송됩니다."
-                                    : "교수님이 말씀하시는 내용이 실시간으로 번역되어 나타납니다."}
-                            </div>
+                            {/* Host Controls */}
+                            {roomStatus === 'hosting' && (
+                                <div className="space-y-4 mb-6 text-left">
+                                    <div className="flex items-center justify-between p-3 bg-gray-50 rounded-xl border border-gray-100">
+                                        <div>
+                                            <p className="text-xs font-black text-gray-800">학생 마이크 제한</p>
+                                            <p className="text-[10px] text-gray-500">학생들이 자유롭게 말을 할 수 없게 합니다.</p>
+                                        </div>
+                                        <button
+                                            onClick={() => onToggleMicRestriction(!micRestricted)}
+                                            className={`w-12 h-6 rounded-full transition-colors relative ${micRestricted ? 'bg-red-500' : 'bg-gray-300'}`}
+                                        >
+                                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-transform ${micRestricted ? 'left-7' : 'left-1'}`} />
+                                        </button>
+                                    </div>
+
+                                    {pendingHandRaises.length > 0 && (
+                                        <div className="border-t pt-4">
+                                            <p className="text-xs font-black text-gray-800 mb-2 flex items-center gap-1.5">
+                                                <span>✋</span> 발언 요청 ({pendingHandRaises.length})
+                                            </p>
+                                            <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                                                {pendingHandRaises.map(req => (
+                                                    <div key={req.studentUid} className="flex items-center justify-between p-2 bg-indigo-50 rounded-lg border border-indigo-100">
+                                                        <span className="text-[11px] font-bold text-indigo-900">{req.displayName}</span>
+                                                        <div className="flex gap-1.5">
+                                                            <button
+                                                                onClick={() => onApproveHandRaise(req.studentUid)}
+                                                                className="px-2 py-1 bg-indigo-600 text-white text-[10px] font-black rounded-md hover:bg-indigo-700"
+                                                            >
+                                                                승인
+                                                            </button>
+                                                            <button
+                                                                onClick={() => onDenyHandRaise(req.studentUid)}
+                                                                className="px-2 py-1 bg-white text-gray-500 text-[10px] font-bold rounded-md border border-gray-200"
+                                                            >
+                                                                거절
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Student Status/Actions */}
+                            {roomStatus === 'joined' && (
+                                <div className="space-y-4 mb-6">
+                                    {micRestricted ? (
+                                        <div className="p-4 bg-orange-50 rounded-2xl border border-orange-100 text-left">
+                                            <p className="text-xs font-black text-orange-900 mb-1 flex items-center gap-1.5">
+                                                <span>🔒</span> 마이크 사용이 제한되었습니다
+                                            </p>
+                                            <p className="text-[10px] text-orange-700 leading-relaxed mb-3">
+                                                관리자가 학생의 마이크 사용을 제한했습니다. 질문이 있다면 손을 들어 승인을 요청하세요.
+                                            </p>
+
+                                            {handRaiseStatus === 'idle' || handRaiseStatus === 'denied' ? (
+                                                <button
+                                                    onClick={onRaiseHand}
+                                                    className="w-full bg-orange-500 text-white font-black py-2.5 rounded-xl shadow-lg shadow-orange-100 hover:bg-orange-600 active:scale-95 transition-all text-xs"
+                                                >
+                                                    ✋ 손들기 (발언권 요청)
+                                                </button>
+                                            ) : handRaiseStatus === 'pending' ? (
+                                                <div className="flex gap-2">
+                                                    <div className="flex-1 bg-gray-200 text-gray-500 font-bold py-2.5 rounded-xl text-xs flex items-center justify-center gap-2">
+                                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-pulse" />
+                                                        승인 대기 중...
+                                                    </div>
+                                                    <button
+                                                        onClick={onLowerHand}
+                                                        className="px-4 bg-white text-gray-400 font-bold rounded-xl border border-gray-200 text-[10px]"
+                                                    >
+                                                        취소
+                                                    </button>
+                                                </div>
+                                            ) : (
+                                                <div className="bg-emerald-500 text-white font-black py-2.5 rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-emerald-100 animate-bounce duration-1000">
+                                                    <span>✅</span> 발언이 승인되었습니다!
+                                                </div>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="bg-emerald-50 rounded-2xl p-4 text-[11px] text-emerald-700 font-bold leading-relaxed border border-emerald-100">
+                                            🔓 현재 마이크 사용이 허용된 상태입니다. 자유롭게 질문하실 수 있습니다.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             <button
                                 onClick={onLeave}
-                                className="w-full bg-red-50 text-red-600 font-black py-4 rounded-2xl hover:bg-red-100 active:scale-95 transition-all text-sm"
+                                className="w-full bg-red-50 text-red-600 font-black py-4 rounded-2xl hover:bg-red-100 active:scale-95 transition-all text-sm mb-4"
                             >
                                 {roomStatus === 'hosting' ? '공유 종료하기' : '방 나가기'}
                             </button>
