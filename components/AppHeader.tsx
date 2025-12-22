@@ -45,7 +45,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
     t,
 }) => {
     return (
-        <header className="bg-white/80 backdrop-blur-md px-6 py-3 shadow-sm z-40 border-b border-gray-100 shrink-0">
+        <header className="bg-white/80 backdrop-blur-md px-3 py-1.5 shadow-sm z-40 border-b border-gray-100 shrink-0">
             <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-3">
                     <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-indigo-700 rounded-xl flex items-center justify-center shadow-indigo-200 shadow-lg transform -rotate-3 hover:rotate-0 transition-transform cursor-pointer">

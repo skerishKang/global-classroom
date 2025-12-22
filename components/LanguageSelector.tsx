@@ -21,7 +21,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     onLanguageManualSelect,
 }) => {
     return (
-        <div className="bg-white px-4 py-4 shadow-sm z-10 flex flex-col gap-3 shrink-0">
+        <div className="bg-white px-3 py-1 shadow-sm z-10 flex flex-col shrink-0">
             <div className="flex items-center justify-between gap-2 bg-gray-50 p-1.5 rounded-2xl border border-gray-200">
                 <div className="flex-1 flex flex-col items-center min-w-0 hover:bg-white hover:shadow-sm rounded-xl transition-all cursor-pointer group py-1">
                     <span className="text-[10px] text-gray-800 font-bold mb-1 whitespace-nowrap group-hover:text-indigo-600 transition-colors">{t.inputLang}</span>
