@@ -15,6 +15,7 @@ interface BottomControlsProps {
     micRestricted: boolean;
     handRaiseStatus: 'idle' | 'pending' | 'approved' | 'denied';
     isHost: boolean;
+    uiLangCode: string;
 }
 
 const BottomControls: React.FC<BottomControlsProps> = ({
@@ -30,6 +31,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
     micRestricted,
     handRaiseStatus,
     isHost,
+    uiLangCode,
 }) => {
     const isMicDisabled = !isHost && micRestricted && handRaiseStatus !== 'approved';
     return (
@@ -40,7 +42,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                     onClick={() => setIsAutoPlay(!isAutoPlay)}
                     className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 group ${isAutoPlay ? 'text-indigo-600' : 'text-gray-400'
                         }`}
-                    title={isAutoPlay ? '자동 읽기 끄기' : '자동 읽기 켜기'}
+                    title={isAutoPlay ? (uiLangCode === 'ko' ? '자동 읽기 끄기' : 'Turn off auto-play') : (uiLangCode === 'ko' ? '자동 읽기 켜기' : 'Turn on auto-play')}
                 >
                     <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${isAutoPlay ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
                         <SpeakerIcon />
@@ -52,7 +54,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                     onClick={() => setIsScrollLocked(!isScrollLocked)}
                     className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 group ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
                         }`}
-                    title={isScrollLocked ? '자동 스크롤 켜기' : '자동 스크롤 끄기'}
+                    title={isScrollLocked ? (uiLangCode === 'ko' ? '자동 스크롤 켜기' : 'Enable auto-scroll') : (uiLangCode === 'ko' ? '자동 스크롤 끄기' : 'Disable auto-scroll')}
                 >
                     <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${!isScrollLocked ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
                         {isScrollLocked ? (
@@ -109,7 +111,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                 <button
                     onClick={playAll}
                     className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 w-14 hover:text-indigo-600 group"
-                    title="전체 음성 재생"
+                    title={uiLangCode === 'ko' ? '전체 음성 재생' : 'Play all history'}
                 >
                     <div className="p-2 rounded-xl group-hover:bg-indigo-50 transition-all">
                         <PlayAllIcon />
@@ -120,7 +122,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                 <button
                     onClick={() => setIsCameraOpen(true)}
                     className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 w-14 hover:text-emerald-600 group"
-                    title="칠판/노트 촬영 및 번역"
+                    title={uiLangCode === 'ko' ? '칠판/노트 촬영 및 번역' : 'Capture & Translate notes'}
                 >
                     <div className="p-2 rounded-xl group-hover:bg-emerald-50 transition-all">
                         <CameraIcon />

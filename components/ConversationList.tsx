@@ -75,38 +75,49 @@ const ConversationList: React.FC<ConversationListProps> = ({
                 {history.length === 0 && !currentTurnText && (
                     <div className="h-full flex flex-col items-center justify-start text-gray-400 text-center px-4 opacity-70 overflow-y-auto py-0">
                         <div className="mt-32 mb-3 flex flex-col items-center gap-1.5" title={t.statusStandby}>
-                            <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[11px] font-black shadow-lg animate-bounce duration-1000">{t.statusStandby}</span>
+                            <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[11px] font-black shadow-lg animate-bounce duration-1000">
+                                {(isMicOn || status === ConnectionStatus.CONNECTED) ? (uiLangCode === 'ko' ? '듣고 있습니다...' : 'Listening...') : t.statusStandby}
+                            </span>
                             <button
                                 onClick={toggleMic}
                                 className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl transition-all transform hover:scale-110 active:scale-95 ring-4 ring-indigo-50/50 ${status === ConnectionStatus.CONNECTED ? 'bg-red-500' : 'bg-gradient-to-br from-indigo-500 to-indigo-700'} text-white`}
-                                title={status === ConnectionStatus.CONNECTED ? '마이크 끄기' : '마이크 켜기'}
+                                title={status === ConnectionStatus.CONNECTED ? (uiLangCode === 'ko' ? '마이크 끄기' : 'Turn off mic') : (uiLangCode === 'ko' ? '마이크 켜기' : 'Turn on mic')}
                             >
                                 <div className="scale-75">
                                     <MicIcon />
                                 </div>
                             </button>
                         </div>
-                        <p className="mb-2 whitespace-pre-wrap text-[10px] font-semibold leading-relaxed max-w-[280px] text-gray-400">{t.emptyHint}</p>
-                        <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/80 border border-gray-200 rounded-2xl p-4 shadow-sm">
-                            <div className="font-bold text-gray-700 text-sm">{t.guideTitle}</div>
-                            <ul className="list-disc list-inside space-y-0.5 mt-1 leading-snug">
-                                <li>{t.guideMic}</li>
-                                <li>{t.guideDrive}</li>
-                                <li>{t.guideVision}</li>
-                                <li>{t.guideAuto}</li>
-                            </ul>
-                            <div className="grid grid-cols-2 gap-2 text-[11px]">
-                                <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-                                    <div className="font-bold text-gray-700">{t.shortcutTitle}</div>
-                                    <div className="mt-1 text-gray-500">{t.shortcutSpace}<br />Enter: {uiLangCode === 'ko' ? '최근 번역 듣기' : 'Play recent'}</div>
+
+                        {!(isMicOn || status === ConnectionStatus.CONNECTED) ? (
+                            <>
+                                <p className="mb-2 whitespace-pre-wrap text-[10px] font-semibold leading-relaxed max-w-[280px] text-gray-400">{t.emptyHint}</p>
+                                <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/80 border border-gray-200 rounded-2xl p-4 shadow-sm">
+                                    <div className="font-bold text-gray-700 text-sm">{t.guideTitle}</div>
+                                    <ul className="list-disc list-inside space-y-0.5 mt-1 leading-snug">
+                                        <li>{t.guideMic}</li>
+                                        <li>{t.guideDrive}</li>
+                                        <li>{t.guideVision}</li>
+                                        <li>{t.guideAuto}</li>
+                                    </ul>
+                                    <div className="grid grid-cols-2 gap-2 text-[11px]">
+                                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2" title={uiLangCode === 'ko' ? '키보드 단축키' : 'Keyboard Shortcuts'}>
+                                            <div className="font-bold text-gray-700">{t.shortcutTitle}</div>
+                                            <div className="mt-1 text-gray-500">{t.shortcutSpace}<br />Enter: {uiLangCode === 'ko' ? '최근 번역 듣기' : 'Play recent'}</div>
+                                        </div>
+                                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2" title={uiLangCode === 'ko' ? '모바일 사용 팁' : 'Mobile Usage Tips'}>
+                                            <div className="font-bold text-gray-700">{t.mobileTipTitle}</div>
+                                            <div className="mt-1 text-gray-500">{t.mobileTipDesc}</div>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-                                    <div className="font-bold text-gray-700">{t.mobileTipTitle}</div>
-                                    <div className="mt-1 text-gray-500">{t.mobileTipDesc}</div>
-                                </div>
+                            </>
+                        ) : (
+                            <div className="mt-8 animate-pulse flex flex-col items-center">
+                                <p className="text-sm font-bold text-indigo-500">{uiLangCode === 'ko' ? '실시간으로 통역을 준비하고 있습니다.' : 'Ready to translate in real-time.'}</p>
+                                <p className="text-[11px] text-gray-400 mt-2">{uiLangCode === 'ko' ? '지금 바로 말씀해 주세요!' : 'Please start speaking now!'}</p>
                             </div>
-                        </div>
-                        {/* Removed duplicate button from bottom */}
+                        )}
                     </div>
                 )}
 
@@ -217,7 +228,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                         handleMergeWithAbove(item.id);
                                                     }}
                                                     className="p-1.5 bg-white border border-gray-100 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all text-gray-400"
-                                                    title="위 항목과 병합"
+                                                    title={uiLangCode === 'ko' ? '위 항목과 병합' : 'Merge with above'}
                                                 >
                                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" /></svg>
                                                 </button>
@@ -227,7 +238,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                         handleMergeWithBelow(item.id);
                                                     }}
                                                     className="p-1.5 bg-white border border-gray-100 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all text-gray-400"
-                                                    title="아래 항목과 병합"
+                                                    title={uiLangCode === 'ko' ? '아래 항목과 병합' : 'Merge with below'}
                                                 >
                                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
                                                 </button>
@@ -237,7 +248,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                         startEditing(item);
                                                     }}
                                                     className="p-1.5 bg-white border border-gray-100 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all text-gray-400"
-                                                    title="수정"
+                                                    title={uiLangCode === 'ko' ? '수정' : 'Edit'}
                                                 >
                                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
                                                 </button>
@@ -247,7 +258,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                         copyToClipboard(`${item.original}\n${item.translated}`);
                                                     }}
                                                     className="p-1.5 bg-white border border-gray-100 rounded-lg shadow-sm hover:bg-indigo-600 hover:text-white transition-all text-gray-400"
-                                                    title="복사"
+                                                    title={uiLangCode === 'ko' ? '복사' : 'Copy'}
                                                 >
                                                     <CopyIcon />
                                                 </button>

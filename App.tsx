@@ -566,6 +566,7 @@ export default function App() {
         t={t}
         onLanguageManualSelect={() => { isLangAutoRef.current = false; }}
         onSwapLanguages={handleSwapLanguages}
+        uiLangCode={uiLangCode}
       />
 
       <ConversationList
@@ -611,6 +612,7 @@ export default function App() {
         micRestricted={micRestricted}
         handRaiseStatus={handRaiseStatus}
         isHost={isHost}
+        uiLangCode={uiLangCode}
       />
 
       <CameraView
