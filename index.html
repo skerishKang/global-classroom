@@ -1,20 +1,30 @@
 <!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Global Classroom</title>
-    <meta name="google" content="notranslate" />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
-    <style>
-      body { font-family: 'Inter', sans-serif; }
-      /* Hide scrollbar for clean UI */
-      ::-webkit-scrollbar { width: 0px; background: transparent; }
-    </style>
-  </head>
-  <body class="bg-gray-50 text-gray-900 overflow-hidden select-none">
-    <div id="root" class="h-screen w-screen relative"></div>
-    <script type="module" src="/index.tsx"></script>
-  </body>
+<html lang="ko" translate="no">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Global Classroom</title>
+  <meta name="google" content="notranslate" />
+  <meta name="microsoft" content="notranslate" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <style>
+    body {
+      font-family: 'Inter', sans-serif;
+    }
+
+    /* Hide scrollbar for clean UI */
+    ::-webkit-scrollbar {
+      width: 0px;
+      background: transparent;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-50 text-gray-900 overflow-hidden select-none">
+  <div id="root" class="h-screen w-screen relative"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
 </html>

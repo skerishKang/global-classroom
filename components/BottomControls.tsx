@@ -26,7 +26,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
     t,
 }) => {
     return (
-        <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-gray-100 px-2 pt-2 pb-[env(safe-area-inset-bottom,16px)] flex items-center justify-around z-50 shadow-[0_-10px_30px_rgba(0,0,0,0.05)]">
+        <div className="fixed bottom-0 left-0 right-0 bg-white/80 backdrop-blur-xl border-t border-gray-100 px-2 pt-2 pb-[calc(env(safe-area-inset-bottom,16px)+12px)] flex items-center justify-around z-50 shadow-[0_-10px_30px_rgba(0,0,0,0.05)]">
             {/* Left Tabs */}
             <div className="flex flex-1 justify-around items-center">
                 <button

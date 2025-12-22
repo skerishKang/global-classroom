@@ -56,7 +56,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                    {user && !user.isAnonymous ? (
+                    {user && !user.isAnonymous && user.providerId !== 'anonymous' ? (
                         <div className="relative">
                             <button
                                 onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
@@ -148,7 +148,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
 
             <div className="flex items-center justify-between gap-2">
                 <div className="flex items-center bg-gray-100 rounded-full px-3 py-1.5 border border-gray-200 hover:bg-white hover:border-indigo-200 hover:shadow-sm transition-all group">
-                    <span className="text-[10px] text-gray-500 font-bold mr-2 uppercase tracking-wide whitespace-nowrap group-hover:text-indigo-500 transition-colors">{t.voiceLabel}</span>
+                    <span className="text-[10px] text-gray-500 font-bold mr-2 uppercase tracking-wide whitespace-nowrap group-hover:text-indigo-500 transition-colors">목소리</span>
                     <select
                         value={selectedVoice.name}
                         onChange={(e) => {
@@ -181,13 +181,13 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                         <select
                             value={uiLangCode}
                             onChange={(e) => setUiLangCode(e.target.value)}
-                            className="bg-transparent text-xs font-medium text-gray-600 outline-none cursor-pointer w-full"
+                            className="bg-transparent text-xs font-bold text-gray-600 outline-none cursor-pointer w-full"
                         >
-                            <option value="ko">한국어</option>
-                            <option value="en">Eng</option>
-                            <option value="ja">日本語</option>
-                            <option value="zh">中文</option>
-                            <option value="es">Esp</option>
+                            <option value="ko">Ko</option>
+                            <option value="en">En</option>
+                            <option value="ja">Ja</option>
+                            <option value="zh">Zh</option>
+                            <option value="es">Es</option>
                         </select>
                     </div>
                 </div>
