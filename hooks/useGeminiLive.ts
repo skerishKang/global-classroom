@@ -198,7 +198,14 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                             if (session && geminiMicDesiredRef.current) {
                                 const inputData = e.inputBuffer.getChannelData(0);
                                 const pcm16 = float32ToInt16(inputData);
-                                session.sendAudio({ data: arrayBufferToBase64(pcm16.buffer) });
+                                session.send({
+                                    realtimeInput: {
+                                        mediaChunks: [{
+                                            data: arrayBufferToBase64(pcm16.buffer),
+                                            mimeType: 'audio/pcm;rate=16000'
+                                        }]
+                                    }
+                                });
                             }
                         };
 

@@ -16,6 +16,11 @@ type LiveSharingModalProps = {
     onLowerHand: () => Promise<void>;
     onApproveHandRaise: (uid: string) => Promise<void>;
     onDenyHandRaise: (uid: string) => Promise<void>;
+    localStream: MediaStream | null;
+    remoteStreams: Record<string, MediaStream>;
+    isVideoOn: boolean;
+    onStartVideo: () => Promise<void>;
+    onStopVideo: () => void;
 };
 
 const LiveSharingModal = ({
@@ -33,11 +38,17 @@ const LiveSharingModal = ({
     onRaiseHand,
     onLowerHand,
     onApproveHandRaise,
-    onDenyHandRaise
+    onDenyHandRaise,
+    localStream,
+    remoteStreams,
+    isVideoOn,
+    onStartVideo,
+    onStopVideo
 }: LiveSharingModalProps) => {
     const [joinId, setJoinId] = useState('');
     const [isBusy, setIsBusy] = useState(false);
     const [error, setError] = useState('');
+    const [isCameraFront, setIsCameraFront] = useState(true);
 
     if (!isOpen) return null;
 
@@ -235,9 +246,70 @@ const LiveSharingModal = ({
                                 </div>
                             )}
 
+                            {/* --- Video Grid (WebRTC) --- */}
+                            {isVideoOn && (
+                                <div className="grid grid-cols-1 gap-3 mb-6">
+                                    {/* Local Video */}
+                                    {localStream && (
+                                        <div className="relative bg-black rounded-2xl overflow-hidden aspect-video border-2 border-indigo-500 shadow-xl">
+                                            <video
+                                                autoPlay
+                                                muted
+                                                playsInline
+                                                ref={(v) => { if (v) v.srcObject = localStream; }}
+                                                className={`w-full h-full object-cover ${isCameraFront ? 'scale-x-[-1]' : ''}`}
+                                            />
+                                            <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-md border border-white/20">
+                                                나 (Me)
+                                            </div>
+                                        </div>
+                                    )}
+                                    {/* Remote Videos */}
+                                    {Object.entries(remoteStreams).map(([uid, stream]) => (
+                                        <div key={uid} className="relative bg-black rounded-2xl overflow-hidden aspect-video border border-gray-100 shadow-xl">
+                                            <video
+                                                autoPlay
+                                                playsInline
+                                                ref={(v) => { if (v) v.srcObject = stream; }}
+                                                className="w-full h-full object-cover"
+                                            />
+                                            <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-md border border-white/20">
+                                                {roomStatus === 'hosting' ? '전체 강의 화면' : '교수님'}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-2 mb-4">
+                                {!isVideoOn ? (
+                                    <button
+                                        onClick={onStartVideo}
+                                        className="col-span-2 bg-indigo-600 text-white font-black py-3.5 rounded-2xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 active:scale-95 transition-all text-sm flex items-center justify-center gap-2"
+                                    >
+                                        <span className="text-xl">📹</span> 비디오 켜기
+                                    </button>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={onStopVideo}
+                                            className="bg-red-500 text-white font-black py-3 rounded-2xl shadow-lg shadow-red-100 hover:bg-red-600 active:scale-95 transition-all text-sm"
+                                        >
+                                            비디오 끄기
+                                        </button>
+                                        <button
+                                            onClick={() => setIsCameraFront(!isCameraFront)}
+                                            className="bg-gray-100 text-gray-600 font-black py-3 rounded-2xl hover:bg-gray-200 active:scale-95 transition-all text-sm"
+                                        >
+                                            카메라 반전
+                                        </button>
+                                    </>
+                                )}
+                            </div>
+
                             <button
                                 onClick={onLeave}
-                                className="w-full bg-red-50 text-red-600 font-black py-4 rounded-2xl hover:bg-red-100 active:scale-95 transition-all text-sm mb-4"
+                                className="w-full bg-gray-50 text-gray-500 font-bold py-3 rounded-2xl hover:bg-gray-100 active:scale-95 transition-all text-xs"
                             >
                                 {roomStatus === 'hosting' ? '공유 종료하기' : '방 나가기'}
                             </button>

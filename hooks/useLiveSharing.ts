@@ -15,7 +15,9 @@ import {
     getDoc,
     where,
     updateDoc,
-    deleteDoc
+    deleteDoc,
+    collectionGroup,
+    serverTimestamp
 } from 'firebase/firestore';
 import { ConversationItem, Language } from '../types';
 interface RoomData {
@@ -35,6 +37,14 @@ interface HandRaiseData {
     status: HandRaiseStatus;
 }
 
+const ICE_CONFIG = {
+    iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        { urls: 'stun:stun2.l.google.com:19302' },
+    ],
+};
+
 interface UseLiveSharingProps {
     user: any;
     onMessageReceived: (text: string, langCode: string) => void;
@@ -47,20 +57,36 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
     const [micRestricted, setMicRestricted] = useState(false);
     const [handRaiseStatus, setHandRaiseStatus] = useState<HandRaiseStatus>('idle');
     const [pendingHandRaises, setPendingHandRaises] = useState<HandRaiseData[]>([]);
+    const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+    const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
+    const [isVideoOn, setIsVideoOn] = useState(false);
 
     const unsubscribeRef = useRef<(() => void) | null>(null);
     const roomUnsubscribeRef = useRef<(() => void) | null>(null);
     const handsUnsubscribeRef = useRef<(() => void) | null>(null);
+    const webrtcUnsubscribeRef = useRef<(() => void) | null>(null);
+    const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
     const lastMessageTimeRef = useRef<number>(0);
 
     const cleanup = useCallback(() => {
         if (unsubscribeRef.current) unsubscribeRef.current();
         if (roomUnsubscribeRef.current) roomUnsubscribeRef.current();
         if (handsUnsubscribeRef.current) handsUnsubscribeRef.current();
+        if (webrtcUnsubscribeRef.current) webrtcUnsubscribeRef.current();
 
         unsubscribeRef.current = null;
         roomUnsubscribeRef.current = null;
         handsUnsubscribeRef.current = null;
+        webrtcUnsubscribeRef.current = null;
+
+        // Close peer connections
+        Object.values(peerConnectionsRef.current as Record<string, RTCPeerConnection>).forEach(pc => pc.close());
+        peerConnectionsRef.current = {};
+
+        // Stop local stream
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+        }
 
         setRoomId(null);
         setIsHost(false);
@@ -68,7 +94,10 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         setMicRestricted(false);
         setHandRaiseStatus('idle');
         setPendingHandRaises([]);
-    }, []);
+        setLocalStream(null);
+        setRemoteStreams({});
+        setIsVideoOn(false);
+    }, [localStream]);
 
     // 1. Create a Room (Host)
     const createRoom = useCallback(async () => {
@@ -204,7 +233,162 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         await updateDoc(handRef, { status: 'denied' });
     }, [isHost, roomId]);
 
-    // 4. Broadcast Message
+    // 5. WebRTC Stream & Signaling
+    const startWebRTC = useCallback(async () => {
+        if (!roomId || !user) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: true
+            });
+            setLocalStream(stream);
+            setIsVideoOn(true);
+
+            if (isHost) {
+                // Host setup: signaling for EACH student
+                const db = getAppFirestore();
+                const webrtcRef = collection(db, "rooms", roomId, "webRTC");
+                webrtcUnsubscribeRef.current = onSnapshot(webrtcRef, (snapshot) => {
+                    snapshot.docChanges().forEach(async (change) => {
+                        const studentUid = change.doc.id;
+                        if (studentUid === user.uid) return;
+
+                        if (change.type === "added") {
+                            // New student joined, create connection
+                            setupHostPeer(studentUid, stream);
+                        } else if (change.type === "removed") {
+                            // Student left
+                            if (peerConnectionsRef.current[studentUid]) {
+                                peerConnectionsRef.current[studentUid].close();
+                                delete peerConnectionsRef.current[studentUid];
+                                setRemoteStreams(prev => {
+                                    const next = { ...prev };
+                                    delete next[studentUid];
+                                    return next;
+                                });
+                            }
+                        }
+                    });
+                });
+            } else {
+                // Student setup: signaling for THE host
+                // Register ourselves in webRTC collection
+                const db = getAppFirestore();
+                const signalRef = doc(db, "rooms", roomId, "webRTC", user.uid);
+                await setDoc(signalRef, {
+                    uid: user.uid,
+                    displayName: user.displayName || 'Student',
+                    joinedAt: serverTimestamp()
+                }, { merge: true });
+
+                setupStudentPeer(signalRef, stream);
+            }
+        } catch (err) {
+            console.error("Failed to get media devices:", err);
+            throw err;
+        }
+    }, [roomId, user, isHost]);
+
+    const stopWebRTC = useCallback(() => {
+        if (localStream) {
+            localStream.getTracks().forEach(track => track.stop());
+            setLocalStream(null);
+        }
+        setIsVideoOn(false);
+
+        Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+        peerConnectionsRef.current = {};
+        setRemoteStreams({});
+    }, [localStream]);
+
+    const setupHostPeer = useCallback(async (studentUid: string, stream: MediaStream) => {
+        if (!roomId || !user) return;
+        const db = getAppFirestore();
+        const pc = new RTCPeerConnection(ICE_CONFIG);
+        peerConnectionsRef.current[studentUid] = pc;
+
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                const candidatesRef = collection(db, "rooms", roomId, "webRTC", studentUid, "candidates");
+                addDoc(candidatesRef, { ...event.candidate.toJSON(), sender: 'host' });
+            }
+        };
+
+        pc.ontrack = (event) => {
+            setRemoteStreams(prev => ({ ...prev, [studentUid]: event.streams[0] }));
+        };
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        const signalRef = doc(db, "rooms", roomId, "webRTC", studentUid);
+        await updateDoc(signalRef, { offer: { sdp: offer.sdp, type: offer.type } });
+
+        // Listen for answer
+        onSnapshot(signalRef, async (snapshot) => {
+            const data = snapshot.data();
+            if (data?.answer && !pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+            }
+        });
+
+        // Listen for student candidates
+        const candidatesRef = collection(db, "rooms", roomId, "webRTC", studentUid, "candidates");
+        const q = query(candidatesRef, where("sender", "==", "client"));
+        onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach(async (change) => {
+                if (change.type === "added") {
+                    await pc.addIceCandidate(new RTCIceCandidate(change.doc.data() as any));
+                }
+            });
+        });
+    }, [roomId, user]);
+
+    const setupStudentPeer = useCallback(async (signalRef: any, stream: MediaStream) => {
+        const pc = new RTCPeerConnection(ICE_CONFIG);
+        const hostUid = 'HOST'; // We treat host specially or we'd need host's UID. 
+        // In our case, the host creates the room, their UID is hostUid in room doc.
+
+        peerConnectionsRef.current[hostUid] = pc;
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                const candidatesRef = collection(signalRef, "candidates");
+                addDoc(candidatesRef, { ...event.candidate.toJSON(), sender: 'client' });
+            }
+        };
+
+        pc.ontrack = (event) => {
+            setRemoteStreams(prev => ({ ...prev, [hostUid]: event.streams[0] }));
+        };
+
+        // Listen for offer
+        onSnapshot(signalRef, async (snapshot) => {
+            const data = snapshot.data();
+            if (data?.offer && !pc.currentRemoteDescription) {
+                await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                await updateDoc(signalRef, { answer: { sdp: answer.sdp, type: answer.type } });
+            }
+        });
+
+        // Listen for host candidates
+        const candidatesRef = collection(signalRef, "candidates");
+        const q = query(candidatesRef, where("sender", "==", "host"));
+        onSnapshot(q, (snapshot) => {
+            snapshot.docChanges().forEach(async (change) => {
+                if (change.type === "added") {
+                    await pc.addIceCandidate(new RTCIceCandidate(change.doc.data() as any));
+                }
+            });
+        });
+    }, []);
+
+    // 6. Broadcast Message
     const broadcastMessage = useCallback(async (text: string, langCode: string) => {
         if (!roomId) return;
         // Host can always broadcast, Students only if not restricted or approved
@@ -220,15 +404,16 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         });
     }, [isHost, roomId, user, micRestricted, handRaiseStatus]);
 
-    // 4. Close/Leave Room
+    // 7. Close/Leave Room
     const leaveRoom = useCallback(async () => {
         if (isHost && roomId) {
             const db = getAppFirestore();
             const roomRef = doc(db, "rooms", roomId);
             await setDoc(roomRef, { status: 'closed' }, { merge: true });
         }
+        stopWebRTC();
         cleanup();
-    }, [isHost, roomId, cleanup]);
+    }, [isHost, roomId, cleanup, stopWebRTC]);
 
     useEffect(() => {
         return () => cleanup();
@@ -241,6 +426,9 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         micRestricted,
         handRaiseStatus,
         pendingHandRaises,
+        localStream,
+        remoteStreams,
+        isVideoOn,
         createRoom,
         joinRoom,
         broadcastMessage,
@@ -249,6 +437,8 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         raiseHand,
         lowerHand,
         approveHandRaise,
-        denyHandRaise
+        denyHandRaise,
+        startWebRTC,
+        stopWebRTC
     };
 }
