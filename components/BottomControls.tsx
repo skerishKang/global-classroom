@@ -31,10 +31,11 @@ const BottomControls: React.FC<BottomControlsProps> = ({
             <div className="flex flex-1 justify-around items-center">
                 <button
                     onClick={() => setIsAutoPlay(!isAutoPlay)}
-                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 ${isAutoPlay ? 'text-indigo-600' : 'text-gray-400'
+                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 group ${isAutoPlay ? 'text-indigo-600' : 'text-gray-400'
                         }`}
+                    title={isAutoPlay ? '자동 읽기 끄기' : '자동 읽기 켜기'}
                 >
-                    <div className={`p-2 rounded-xl transition-all ${isAutoPlay ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
+                    <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${isAutoPlay ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
                         <SpeakerIcon />
                     </div>
                     <span className="text-[9px] font-bold tracking-tighter">{t.autoPlay}</span>
@@ -42,10 +43,11 @@ const BottomControls: React.FC<BottomControlsProps> = ({
 
                 <button
                     onClick={() => setIsScrollLocked(!isScrollLocked)}
-                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
+                    className={`flex flex-col items-center gap-1 transition-all active:scale-90 w-14 group ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
                         }`}
+                    title={isScrollLocked ? '자동 스크롤 켜기' : '자동 스크롤 끄기'}
                 >
-                    <div className={`p-2 rounded-xl transition-all ${!isScrollLocked ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
+                    <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${!isScrollLocked ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
                         {isScrollLocked ? (
                             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 002-2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
@@ -56,7 +58,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                             </svg>
                         )}
                     </div>
-                    <span className="text-[9px] font-bold tracking-tighter">자동스크롤</span>
+                    <span className="text-[9px] font-bold tracking-tighter">{t.autoScroll || '자동스크롤'}</span>
                 </button>
             </div>
 
@@ -68,6 +70,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                         ? 'bg-gradient-to-br from-red-500 to-rose-600 text-white shadow-red-200'
                         : 'bg-gradient-to-br from-indigo-500 to-indigo-700 text-white shadow-indigo-200'
                         }`}
+                    title={status === ConnectionStatus.CONNECTED ? '마이크 끄기' : '마이크 켜기'}
                 >
                     <div className="scale-125">
                         {status === ConnectionStatus.CONNECTING ? (
@@ -85,9 +88,10 @@ const BottomControls: React.FC<BottomControlsProps> = ({
             <div className="flex flex-1 justify-around items-center">
                 <button
                     onClick={playAll}
-                    className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 w-14 hover:text-indigo-600"
+                    className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 w-14 hover:text-indigo-600 group"
+                    title="전체 음성 재생"
                 >
-                    <div className="p-2 rounded-xl hover:bg-indigo-50 transition-all">
+                    <div className="p-2 rounded-xl group-hover:bg-indigo-50 transition-all">
                         <PlayAllIcon />
                     </div>
                     <span className="text-[9px] font-bold tracking-tighter">{t.playAll}</span>
@@ -95,9 +99,10 @@ const BottomControls: React.FC<BottomControlsProps> = ({
 
                 <button
                     onClick={() => setIsCameraOpen(true)}
-                    className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 w-14 hover:text-emerald-600"
+                    className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 w-14 hover:text-emerald-600 group"
+                    title="칠판/노트 촬영 및 번역"
                 >
-                    <div className="p-2 rounded-xl hover:bg-emerald-50 transition-all">
+                    <div className="p-2 rounded-xl group-hover:bg-emerald-50 transition-all">
                         <CameraIcon />
                     </div>
                     <span className="text-[9px] font-bold tracking-tighter">{t.visionButton}</span>

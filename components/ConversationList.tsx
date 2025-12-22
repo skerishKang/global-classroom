@@ -29,6 +29,7 @@ interface ConversationListProps {
     playTTS: (text: string, id: string) => void;
     stopTTS: () => void;
     startEditing: (item: ConversationItem) => void;
+    uiLangCode: string;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -57,6 +58,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
     playTTS,
     stopTTS,
     startEditing,
+    uiLangCode,
 }) => {
     return (
         <div className="flex-1 overflow-hidden relative bg-slate-50 flex flex-col">
@@ -72,11 +74,12 @@ const ConversationList: React.FC<ConversationListProps> = ({
             >
                 {history.length === 0 && !currentTurnText && (
                     <div className="h-full flex flex-col items-center justify-start text-gray-400 text-center px-4 opacity-70 overflow-y-auto py-0">
-                        <div className="mt-12 mb-3 flex flex-col items-center gap-1.5">
-                            <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[11px] font-black shadow-lg animate-bounce duration-1000">터치하여 시작하기</span>
+                        <div className="mt-32 mb-3 flex flex-col items-center gap-1.5" title={t.statusStandby}>
+                            <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[11px] font-black shadow-lg animate-bounce duration-1000">{t.statusStandby}</span>
                             <button
                                 onClick={toggleMic}
                                 className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl transition-all transform hover:scale-110 active:scale-95 ring-4 ring-indigo-50/50 ${status === ConnectionStatus.CONNECTED ? 'bg-red-500' : 'bg-gradient-to-br from-indigo-500 to-indigo-700'} text-white`}
+                                title={status === ConnectionStatus.CONNECTED ? '마이크 끄기' : '마이크 켜기'}
                             >
                                 <div className="scale-75">
                                     <MicIcon />
@@ -85,21 +88,21 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         </div>
                         <p className="mb-2 whitespace-pre-wrap text-[10px] font-semibold leading-relaxed max-w-[280px] text-gray-400">{t.emptyHint}</p>
                         <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/80 border border-gray-200 rounded-2xl p-4 shadow-sm">
-                            <div className="font-bold text-gray-700 text-sm">빠른 안내</div>
+                            <div className="font-bold text-gray-700 text-sm">{t.guideTitle}</div>
                             <ul className="list-disc list-inside space-y-0.5 mt-1 leading-snug">
-                                <li>마이크 버튼을 눌러 실시간 번역을 시작하세요.</li>
-                                <li>Google 로그인 시 Drive 백업/Docs 저장 가능.</li>
-                                <li>칠판 촬영(비전)으로 텍스트 감지 번역 가능.</li>
-                                <li>자동 읽기/스크롤 토글로 편의 기능 선택.</li>
+                                <li>{t.guideMic}</li>
+                                <li>{t.guideDrive}</li>
+                                <li>{t.guideVision}</li>
+                                <li>{t.guideAuto}</li>
                             </ul>
                             <div className="grid grid-cols-2 gap-2 text-[11px]">
                                 <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-                                    <div className="font-bold text-gray-700">단축키</div>
-                                    <div className="mt-1 text-gray-500">스페이스: 마이크 on/off<br />Enter: 최근 번역 듣기</div>
+                                    <div className="font-bold text-gray-700">{t.shortcutTitle}</div>
+                                    <div className="mt-1 text-gray-500">{t.shortcutSpace}<br />Enter: {uiLangCode === 'ko' ? '최근 번역 듣기' : 'Play recent'}</div>
                                 </div>
                                 <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2">
-                                    <div className="font-bold text-gray-700">모바일 팁</div>
-                                    <div className="mt-1 text-gray-500">하단 고정 버튼으로 한 손 조작, 세로 모드 최적화</div>
+                                    <div className="font-bold text-gray-700">{t.mobileTipTitle}</div>
+                                    <div className="mt-1 text-gray-500">{t.mobileTipDesc}</div>
                                 </div>
                             </div>
                         </div>

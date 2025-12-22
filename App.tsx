@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
-  logOut
+  logOut,
+  getUserProfile,
+  saveUserProfile
 } from './utils/firebase';
 import { clearSessions } from './utils/localStorage';
 import { getCachedAudioBase64, setCachedAudioBase64, clearCachedAudio } from './utils/idbAudioCache';
@@ -48,6 +50,7 @@ import BottomControls from './components/BottomControls';
 import ExportMenu from './components/ExportMenu';
 import VisionToastSystem from './components/VisionToastSystem';
 import ToastSystem from './components/ToastSystem';
+import LiveSharingModal from './components/LiveSharingModal';
 
 import { useAuth } from './hooks/useAuth';
 import { useConversationHistory } from './hooks/useConversationHistory';
@@ -58,6 +61,7 @@ import { useAudioPlayer } from './hooks/useAudioPlayer';
 import { useStorage } from './hooks/useStorage';
 import { useTranslationService } from './hooks/useTranslationService';
 import { useToast } from './hooks/useToast';
+import { useLiveSharing } from './hooks/useLiveSharing';
 import { AppSettings, VisionNotification } from './types';
 
 import {
@@ -159,6 +163,14 @@ export default function App() {
     return saved || 'ko';
   });
 
+  // --- UI Language Sync with Output Language ---
+  useEffect(() => {
+    if (langOutput.code !== 'auto' && langOutput.code !== uiLangCode) {
+      setUiLangCode(langOutput.code);
+      localStorage.setItem(UI_LANG_KEY, langOutput.code);
+    }
+  }, [langOutput.code, uiLangCode]);
+
   // --- Translation Helpers ---
   const t = TRANSLATIONS[uiLangCode] || TRANSLATIONS['ko'];
 
@@ -174,6 +186,31 @@ export default function App() {
     MODEL_TRANSLATE
   });
 
+  // --- Live Sharing ---
+  const onLiveMessageReceived = useCallback((text: string, langCode: string) => {
+    const newItem: ConversationItem = {
+      id: crypto.randomUUID(),
+      original: text,
+      translated: '',
+      isTranslating: true,
+      timestamp: Date.now(),
+    };
+    setHistory(prev => [...prev, newItem]);
+    // Determine source language for translation
+    const sourceLang = SUPPORTED_LANGUAGES.find(l => l.code === langCode) || SUPPORTED_LANGUAGES[1]; // fallback to Korean
+    translateText(text, newItem.id, sourceLang, langOutput);
+  }, [langOutput, setHistory, translateText]);
+
+  const {
+    roomId,
+    isHost,
+    roomStatus,
+    createRoom,
+    joinRoom,
+    broadcastMessage,
+    leaveRoom
+  } = useLiveSharing({ user, onMessageReceived: onLiveMessageReceived });
+
   // Gemini Props Helpers
   const onTranscriptReceived = useCallback((text: string, isFinal: boolean) => {
     if (isFinal) {
@@ -187,6 +224,11 @@ export default function App() {
       setHistory(prev => [...prev, newItem]);
       // Translate automatically
       translateText(text, newItem.id, langInput, langOutput);
+
+      // Broadcast if hosting
+      if (roomStatus === 'hosting') {
+        broadcastMessage(text, langInput.code);
+      }
     } else {
       setCurrentTurnText(text);
     }
@@ -286,6 +328,7 @@ export default function App() {
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isNotificationMenuOpen, setIsNotificationMenuOpen] = useState(false);
   const [isSummaryModalOpen, setIsSummaryModalOpen] = useState(false);
+  const [isLiveModalOpen, setIsLiveModalOpen] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
   const [summaryText, setSummaryText] = useState('');
 
@@ -318,6 +361,24 @@ export default function App() {
       console.error('Failed to copy text: ', err);
     });
   };
+
+  const handleSwapLanguages = useCallback(() => {
+    const prevInput = langInputRef.current;
+    const prevOutput = langOutputRef.current;
+
+    // If input is 'auto', we swap output to input, but what becomes output?
+    // User probably wants to reverse the current flow.
+    // If input was 'auto', and output was 'ko', swapping means input='ko' and output='en' (fallback)
+    // or just swap them directly if input isn't 'auto'.
+    if (prevInput.code === 'auto') {
+      setLangInput(prevOutput);
+      const fallbackTo = prevOutput.code === 'ko' ? SUPPORTED_LANGUAGES.find(l => l.code === 'en')! : SUPPORTED_LANGUAGES.find(l => l.code === 'ko')!;
+      setLangOutput(fallbackTo);
+    } else {
+      setLangInput(prevOutput);
+      setLangOutput(prevInput);
+    }
+  }, []);
 
   // const exportMenuRef = useRef<HTMLDivElement>(null); // Moved to useExport
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -406,8 +467,23 @@ export default function App() {
   useEffect(() => {
     try {
       localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+      // Also save to Cloud if logged in
+      if (user?.uid && !user.isAnonymous) {
+        saveUserProfile(user.uid, { userApiKey: settings.userApiKey });
+      }
     } catch { }
-  }, [settings]);
+  }, [settings, user]);
+
+  // Load Cloud Settings on Login
+  useEffect(() => {
+    if (user?.uid && !user.isAnonymous) {
+      getUserProfile(user.uid).then(profile => {
+        if (profile?.userApiKey && profile.userApiKey !== settings.userApiKey) {
+          setSettings(prev => ({ ...prev, userApiKey: profile.userApiKey }));
+        }
+      });
+    }
+  }, [user]);
 
   useEffect(() => {
     if (!isAdmin) {
@@ -446,6 +522,8 @@ export default function App() {
         setIsSettingsModalOpen={setIsSettingsModalOpen}
         setIsAdminPanelOpen={setIsAdminPanelOpen}
         setIsLoginModalOpen={setIsLoginModalOpen}
+        setIsLiveModalOpen={setIsLiveModalOpen}
+        roomStatus={roomStatus}
         selectedVoice={selectedVoice}
         setSelectedVoice={setSelectedVoice}
         isOutputOnly={isOutputOnly}
@@ -479,6 +557,7 @@ export default function App() {
         setLangOutput={setLangOutput}
         t={t}
         onLanguageManualSelect={() => { isLangAutoRef.current = false; }}
+        onSwapLanguages={handleSwapLanguages}
       />
 
       <ConversationList
@@ -506,6 +585,8 @@ export default function App() {
         handleSplitItem={handleSplitItem}
         copyToClipboard={copyToClipboard}
         playTTS={playTTS}
+        stopTTS={stopTTS}
+        uiLangCode={uiLangCode}
       />
 
       <BottomControls
@@ -609,6 +690,16 @@ export default function App() {
       <NotebookLMGuide
         isOpen={isNotebookLMGuideOpen}
         onClose={() => setIsNotebookLMGuideOpen(false)}
+      />
+
+      <LiveSharingModal
+        isOpen={isLiveModalOpen}
+        onClose={() => setIsLiveModalOpen(false)}
+        roomId={roomId}
+        roomStatus={roomStatus}
+        onJoin={joinRoom}
+        onCreate={createRoom}
+        onLeave={leaveRoom}
       />
 
       <ToastSystem toasts={toasts} onDismiss={dismissToast} />

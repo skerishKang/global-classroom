@@ -8,6 +8,7 @@ interface LanguageSelectorProps {
     setLangInput: (l: Language) => void;
     langOutput: Language;
     setLangOutput: (l: Language) => void;
+    onSwapLanguages: () => void;
     t: TranslationMap;
     onLanguageManualSelect: () => void;
 }
@@ -17,6 +18,7 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     setLangInput,
     langOutput,
     setLangOutput,
+    onSwapLanguages,
     t,
     onLanguageManualSelect,
 }) => {
@@ -43,7 +45,19 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                     </div>
                 </div>
 
-                <div className="text-gray-300 shrink-0"><ArrowRightIcon /></div>
+                <div className="relative group/swap">
+                    <button
+                        onClick={onSwapLanguages}
+                        className="p-1.5 bg-white rounded-full border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-md transition-all active:scale-90 z-20 relative shadow-sm"
+                        title="언어 전환 (Swap)"
+                    >
+                        <svg className="w-4 h-4 transition-transform group-hover/swap:rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                        </svg>
+                    </button>
+                    {/* Visual drag indicator hint */}
+                    <div className="absolute -inset-1 bg-indigo-50/0 group-hover/swap:bg-indigo-50/50 rounded-lg -z-10 transition-all pointer-events-none"></div>
+                </div>
 
                 <div className="flex-1 flex flex-col items-center min-w-0 hover:bg-white hover:shadow-sm rounded-xl transition-all cursor-pointer group py-1">
                     <span className="text-[10px] text-gray-800 font-bold mb-1 whitespace-nowrap group-hover:text-indigo-600 transition-colors">{t.outputLang}</span>

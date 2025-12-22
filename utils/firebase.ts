@@ -1,15 +1,28 @@
-// Import from the exact paths defined in importmap
 import { initializeApp } from 'firebase/app';
-import { 
-  getAuth, 
+import {
+  getAuth,
   signOut,
   signInAnonymously,
   createUserWithEmailAndPassword,
   signInWithEmailAndPassword,
   Auth
 } from 'firebase/auth';
+import {
+  getFirestore,
+  doc,
+  setDoc,
+  getDoc,
+  collection,
+  onSnapshot,
+  query,
+  where,
+  orderBy,
+  addDoc,
+  updateDoc,
+  Timestamp,
+  Firestore
+} from 'firebase/firestore';
 
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCGsYx0VAqEuNdY9SrHgj9WvX3nXqUZrYc",
   authDomain: "global-classroom-b4322.firebaseapp.com",
@@ -20,10 +33,10 @@ const firebaseConfig = {
   measurementId: "G-4WPH84VZ32"
 };
 
-// Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
 let authInstance: Auth | null = null;
+let firestoreInstance: Firestore | null = null;
 
 export const getAppAuth = (): Auth => {
   if (!authInstance) {
@@ -32,10 +45,12 @@ export const getAppAuth = (): Auth => {
   return authInstance;
 };
 
-// --- Auth Functions ---
-
-// Note: Google Login is now handled via GIS (Google Identity Services) in App.tsx
-// to avoid iframe/popup blocking issues.
+export const getAppFirestore = (): Firestore => {
+  if (!firestoreInstance) {
+    firestoreInstance = getFirestore(app);
+  }
+  return firestoreInstance;
+};
 
 export const signInAsGuest = async () => {
   try {
@@ -63,11 +78,28 @@ export const signInWithEmailPassword = async (email: string, password: string) =
 export const logOut = async () => {
   try {
     const auth = getAppAuth();
-    // Also revoke token in App.tsx logic if possible, but here we just sign out of Firebase
     await signOut(auth);
   } catch (error) {
     console.error("Logout failed", error);
   }
+};
+
+// --- Firestore Functions ---
+
+export const getUserProfile = async (uid: string) => {
+  const db = getAppFirestore();
+  const docRef = doc(db, "users", uid);
+  const docSnap = await getDoc(docRef);
+  if (docSnap.exists()) {
+    return docSnap.data();
+  }
+  return null;
+};
+
+export const saveUserProfile = async (uid: string, data: any) => {
+  const db = getAppFirestore();
+  const docRef = doc(db, "users", uid);
+  await setDoc(docRef, { ...data, updatedAt: Timestamp.now() }, { merge: true });
 };
 
 export default app;

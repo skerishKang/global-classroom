@@ -99,6 +99,16 @@ export interface TranslationMap {
   copySuccess: string;
   noAudioToExport: string;
   downloadCombinedAudio: string;
+  autoScroll: string;
+  guideTitle: string;
+  guideMic: string;
+  guideDrive: string;
+  guideVision: string;
+  guideAuto: string;
+  shortcutTitle: string;
+  shortcutSpace: string;
+  mobileTipTitle: string;
+  mobileTipDesc: string;
 }
 
 export type VisionNotificationStatus = 'capturing' | 'analyzing' | 'translating' | 'done' | 'error';
