@@ -307,6 +307,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                         )}
 
 
+                                        <div className={interviewMode && !isOutputOnly ? 'grid grid-cols-2 gap-4 items-stretch' : ''}>
                                         {!isOutputOnly && (
                                             <div className="bg-white border border-gray-200 p-4 rounded-xl shadow-sm text-gray-800 leading-relaxed text-sm md:text-base">
                                                 {item.original}
@@ -314,7 +315,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                         )}
 
                                         <div
-                                            className={`${!isOutputOnly ? 'mt-2' : ''} p-4 rounded-xl border transition-all text-sm md:text-base relative ${item.isTranslating
+                                            className={`${!isOutputOnly && !interviewMode ? 'mt-2' : ''} p-4 rounded-xl border transition-all text-sm md:text-base relative ${item.isTranslating
                                                 ? 'bg-gray-50 border-gray-100'
                                                 : 'bg-indigo-50/50 border-indigo-100 shadow-sm'
                                                 }`}
@@ -357,6 +358,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                     )}
                                                 </div>
                                             )}
+                                        </div>
                                         </div>
                                     </>
                                 )}
