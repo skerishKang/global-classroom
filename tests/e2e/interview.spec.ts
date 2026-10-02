@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test.describe('AI Interview Interpreter', () => {
   test.beforeEach(async ({ page }) => {
-    await page.route('**/api/translate', async (route) => {
+    const fulfillTranslation = async (route: any) => {
       const request = route.request();
       const body = request.postDataJSON() as { text?: string; from?: string; to?: string };
       const translated =
@@ -15,7 +15,10 @@ test.describe('AI Interview Interpreter', () => {
         contentType: 'application/json',
         body: JSON.stringify({ translated, provider: 'test', model: 'test' }),
       });
-    });
+    };
+
+    await page.route('**/api/translate', fulfillTranslation);
+    await page.route('**/translate', fulfillTranslation);
 
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
   });
