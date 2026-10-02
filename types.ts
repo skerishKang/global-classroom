@@ -21,12 +21,21 @@ export enum ConnectionStatus {
 }
 
 // Conversation Item Structure
+export interface GlossaryEntry {
+  source: string;
+  target: string;
+}
+
 export interface ConversationItem {
   id: string;
   original: string;
   translated: string;
   isTranslating: boolean;
   timestamp: number;
+  sourceKind?: 'voice' | 'text';
+  originalRaw?: string;
+  translationKind?: 'live' | 'manual';
+  translationStale?: boolean;
   audioBase64?: string; // Cache for TTS audio (in-memory)
   audioUrl?: string; // Firebase Storage URL
   updatedAt?: number;

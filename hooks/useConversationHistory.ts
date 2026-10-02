@@ -194,9 +194,19 @@ export function useConversationHistory() {
     }, []);
 
     const handleSaveEdit = useCallback((id: string, original: string, translated: string) => {
-        setHistory(prev => prev.map(item => item.id === id ? {
-            ...item, original, translated, updatedAt: Date.now()
-        } : item));
+        setHistory(prev => prev.map(item => {
+            if (item.id !== id) return item;
+            const sourceChanged = original !== item.original;
+            const translationChanged = translated !== item.translated;
+            return {
+                ...item,
+                original,
+                translated,
+                translationStale: translationChanged ? false : (sourceChanged ? true : item.translationStale),
+                translationKind: translationChanged ? 'manual' : item.translationKind,
+                updatedAt: Date.now(),
+            };
+        }));
     }, []);
 
     const handleClearSessions = useCallback(() => {

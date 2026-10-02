@@ -1,5 +1,5 @@
 import React, { useCallback, useRef } from 'react';
-import { Language, ConversationItem, AppSettings } from '../types';
+import { Language, ConversationItem, AppSettings, GlossaryEntry } from '../types';
 import { SUPPORTED_LANGUAGES } from '../constants';
 
 interface UseTranslationServiceProps {
@@ -46,7 +46,13 @@ export function useTranslationService({
         return text ? JSON.parse(text) : ({} as T);
     }, [settings.userApiKey]);
 
-    const translateText = async (text: string, id: string, fromLang: Language, toLang: Language) => {
+    const translateText = async (
+        text: string,
+        id: string,
+        fromLang: Language,
+        toLang: Language,
+        glossary: GlossaryEntry[] = [],
+    ) => {
         if (pendingIdsRef.current.has(id)) return;
         pendingIdsRef.current.add(id);
         try {
@@ -87,10 +93,17 @@ export function useTranslationService({
                 from: actualFrom,
                 to: actualTo,
                 model: MODEL_TRANSLATE,
+                glossary,
             });
             const translated = data.translated?.trim() || "";
             setHistory(prev => prev.map(item =>
-                item.id === id ? { ...item, translated: translated, isTranslating: false } : item
+                item.id === id ? {
+                    ...item,
+                    translated,
+                    isTranslating: false,
+                    translationKind: 'manual',
+                    translationStale: false,
+                } : item
             ));
             if (isAutoPlay && translated) {
                 playTTS(translated, id);

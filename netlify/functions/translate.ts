@@ -24,12 +24,27 @@ const GOOGLE_MODELS = [
   'gemini-3.1-flash-lite',
 ];
 
-const translationPrompt = (text: string, from: string, to: string) =>
-  `Translate the following text from ${from} to ${to}.
-Preserve the speaker's meaning, technical terminology, numbers, product names, and level of certainty.
-Make the result natural for a professional interview.
-Output ONLY the translated text, with no explanation or quotation marks.
-Text: ${text}`;
+const translationPrompt = (
+  text: string,
+  from: string,
+  to: string,
+  glossary: Array<{ source: string; target: string }>,
+) => {
+  const glossaryBlock = glossary.length
+    ? `\nPreferred terminology (apply when relevant, do not invent occurrences):\n${glossary
+        .map((entry) => `- ${entry.source} => ${entry.target}`)
+        .join('\n')}`
+    : '';
+
+  return `Translate the following text from ${from} to ${to}.
+Preserve the speaker's meaning, technical terminology, numbers, product names, uncertainty, sentence boundaries, paragraph breaks, and list structure as closely as the target language allows.
+Do not summarize, combine separate ideas, omit repetitions, or rewrite the speaker's argument.
+Apply the preferred terminology exactly when the matching source term occurs.
+Output ONLY the translated text, with no explanation or quotation marks.${glossaryBlock}
+
+Text:
+${text}`;
+};
 
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
@@ -66,6 +81,13 @@ export const handler = async (event: any) => {
   const text = typeof body.text === 'string' ? body.text : '';
   const from = typeof body.from === 'string' ? body.from : '';
   const to = typeof body.to === 'string' ? body.to : '';
+  const glossary = Array.isArray(body.glossary)
+    ? body.glossary
+        .filter((entry: any) => entry && typeof entry.source === 'string' && typeof entry.target === 'string')
+        .map((entry: any) => ({ source: entry.source.trim(), target: entry.target.trim() }))
+        .filter((entry: any) => entry.source && entry.target)
+        .slice(0, 100)
+    : [];
 
   if (!text.trim() || !from || !to) {
     return {
@@ -75,7 +97,7 @@ export const handler = async (event: any) => {
     };
   }
 
-  const prompt = translationPrompt(text.trim(), from, to);
+  const prompt = translationPrompt(text, from, to, glossary);
   let lastError: any = null;
   let lastErrorDetail: any = null;
 
@@ -89,7 +111,7 @@ export const handler = async (event: any) => {
           model: route.id,
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.1,
-          max_tokens: 512,
+          max_tokens: 2048,
           reasoning_effort: route.reasoningEffort,
         };
 

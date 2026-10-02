@@ -10,7 +10,6 @@ interface ConversationListProps {
     currentTurnText: string;
     currentTurnTranslation?: string;
     interviewMode?: boolean;
-    interviewPreviewAvailable?: boolean;
     isOutputOnly: boolean;
     historyRef: React.RefObject<HTMLDivElement>;
     t: TranslationMap;
@@ -33,6 +32,7 @@ interface ConversationListProps {
     stopTTS: () => void;
     startEditing: (item: ConversationItem) => void;
     uiLangCode: string;
+    onRetranslate?: (item: ConversationItem) => void;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -42,7 +42,6 @@ const ConversationList: React.FC<ConversationListProps> = ({
     currentTurnText,
     currentTurnTranslation = '',
     interviewMode = false,
-    interviewPreviewAvailable = false,
     isOutputOnly,
     historyRef,
     t,
@@ -65,6 +64,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
     stopTTS,
     startEditing,
     uiLangCode,
+    onRetranslate,
 }) => {
     return (
         <div className="flex-1 overflow-hidden relative bg-slate-50 flex flex-col">
@@ -115,8 +115,8 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                     <ul className="list-disc list-inside space-y-1 leading-snug">
                                         <li>{uiLangCode === 'ko' ? '입력 언어는 자동 감지합니다.' : 'Input language is detected automatically.'}</li>
                                         <li>{uiLangCode === 'ko' ? '한국어와 영어가 섞여도 원문 자막은 그대로 표시합니다.' : 'Mixed Korean and English remain visible in the source transcript.'}</li>
-                                        <li>{uiLangCode === 'ko' ? '말하는 동안 실시간 자막과 Live Translate 미리보기를 표시합니다.' : 'Live transcript and translation preview appear while you speak.'}</li>
-                                        <li>{uiLangCode === 'ko' ? '발화가 끝나면 확정 번역을 대화 기록에 저장합니다.' : 'Final translation is saved to the conversation after each utterance.'}</li>
+                                        <li>{uiLangCode === 'ko' ? '말하는 동안 실시간 자막과 번역을 나란히 표시합니다.' : 'Live transcript and translation appear side-by-side while you speak.'}</li>
+                                        <li>{uiLangCode === 'ko' ? '발화가 끝나면 실시간 번역을 그대로 보존하고, 필요할 때만 다시 번역합니다.' : 'When an utterance ends, the live translation is preserved and retranslation runs only on request.'}</li>
                                     </ul>
                                 </div>
                             ) : (
@@ -328,7 +328,14 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 </div>
                                             ) : (
                                                 <div className="flex flex-col gap-3">
-                                                    <span className="text-indigo-900 font-medium leading-relaxed text-sm md:text-base block">{item.translated}</span>
+                                                    {item.translationStale && (
+                                                        <span className="w-fit rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">
+                                                            {uiLangCode === 'ko' ? '원문이 수정됨 · 다시 번역 권장' : 'Source edited · retranslation recommended'}
+                                                        </span>
+                                                    )}
+                                                    <span className="text-indigo-900 font-medium leading-relaxed text-sm md:text-base block">
+                                                        {item.translated || (interviewMode ? (uiLangCode === 'ko' ? '번역 없음' : 'No translation yet') : '')}
+                                                    </span>
                                                     {item.translated && (
                                                         <div className="flex items-center gap-2">
                                                             <button
@@ -356,6 +363,18 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                             </button>
                                                         </div>
                                                     )}
+                                                    {interviewMode && onRetranslate && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                onRetranslate(item);
+                                                            }}
+                                                            className="w-fit rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50"
+                                                        >
+                                                            {uiLangCode === 'ko' ? '다시 번역' : 'Retranslate'}
+                                                        </button>
+                                                    )}
                                                 </div>
                                             )}
                                         </div>
@@ -380,10 +399,11 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                     {currentTurnText || (uiLangCode === 'ko' ? '듣는 중...' : 'Listening...')}
                                 </div>
                                 <div className="border border-indigo-200 border-dashed bg-indigo-50/60 p-4 rounded-xl text-indigo-900">
-                                    <div className="mb-1 flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-wide text-indigo-400">
-                                        <span>{interviewMode ? 'Live Translate' : (uiLangCode === 'ko' ? '번역 대기' : 'Translation')}</span>
-                                        {interviewMode && interviewPreviewAvailable && <span>LIVE</span>}
-                                    </div>
+                                    {!interviewMode && (
+                                        <div className="mb-1 flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-wide text-indigo-400">
+                                            <span>{uiLangCode === 'ko' ? '번역 대기' : 'Translation'}</span>
+                                        </div>
+                                    )}
                                     <div className={currentTurnTranslation ? 'font-medium' : 'text-gray-300 italic'}>
                                         {currentTurnTranslation || '...'}
                                     </div>

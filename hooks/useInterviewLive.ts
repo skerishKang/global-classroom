@@ -9,7 +9,8 @@ type LiveTranslationTarget = 'en' | 'ko';
 type UseInterviewLiveOptions = {
   onInterimTranscript: (text: string) => void;
   onFinalTranscript: (text: string) => void;
-  onLiveTranslation: (target: LiveTranslationTarget, text: string) => void;
+  onLiveTranslation: (target: LiveTranslationTarget, text: string, isFinal: boolean) => void;
+  glossaryTerms?: string[];
   onWarning?: (message: string) => void;
   onFatalError?: (message: string) => void;
 };
@@ -39,13 +40,23 @@ const CUSTOM_VOCABULARY = [
 ];
 
 function mergeStreamText(previous: string, incoming: string) {
-  const next = incoming.trim();
-  if (!next) return previous;
-  if (!previous) return next;
-  if (next.startsWith(previous)) return next;
-  if (previous.endsWith(next)) return previous;
-  const spacer = /\s$/.test(previous) || /^\s/.test(incoming) ? '' : ' ';
-  return `${previous}${spacer}${next}`;
+  if (!incoming || !incoming.trim()) return previous;
+  if (!previous) return incoming.trimStart();
+
+  const previousTrimmed = previous.trimEnd();
+  const incomingTrimmed = incoming.trimStart();
+
+  // Some Live transcription events are cumulative revisions.
+  if (incomingTrimmed.startsWith(previousTrimmed)) return incomingTrimmed;
+  if (previousTrimmed.endsWith(incomingTrimmed)) return previous;
+
+  // Preserve whitespace supplied by the stream. Only synthesize a boundary
+  // when the server omitted one between two obvious word-like chunks.
+  if (/\s$/.test(previous) || /^\s/.test(incoming)) return previous + incoming;
+  const needsBoundary =
+    /[A-Za-z0-9가-힣]$/.test(previous) &&
+    /^[A-Za-z0-9가-힣]/.test(incoming);
+  return `${previous}${needsBoundary ? ' ' : ''}${incoming}`;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
@@ -74,6 +85,7 @@ export function useInterviewLive({
   onInterimTranscript,
   onFinalTranscript,
   onLiveTranslation,
+  glossaryTerms = [],
   onWarning,
   onFatalError,
 }: UseInterviewLiveOptions) {
@@ -361,6 +373,11 @@ export function useInterviewLive({
       model: TRANSLATE_MODEL,
       config: {
         responseModalities: ['AUDIO'],
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            silenceDurationMs: 650,
+          },
+        },
         inputAudioTranscription: {},
         outputAudioTranscription: {},
         translationConfig: {
@@ -375,9 +392,12 @@ export function useInterviewLive({
           const translatedChunk = content?.outputTranscription?.text;
           if (translatedChunk) {
             ref.current = mergeStreamText(ref.current, translatedChunk);
-            onLiveTranslation(targetLanguageCode, ref.current);
+            onLiveTranslation(targetLanguageCode, ref.current, false);
           }
           if (content?.turnComplete || content?.generationComplete) {
+            if (ref.current.trim()) {
+              onLiveTranslation(targetLanguageCode, ref.current, true);
+            }
             ref.current = '';
           }
         },
@@ -410,9 +430,17 @@ export function useInterviewLive({
         model: TRANSCRIBE_MODEL,
         config: {
           responseModalities: ['TEXT'],
+          realtimeInputConfig: {
+            automaticActivityDetection: {
+              silenceDurationMs: 650,
+            },
+          },
           inputAudioTranscription: {
             languageCodes: [],
-            customVocabulary: CUSTOM_VOCABULARY,
+            customVocabulary: Array.from(new Set([
+              ...CUSTOM_VOCABULARY,
+              ...glossaryTerms,
+            ])).slice(0, 100),
             mode: 'VERBATIM',
           },
         } as any,
@@ -530,6 +558,7 @@ export function useInterviewLive({
     beginFallback,
     cleanup,
     connectTranslationSession,
+    glossaryTerms,
     onFinalTranscript,
     onInterimTranscript,
     onWarning,
