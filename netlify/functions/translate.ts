@@ -1,17 +1,35 @@
 import { GoogleGenAI } from '@google/genai';
 import Groq from 'groq-sdk';
 
-// Gemini 모델 우선순위 (무료 제한량 많은 순서)
-const GEMINI_MODELS = [
-  'gemini-3.5-flash-lite',  // 1순위: low-latency, cost-efficient translation
-  'gemini-3.8-flash',       // 2순위: higher-capability fallback
+type GroqRoute = {
+  id: string;
+  reasoningEffort: 'low' | 'none';
+};
+
+// Speed-first order for interview translation.
+// Free-plan limits are model-specific, so exhausting one model can fall through to the next.
+const GROQ_MODELS: GroqRoute[] = [
+  { id: 'openai/gpt-oss-20b', reasoningEffort: 'low' },   // ~1000 t/s, production
+  { id: 'openai/gpt-oss-120b', reasoningEffort: 'low' },  // ~500 t/s, production
+  { id: 'qwen/qwen3.8-27b', reasoningEffort: 'none' },     // ~450+ t/s, strong multilingual
 ];
 
-// Groq 모델 우선순위 (Gemini 소진 시 폴백)
-const GROQ_MODELS = [
-  'openai/gpt-oss-20b',      // 3순위: fastest production fallback
-  'openai/gpt-oss-120b',     // 4순위: higher-quality production fallback
+// Google-family fallbacks after Groq.
+// Gemma 4 26B A4B is placed first because only ~4B parameters are active per token,
+// making it the speed-oriented Gemma 4 choice. Gemini Flash-Lite models are final fallbacks.
+const GOOGLE_MODELS = [
+  'gemma-4-26b-a4b-it',
+  'gemma-4-31b-it',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite',
 ];
+
+const translationPrompt = (text: string, from: string, to: string) =>
+  `Translate the following text from ${from} to ${to}.
+Preserve the speaker's meaning, technical terminology, numbers, product names, and level of certainty.
+Make the result natural for a professional interview.
+Output ONLY the translated text, with no explanation or quotation marks.
+Text: ${text}`;
 
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
@@ -34,7 +52,6 @@ export const handler = async (event: any) => {
     };
   }
 
-  // 요청 본문 파싱
   let body: any = {};
   try {
     const raw = event.isBase64Encoded
@@ -58,68 +75,71 @@ export const handler = async (event: any) => {
     };
   }
 
+  const prompt = translationPrompt(text.trim(), from, to);
   let lastError: any = null;
   let lastErrorDetail: any = null;
 
-  // 1단계: Gemini 모델 시도
-  if (geminiApiKey) {
-    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
-    for (const model of GEMINI_MODELS) {
+  // 1) Groq first: lowest latency for the interview path.
+  if (groqApiKey) {
+    const groq = new Groq({ apiKey: groqApiKey });
+
+    for (const route of GROQ_MODELS) {
       try {
-        const response = await ai.models.generateContent({
-          model,
-          contents: [{
-            role: 'user',
-            parts: [{
-              text: `Translate the following text from ${from} to ${to}.\nOutput ONLY the translated text, no explanations.\nText: "${text}"`,
-            }],
-          }],
-        });
+        const request: any = {
+          model: route.id,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          max_tokens: 512,
+          reasoning_effort: route.reasoningEffort,
+        };
+
+        if (route.reasoningEffort !== 'none') {
+          request.reasoning_format = 'hidden';
+        }
+
+        const response = await groq.chat.completions.create(request);
+        const translated = response.choices?.[0]?.message?.content?.trim() || '';
+
+        if (!translated) {
+          throw new Error('Groq returned an empty translation.');
+        }
 
         return {
           statusCode: 200,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            translated: response.text?.trim() || '',
-            model,
-            provider: 'gemini',
+            translated,
+            model: route.id,
+            provider: 'groq',
           }),
         };
       } catch (error: any) {
         lastError = error;
         lastErrorDetail = error?.message || String(error);
-        console.error(`translate: Gemini ${model} failed:`, error?.message);
-
-        // Rate limit인 경우에만 다음 모델로
-        const isRateLimit = error?.message?.includes('429') ||
-          error?.message?.includes('RESOURCE_EXHAUSTED') ||
-          error?.status === 429;
-        if (isRateLimit) {
-          console.log(`Gemini ${model} rate limited, trying next...`);
-          continue;
-        }
-        // 다른 에러는 즉시 다음 단계로
-        break;
+        console.error(`translate: Groq ${route.id} failed:`, error?.message);
+        continue;
       }
     }
   }
 
-  // 2단계: Groq 모델 시도 (Gemini 실패 시)
-  if (groqApiKey) {
-    const groq = new Groq({ apiKey: groqApiKey });
-    for (const model of GROQ_MODELS) {
+  // 2) Google-family fallbacks after the Groq pool.
+  if (geminiApiKey) {
+    const ai = new GoogleGenAI({ apiKey: geminiApiKey });
+
+    for (const model of GOOGLE_MODELS) {
       try {
-        const response = await groq.chat.completions.create({
+        const response = await ai.models.generateContent({
           model,
-          messages: [{
+          contents: [{
             role: 'user',
-            content: `Translate the following text from ${from} to ${to}.\nOutput ONLY the translated text, no explanations.\nText: "${text}"`,
+            parts: [{ text: prompt }],
           }],
-          temperature: 0.3,
-          max_tokens: 2048,
         });
 
-        const translated = response.choices?.[0]?.message?.content?.trim() || '';
+        const translated = response.text?.trim() || '';
+        if (!translated) {
+          throw new Error('Google model returned an empty translation.');
+        }
 
         return {
           statusCode: 200,
@@ -127,23 +147,14 @@ export const handler = async (event: any) => {
           body: JSON.stringify({
             translated,
             model,
-            provider: 'groq',
+            provider: 'google',
           }),
         };
       } catch (error: any) {
         lastError = error;
         lastErrorDetail = error?.message || String(error);
-        console.error(`translate: Groq ${model} failed:`, error?.message);
-
-        // Rate limit인 경우 다음 모델로
-        const isRateLimit = error?.message?.includes('429') ||
-          error?.message?.includes('rate_limit') ||
-          error?.status === 429;
-        if (isRateLimit) {
-          console.log(`Groq ${model} rate limited, trying next...`);
-          continue;
-        }
-        break;
+        console.error(`translate: Google ${model} failed:`, error?.message);
+        continue;
       }
     }
   }
@@ -152,7 +163,7 @@ export const handler = async (event: any) => {
     statusCode: 500,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      error: '번역에 실패했습니다. 모든 모델의 제한량이 소진되었습니다.',
+      error: '번역에 실패했습니다. 사용 가능한 번역 모델을 모두 시도했습니다.',
       detail: lastErrorDetail || String(lastError),
     }),
   };
