@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   logOut,
@@ -16,7 +16,7 @@ import {
   createCourseWork
 } from './utils/googleWorkspace';
 import { downloadTranscriptLocally } from './utils/fileExport';
-import { Language, ConnectionStatus, VoiceOption, ConversationItem, ConversationSession, VisionResult } from './types';
+import { Language, ConnectionStatus, VoiceOption, ConversationItem, ConversationSession, VisionResult, GlossaryEntry } from './types';
 import {
   SUPPORTED_LANGUAGES,
   MODEL_LIVE,
@@ -48,6 +48,7 @@ import AppHeader from './components/AppHeader';
 import LanguageSelector from './components/LanguageSelector';
 import ConversationList from './components/ConversationList';
 import BottomControls from './components/BottomControls';
+import InterviewToolsBar from './components/InterviewToolsBar';
 import ExportMenu from './components/ExportMenu';
 import VisionToastSystem from './components/VisionToastSystem';
 import ToastSystem from './components/ToastSystem';
@@ -85,6 +86,9 @@ import {
   CopyIcon,
   SparklesIcon
 } from './components/Icons';
+
+const inferInterviewTarget = (text: string): 'en' | 'ko' =>
+  /[가-힣]/.test(text) ? 'en' : 'ko';
 
 export default function App() {
   const interviewModeRequested =
@@ -183,6 +187,40 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     const saved = localStorage.getItem(UI_LANG_KEY);
     return saved || 'ko';
   });
+
+  const [interviewGlossaryText, setInterviewGlossaryText] = useState<string>(() => {
+    try {
+      return localStorage.getItem('global-classroom-interview-glossary-v1') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  const interviewGlossary = useMemo<GlossaryEntry[]>(() => (
+    interviewGlossaryText
+      .split(/\r?\n/)
+      .map((line) => {
+        const parts = line.split(/\s*(?:=>|→|=)\s*/, 2);
+        return parts.length === 2
+          ? { source: parts[0].trim(), target: parts[1].trim() }
+          : null;
+      })
+      .filter((entry): entry is GlossaryEntry => Boolean(entry?.source && entry?.target))
+      .slice(0, 100)
+  ), [interviewGlossaryText]);
+
+  const interviewGlossaryTerms = useMemo(
+    () => Array.from(new Set(interviewGlossary.flatMap((entry) => [entry.source, entry.target]))),
+    [interviewGlossary],
+  );
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('global-classroom-interview-glossary-v1', interviewGlossaryText);
+    } catch {
+      // localStorage may be unavailable in privacy modes.
+    }
+  }, [interviewGlossaryText]);
 
   // --- UI Language Sync removed at user request ---
 
@@ -392,6 +430,10 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const langInputRef = useRef(langInput);
   const langOutputRef = useRef(langOutput);
   const isLangAutoRef = useRef(false);
+  const interviewLivePreviewRef = useRef('');
+  const interviewPreviewIsFinalRef = useRef(false);
+  const interviewTargetRef = useRef<'en' | 'ko'>('en');
+  const pendingInterviewItemRef = useRef<string | null>(null);
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -404,6 +446,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setIsScrollLocked(false);
     setCurrentTurnText('');
     setInterviewLivePreview('');
+    interviewLivePreviewRef.current = '';
+    interviewPreviewIsFinalRef.current = false;
+    pendingInterviewItemRef.current = null;
     setInterviewLiveError('');
     setInterviewLiveWarning('');
   }, [interviewMode]);
@@ -412,34 +457,73 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     const normalized = text.trim();
     if (!normalized) return;
 
-    setCurrentTurnText('');
-    setInterviewLivePreview('');
-
+    interviewTargetRef.current = inferInterviewTarget(normalized);
+    const frozenLiveTranslation = interviewLivePreviewRef.current.trim();
+    const liveTranslationWasFinal = interviewPreviewIsFinalRef.current;
     const newItem: ConversationItem = {
       id: crypto.randomUUID(),
       original: normalized,
-      translated: '',
-      isTranslating: true,
+      originalRaw: normalized,
+      translated: frozenLiveTranslation,
+      isTranslating: false,
+      sourceKind: 'voice',
+      translationKind: 'live',
+      translationStale: false,
       timestamp: Date.now(),
     };
-    setHistory((prev) => [...prev, newItem]);
-    translateText(normalized, newItem.id, interviewAuto, interviewEnglish);
-  }, [setHistory, translateText]);
 
-  const onInterviewLiveTranslation = useCallback((_target: 'en' | 'ko', text: string) => {
-    setInterviewLivePreview(text);
+    setHistory((prev) => [...prev, newItem]);
+    pendingInterviewItemRef.current = liveTranslationWasFinal ? null : newItem.id;
+    setCurrentTurnText('');
+    setInterviewLivePreview('');
+    interviewLivePreviewRef.current = '';
+    interviewPreviewIsFinalRef.current = false;
+  }, [setHistory]);
+
+  const onInterviewInterimTranscript = useCallback((text: string) => {
+    const nextTarget = inferInterviewTarget(text);
+    if (nextTarget !== interviewTargetRef.current) {
+      interviewLivePreviewRef.current = '';
+      interviewPreviewIsFinalRef.current = false;
+      setInterviewLivePreview('');
+    }
+    interviewTargetRef.current = nextTarget;
+    setCurrentTurnText(text);
   }, []);
+
+  const onInterviewLiveTranslation = useCallback((target: 'en' | 'ko', text: string, isFinal: boolean) => {
+    if (target !== interviewTargetRef.current) return;
+
+    interviewLivePreviewRef.current = text;
+    interviewPreviewIsFinalRef.current = isFinal;
+    const pendingItemId = pendingInterviewItemRef.current;
+
+    if (isFinal && pendingItemId) {
+      setHistory((prev) => prev.map((item) =>
+        item.id === pendingItemId
+          ? { ...item, translated: text.trim(), translationKind: 'live', translationStale: false }
+          : item
+      ));
+      pendingInterviewItemRef.current = null;
+      interviewLivePreviewRef.current = '';
+      interviewPreviewIsFinalRef.current = false;
+      setInterviewLivePreview('');
+      return;
+    }
+
+    setInterviewLivePreview(text);
+  }, [setHistory]);
 
   const {
     status: interviewLiveStatus,
     backend: interviewBackend,
-    translatePreviewAvailable: interviewTranslatePreviewAvailable,
     start: startInterviewLive,
     stop: stopInterviewLive,
   } = useInterviewLive({
-    onInterimTranscript: (text) => setCurrentTurnText(text),
+    onInterimTranscript: onInterviewInterimTranscript,
     onFinalTranscript: onInterviewFinalTranscript,
     onLiveTranslation: onInterviewLiveTranslation,
+    glossaryTerms: interviewGlossaryTerms,
     onWarning: (message) => setInterviewLiveWarning(message),
     onFatalError: (message) => setInterviewLiveError(message),
   });
@@ -482,6 +566,32 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const effectiveErrorMessage = interviewMode
     ? interviewLiveError || interviewLiveWarning
     : errorMessage;
+
+  const handleInterviewTextSubmit = useCallback((text: string) => {
+    if (!text.trim()) return;
+    const newItem: ConversationItem = {
+      id: crypto.randomUUID(),
+      original: text,
+      originalRaw: text,
+      translated: '',
+      isTranslating: true,
+      sourceKind: 'text',
+      translationKind: 'manual',
+      translationStale: false,
+      timestamp: Date.now(),
+    };
+    setHistory((prev) => [...prev, newItem]);
+    void translateText(text, newItem.id, interviewAuto, interviewEnglish, interviewGlossary);
+  }, [interviewAuto, interviewEnglish, interviewGlossary, setHistory, translateText]);
+
+  const handleInterviewRetranslate = useCallback((item: ConversationItem) => {
+    setHistory((prev) => prev.map((entry) =>
+      entry.id === item.id
+        ? { ...entry, isTranslating: true }
+        : entry
+    ));
+    void translateText(item.original, item.id, interviewAuto, interviewEnglish, interviewGlossary);
+  }, [interviewAuto, interviewEnglish, interviewGlossary, setHistory, translateText]);
 
   // --- Editing State ---
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -743,6 +853,15 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         uiLangCode={uiLangCode}
       />
 
+      {interviewMode && (
+        <InterviewToolsBar
+          uiLangCode={uiLangCode}
+          glossaryText={interviewGlossaryText}
+          onGlossaryChange={setInterviewGlossaryText}
+          onSubmitText={handleInterviewTextSubmit}
+        />
+      )}
+
       <ConversationList
         key={`list_${currentSessionId}`}
         analyser={effectiveAnalyser}
@@ -758,7 +877,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         toggleMic={effectiveToggleMic}
         currentTurnTranslation={interviewMode ? interviewLivePreview : ''}
         interviewMode={interviewMode}
-        interviewPreviewAvailable={interviewTranslatePreviewAvailable}
         editingItemId={editingItemId}
         setEditingItemId={setEditingItemId}
         editOriginalText={editOriginalText}
@@ -774,6 +892,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         playTTS={playTTS}
         stopTTS={stopTTS}
         uiLangCode={uiLangCode}
+        onRetranslate={interviewMode ? handleInterviewRetranslate : undefined}
       />
 
       <BottomControls
@@ -793,7 +912,11 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         isHost={isHost}
         uiLangCode={uiLangCode}
         onTextSubmit={(text) => {
-          // Same flow as voice transcription
+          if (interviewMode) {
+            handleInterviewTextSubmit(text);
+            return;
+          }
+
           const newItem = {
             id: crypto.randomUUID(),
             original: text,
@@ -803,7 +926,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
           };
           setHistory(prev => [...prev, newItem]);
           translateText(text, newItem.id, langInput, langOutput);
-          // Broadcast if in live sharing
           if (roomStatus === 'hosting' || (roomStatus === 'joined' && (!micRestricted || handRaiseStatus === 'approved'))) {
             broadcastMessage(text, langInput.code);
           }
