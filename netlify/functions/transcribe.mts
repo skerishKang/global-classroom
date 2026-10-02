@@ -43,10 +43,17 @@ export default async (req: Request) => {
   }
 
   const audioDataUrl = typeof body?.audioDataUrl === 'string' ? body.audioDataUrl : '';
-  const language = body?.language === 'en' ? 'en' : body?.language === 'ko' ? 'ko' : '';
+  const language =
+    body?.language === 'en'
+      ? 'en'
+      : body?.language === 'ko'
+        ? 'ko'
+        : body?.language === 'auto'
+          ? 'auto'
+          : '';
 
   if (!language) {
-    return json(400, { error: 'language는 ko 또는 en이어야 합니다.' });
+    return json(400, { error: 'language는 ko, en 또는 auto여야 합니다.' });
   }
 
   const audio = parseAudioDataUrl(audioDataUrl);
@@ -71,7 +78,9 @@ export default async (req: Request) => {
         `interview-audio.${audio.extension}`
       );
       form.append('model', model);
-      form.append('language', language);
+      if (language !== 'auto') {
+        form.append('language', language);
+      }
       form.append('response_format', 'json');
       form.append('temperature', '0');
 
