@@ -86,6 +86,10 @@ import {
 } from './components/Icons';
 
 export default function App() {
+  return <ClassroomApp />;
+}
+
+function ClassroomApp() {
   // --- UI Translation State ---
   const [langInput, setLangInput] = useState<Language>(SUPPORTED_LANGUAGES[0]); // Default: Auto
   const [langOutput, setLangOutput] = useState<Language>(SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1]); // Default: Vietnamese
