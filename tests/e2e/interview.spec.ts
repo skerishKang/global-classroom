@@ -13,7 +13,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
   test('interview mode keeps the original UI and switches language defaults to Auto → English', async ({ page }) => {
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: '● INTERVIEW' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'GLOBAL CLASSROOM' })).toBeVisible();
     await expect(page.getByText(/AUTO · KO ↔ EN/)).toBeVisible();
 
     const inputLanguage = page.getByTitle('입력 언어 선택 (내가 말하는 언어)');
@@ -28,9 +28,9 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'INTERVIEW' }).click();
     await expect(page).toHaveURL(/mode=interview/);
-    await expect(page.getByRole('button', { name: '● INTERVIEW' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'GLOBAL CLASSROOM' })).toBeVisible();
 
-    await page.getByRole('button', { name: '● INTERVIEW' }).click();
+    await page.getByRole('button', { name: 'GLOBAL CLASSROOM' }).click();
     await expect(page).not.toHaveURL(/mode=interview/);
     await expect(page.getByRole('button', { name: 'INTERVIEW' })).toBeVisible();
   });

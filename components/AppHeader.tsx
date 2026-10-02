@@ -65,7 +65,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                 <div className="flex items-center gap-3">
                     <BrandLogo />
                     <div className="min-w-0 cursor-pointer group transition-all" title="실시간 AI 통역 서비스">
-                        <h1 className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase group-hover:text-indigo-600 transition-colors">{t.appTitle}</h1>
+                        <h1 className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase group-hover:text-indigo-600 transition-colors">{interviewMode ? (uiLangCode === 'ko' ? 'AI 인터뷰 통역' : 'AI INTERVIEW INTERPRETER') : t.appTitle}</h1>
                         <p className="text-[10px] text-gray-400 font-bold tracking-widest mt-1 uppercase group-hover:text-indigo-400 transition-colors">{t.subtitle}</p>
                     </div>
                 </div>
@@ -79,9 +79,9 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                                 : 'bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100'
                         }`}
-                        title={interviewMode ? '인터뷰 모드 종료' : '인터뷰 모드 시작'}
+                        title={interviewMode ? (uiLangCode === 'ko' ? 'Global Classroom으로 이동' : 'Go to Global Classroom') : (uiLangCode === 'ko' ? '인터뷰 통역으로 이동' : 'Go to Interview Interpreter')}
                     >
-                        {interviewMode ? '● INTERVIEW' : 'INTERVIEW'}
+                        {interviewMode ? 'GLOBAL CLASSROOM' : 'INTERVIEW'}
                     </button>
                     <div className="flex items-center px-2 py-1 bg-white/50 rounded-full border border-gray-100 hover:border-indigo-200 transition-all shrink-0 h-9">
                         <select
