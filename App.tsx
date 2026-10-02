@@ -86,6 +86,22 @@ import {
 } from './components/Icons';
 
 export default function App() {
+  const interviewModeRequested =
+    typeof window !== 'undefined' &&
+    new URLSearchParams(window.location.search).get('mode') === 'interview';
+
+  if (interviewModeRequested) {
+    return (
+      <InterviewMode
+        onExit={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.delete('mode');
+          window.location.href = url.toString();
+        }}
+      />
+    );
+  }
+
   return <ClassroomApp />;
 }
 
