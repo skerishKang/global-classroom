@@ -11,7 +11,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^1.33.0",
+    "@google/genai": "^2.24.0",
     "@sentry/react": "^10.30.0",
     "firebase": "^10.12.2",
     "groq-sdk": "^0.37.0",
