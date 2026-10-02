@@ -51,8 +51,8 @@ test.describe('AI Interview Interpreter', () => {
       page.getByText(/I can communicate in English, but for complex technical topics/)
     ).toBeVisible();
     await expect(
-      page.getByDisplayValue(/저는 영어로 기본적인 소통은 가능하지만/)
-    ).toBeVisible();
+      page.getByPlaceholder('여기에 한국어로 답하거나 마이크 버튼을 누르세요.')
+    ).toHaveValue(/저는 영어로 기본적인 소통은 가능하지만/);
   });
 
   test('translates an interviewer question from English to Korean', async ({ page }) => {
