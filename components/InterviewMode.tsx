@@ -61,6 +61,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [listeningBackend, setListeningBackend] = useState<'browser' | 'groq' | null>(null);
   const [isServerTranscribing, setIsServerTranscribing] = useState(false);
+  const [serverTranscribingDirection, setServerTranscribingDirection] = useState<Direction | null>(null);
   const recognitionRef = useRef<any>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const mediaStreamRef = useRef<MediaStream | null>(null);
@@ -249,6 +250,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
           return;
         }
 
+        setServerTranscribingDirection(activeDirection);
         setIsServerTranscribing(true);
         try {
           const text = await postTranscribe(blob, activeDirection === 'ko-en' ? 'ko' : 'en');
@@ -257,6 +259,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
           setSpeechError(error instanceof Error ? error.message : String(error));
         } finally {
           setIsServerTranscribing(false);
+          setServerTranscribingDirection(null);
         }
       };
 
@@ -456,7 +459,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
                   listening === 'ko-en' ? 'bg-rose-400 text-slate-950' : 'bg-white text-slate-950'
                 }`}
               >
-                {isServerTranscribing && recordingDirectionRef.current === 'ko-en'
+                {isServerTranscribing && serverTranscribingDirection === 'ko-en'
                   ? 'Groq 전사 중…'
                   : listening === 'ko-en'
                     ? listeningBackend === 'groq' ? '서버 녹음 중지' : '듣기 중지'
@@ -579,7 +582,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
                   onClick={() => listening === 'en-ko' ? stopListening() : startListening('en-ko')}
                   className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {isServerTranscribing && recordingDirectionRef.current === 'en-ko'
+                  {isServerTranscribing && serverTranscribingDirection === 'en-ko'
                     ? 'Groq 전사 중…'
                     : listening === 'en-ko'
                       ? listeningBackend === 'groq' ? '서버 녹음 중지' : '듣기 중지'
