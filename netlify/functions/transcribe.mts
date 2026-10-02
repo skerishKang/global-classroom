@@ -8,10 +8,21 @@ function json(status: number, body: Record<string, unknown>) {
   });
 }
 
-function estimateBase64Bytes(dataUrl: string) {
-  const comma = dataUrl.indexOf(',');
-  const payload = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
-  return Math.floor((payload.length * 3) / 4);
+function parseAudioDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:(audio\/[a-zA-Z0-9.+-]+(?:;[^,]*)?);base64,(.+)$/s);
+  if (!match) return null;
+
+  const mimeType = match[1].split(';')[0].toLowerCase();
+  const bytes = Buffer.from(match[2], 'base64');
+
+  const extension =
+    mimeType.includes('webm') ? 'webm'
+      : mimeType.includes('mp4') || mimeType.includes('m4a') ? 'm4a'
+        : mimeType.includes('wav') ? 'wav'
+          : mimeType.includes('mpeg') || mimeType.includes('mp3') ? 'mp3'
+            : 'webm';
+
+  return { mimeType, bytes, extension };
 }
 
 export default async (req: Request) => {
@@ -34,13 +45,18 @@ export default async (req: Request) => {
   const audioDataUrl = typeof body?.audioDataUrl === 'string' ? body.audioDataUrl : '';
   const language = body?.language === 'en' ? 'en' : body?.language === 'ko' ? 'ko' : '';
 
-  if (!audioDataUrl.startsWith('data:audio/') || !audioDataUrl.includes(';base64,')) {
-    return json(400, { error: '지원되는 오디오 데이터가 필요합니다.' });
-  }
   if (!language) {
     return json(400, { error: 'language는 ko 또는 en이어야 합니다.' });
   }
-  if (estimateBase64Bytes(audioDataUrl) > MAX_AUDIO_BYTES) {
+
+  const audio = parseAudioDataUrl(audioDataUrl);
+  if (!audio) {
+    return json(400, { error: '지원되는 오디오 데이터가 필요합니다.' });
+  }
+  if (!audio.bytes.length) {
+    return json(400, { error: '빈 오디오 데이터입니다.' });
+  }
+  if (audio.bytes.length > MAX_AUDIO_BYTES) {
     return json(413, { error: '오디오가 너무 깁니다. 답변을 짧게 나누어 다시 시도해 주세요.' });
   }
 
@@ -48,19 +64,23 @@ export default async (req: Request) => {
 
   for (const model of STT_MODELS) {
     try {
+      const form = new FormData();
+      form.append(
+        'file',
+        new Blob([audio.bytes], { type: audio.mimeType }),
+        `interview-audio.${audio.extension}`
+      );
+      form.append('model', model);
+      form.append('language', language);
+      form.append('response_format', 'json');
+      form.append('temperature', '0');
+
       const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${groqApiKey}`,
-          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model,
-          url: audioDataUrl,
-          language,
-          response_format: 'json',
-          temperature: 0,
-        }),
+        body: form,
       });
 
       const data: any = await response.json().catch(() => ({}));
