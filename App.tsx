@@ -52,6 +52,7 @@ import ExportMenu from './components/ExportMenu';
 import VisionToastSystem from './components/VisionToastSystem';
 import ToastSystem from './components/ToastSystem';
 import LiveSharingModal from './components/LiveSharingModal';
+import InterviewMode from './components/InterviewMode';
 
 import { useAuth } from './hooks/useAuth';
 import { useConversationHistory } from './hooks/useConversationHistory';
@@ -605,6 +606,19 @@ export default function App() {
         onNewConversation={handleNewConversationAction}
         t={t}
       />
+
+      <button
+        type="button"
+        onClick={() => {
+          const url = new URL(window.location.href);
+          url.searchParams.set('mode', 'interview');
+          window.location.href = url.toString();
+        }}
+        className="fixed bottom-24 right-4 z-40 rounded-full bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-xl hover:bg-slate-800 md:bottom-6 md:right-6"
+        aria-label="AI 인터뷰 모드 열기"
+      >
+        AI 인터뷰
+      </button>
 
       <ExportMenu
         isOpen={isExportMenuOpen}
