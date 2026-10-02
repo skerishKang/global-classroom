@@ -27,6 +27,9 @@ interface AppHeaderProps {
     roomStatus: 'idle' | 'hosting' | 'joined';
     t: TranslationMap;
     onNewConversation?: () => void;
+    interviewMode?: boolean;
+    interviewBackend?: 'idle' | 'gemini' | 'browser' | 'groq';
+    onToggleInterviewMode?: () => void;
 }
 
 const AppHeader: React.FC<AppHeaderProps> = ({
@@ -52,6 +55,9 @@ const AppHeader: React.FC<AppHeaderProps> = ({
     roomStatus,
     t,
     onNewConversation,
+    interviewMode = false,
+    interviewBackend = 'idle',
+    onToggleInterviewMode,
 }) => {
     return (
         <header className="bg-white/80 backdrop-blur-md px-3 py-1.5 shadow-sm z-40 border-b border-gray-100 shrink-0">
@@ -65,6 +71,18 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
+                    <button
+                        type="button"
+                        onClick={onToggleInterviewMode}
+                        className={`h-9 rounded-full px-3 text-[11px] font-black transition-all ${
+                            interviewMode
+                                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                                : 'bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100'
+                        }`}
+                        title={interviewMode ? '인터뷰 모드 종료' : '인터뷰 모드 시작'}
+                    >
+                        {interviewMode ? '● INTERVIEW' : 'INTERVIEW'}
+                    </button>
                     <div className="flex items-center px-2 py-1 bg-white/50 rounded-full border border-gray-100 hover:border-indigo-200 transition-all shrink-0 h-9">
                         <select
                             value={uiLangCode}
@@ -92,7 +110,11 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                         </span>
                     </button>
 
-                    {user && !user.isAnonymous && user.providerId !== 'anonymous' ? (
+                    {interviewMode ? (
+                        <div className="hidden sm:flex items-center rounded-full bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-700 border border-emerald-100">
+                            AUTO · KO ↔ EN · {interviewBackend === 'gemini' ? 'GEMINI LIVE' : interviewBackend === 'browser' ? 'BROWSER STT' : interviewBackend === 'groq' ? 'GROQ STT' : 'READY'}
+                        </div>
+                    ) : user && !user.isAnonymous && user.providerId !== 'anonymous' ? (
                         <div className="relative">
                             <button
                                 onClick={() => setIsProfileMenuOpen(!isProfileMenuOpen)}
