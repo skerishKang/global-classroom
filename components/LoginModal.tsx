@@ -64,6 +64,9 @@ const LoginModal: React.FC<LoginModalProps> = ({
                         <div className="text-xs font-bold text-gray-600 mb-2">이메일/비밀번호</div>
                         <div className="space-y-2">
                             <input
+                                id="login-email"
+                                name="email"
+                                type="email"
                                 value={emailAuthEmail}
                                 onChange={(e) => setEmailAuthEmail(e.target.value)}
                                 placeholder="이메일"
@@ -71,6 +74,8 @@ const LoginModal: React.FC<LoginModalProps> = ({
                                 className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 bg-white transition-all shadow-sm"
                             />
                             <input
+                                id="login-password"
+                                name="password"
                                 type="password"
                                 value={emailAuthPassword}
                                 onChange={(e) => setEmailAuthPassword(e.target.value)}

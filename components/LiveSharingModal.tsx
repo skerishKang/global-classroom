@@ -124,6 +124,8 @@ const LiveSharingModal = ({
                                 <p className="text-sm font-bold text-emerald-900 mb-2">학생용 (참여하기)</p>
                                 <div className="flex gap-2">
                                     <input
+                                        id="room-id-input"
+                                        name="roomId"
                                         type="tel"
                                         placeholder="방 번호 6자리"
                                         value={joinId}
@@ -248,36 +250,82 @@ const LiveSharingModal = ({
 
                             {/* --- Video Grid (WebRTC) --- */}
                             {isVideoOn && (
-                                <div className="grid grid-cols-1 gap-3 mb-6">
-                                    {/* Local Video */}
-                                    {localStream && (
-                                        <div className="relative bg-black rounded-2xl overflow-hidden aspect-video border-2 border-indigo-500 shadow-xl">
-                                            <video
-                                                autoPlay
-                                                muted
-                                                playsInline
-                                                ref={(v) => { if (v) v.srcObject = localStream; }}
-                                                className={`w-full h-full object-cover ${isCameraFront ? 'scale-x-[-1]' : ''}`}
-                                            />
-                                            <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-md border border-white/20">
-                                                나 (Me)
-                                            </div>
+                                <div className="mb-6">
+                                    {/* 연결 상태 표시 */}
+                                    <div className="flex items-center justify-between mb-3">
+                                        <div className="flex items-center gap-2">
+                                            <div className={`w-2 h-2 rounded-full ${Object.keys(remoteStreams).length > 0 ? 'bg-emerald-500 animate-pulse' : 'bg-orange-400'}`} />
+                                            <span className="text-xs font-bold text-gray-600">
+                                                {Object.keys(remoteStreams).length > 0
+                                                    ? `${Object.keys(remoteStreams).length}명 연결됨`
+                                                    : '대기 중...'}
+                                            </span>
                                         </div>
-                                    )}
-                                    {/* Remote Videos */}
-                                    {Object.entries(remoteStreams).map(([uid, stream]) => (
-                                        <div key={uid} className="relative bg-black rounded-2xl overflow-hidden aspect-video border border-gray-100 shadow-xl">
-                                            <video
-                                                autoPlay
-                                                playsInline
-                                                ref={(v) => { if (v) v.srcObject = stream; }}
-                                                className="w-full h-full object-cover"
-                                            />
-                                            <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-md border border-white/20">
-                                                {roomStatus === 'hosting' ? '전체 강의 화면' : '교수님'}
+                                        <span className="text-[10px] text-gray-400">클릭하여 확대</span>
+                                    </div>
+
+                                    {/* 비디오 그리드 */}
+                                    <div className={`grid gap-2 ${Object.keys(remoteStreams).length === 0 ? 'grid-cols-1' : Object.keys(remoteStreams).length <= 1 ? 'grid-cols-2' : 'grid-cols-2'}`}>
+                                        {/* Local Video (나) */}
+                                        {localStream && (
+                                            <div
+                                                className="relative bg-black rounded-2xl overflow-hidden aspect-video border-2 border-indigo-500 shadow-xl cursor-pointer hover:ring-4 hover:ring-indigo-300 transition-all group"
+                                                onClick={(e) => {
+                                                    const video = e.currentTarget.querySelector('video');
+                                                    if (video && video.requestFullscreen) video.requestFullscreen();
+                                                }}
+                                            >
+                                                <video
+                                                    autoPlay
+                                                    muted
+                                                    playsInline
+                                                    ref={(v) => { if (v) v.srcObject = localStream; }}
+                                                    className={`w-full h-full object-cover ${isCameraFront ? 'scale-x-[-1]' : ''}`}
+                                                />
+                                                <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-md border border-white/20 flex items-center gap-1.5">
+                                                    <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                                                    나 (Me)
+                                                </div>
+                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                                    <span className="text-white text-xs font-bold bg-black/50 px-3 py-1.5 rounded-full">🔍 전체화면</span>
+                                                </div>
                                             </div>
-                                        </div>
-                                    ))}
+                                        )}
+                                        {/* Remote Videos */}
+                                        {Object.entries(remoteStreams).map(([uid, stream]) => (
+                                            <div
+                                                key={uid}
+                                                className="relative bg-black rounded-2xl overflow-hidden aspect-video border border-gray-200 shadow-xl cursor-pointer hover:ring-4 hover:ring-emerald-300 transition-all group"
+                                                onClick={(e) => {
+                                                    const video = e.currentTarget.querySelector('video');
+                                                    if (video && video.requestFullscreen) video.requestFullscreen();
+                                                }}
+                                            >
+                                                <video
+                                                    autoPlay
+                                                    playsInline
+                                                    ref={(v) => { if (v) v.srcObject = stream; }}
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                <div className="absolute top-2 left-2 bg-black/60 text-white text-[10px] font-bold px-2 py-1 rounded-lg backdrop-blur-md border border-white/20 flex items-center gap-1.5">
+                                                    <div className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse" />
+                                                    {roomStatus === 'hosting' ? `참여자` : '교수님'}
+                                                </div>
+                                                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                                    <span className="text-white text-xs font-bold bg-black/50 px-3 py-1.5 rounded-full">🔍 전체화면</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {/* 대기 중 플레이스홀더 (remote 없을 때) */}
+                                        {Object.keys(remoteStreams).length === 0 && localStream && (
+                                            <div className="relative bg-gray-100 rounded-2xl overflow-hidden aspect-video border border-dashed border-gray-300 flex items-center justify-center">
+                                                <div className="text-center">
+                                                    <div className="text-2xl mb-1">👤</div>
+                                                    <p className="text-xs text-gray-400 font-bold">상대방 대기 중</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             )}
 

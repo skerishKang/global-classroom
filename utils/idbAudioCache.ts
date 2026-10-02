@@ -6,7 +6,8 @@ type AudioRecord = {
 
 const DB_NAME = 'global_classroom_audio_cache';
 const STORE_NAME = 'audio';
-const DB_VERSION = 2;
+// DB_VERSION 3: 기존 DB에 updatedAt 인덱스가 없는 경우를 대비해 마이그레이션
+const DB_VERSION = 3;
 
 let dbPromise: Promise<IDBDatabase> | null = null;
 
@@ -22,8 +23,14 @@ const openDb = (): Promise<IDBDatabase> => {
 
     req.onupgradeneeded = () => {
       const db = req.result;
+      let store: IDBObjectStore;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
-        const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      } else {
+        store = req.transaction!.objectStore(STORE_NAME);
+      }
+      // 인덱스가 누락된 기존 스토어를 대비
+      if (!store.indexNames.contains('updatedAt')) {
         store.createIndex('updatedAt', 'updatedAt', { unique: false });
       }
     };

@@ -38,6 +38,9 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
     const originalMediaRecorderRef = useRef<MediaRecorder | null>(null);
     const originalAudioChunksRef = useRef<Blob[]>([]);
 
+    // Transcription accumulation ref
+    const currentTurnTranscriptRef = useRef<string>('');
+
     const cleanupAudio = useCallback(() => {
         if (currentSourceRef.current) {
             currentSourceRef.current.stop();
@@ -68,6 +71,21 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             originalMediaRecorderRef.current = null;
         }
         setIsRecordingOriginal(false);
+    }, []);
+
+    // 사용자 제스처 시점에 오디오 컨텍스트를 깨워 자동재생 차단을 피함
+    const ensureAudioContext = useCallback(async () => {
+        if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        }
+        const ctx = audioContextRef.current;
+        if (ctx.state === 'suspended') {
+            try {
+                await ctx.resume();
+            } catch (e) {
+                console.warn('AudioContext resume 실패', e);
+            }
+        }
     }, []);
 
     const startOriginalRecording = useCallback((stream: MediaStream) => {
@@ -183,6 +201,10 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                             return;
                         }
                         console.log("Gemini Live Connected");
+                        // 디버그: 세션 객체 키 출력
+                        const session = await sessionPromise;
+                        console.log('[DEBUG] Session object keys:', Object.keys(session || {}));
+                        console.log('[DEBUG] sendRealtimeInput type:', typeof session?.sendRealtimeInput);
                         setErrorMessage('');
                         geminiReconnectAttemptRef.current = 0;
                         setStatus(ConnectionStatus.CONNECTED);
@@ -194,25 +216,48 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                         startOriginalRecording(stream);
 
                         const source = inputCtx.createMediaStreamSource(stream);
-                        const processor = inputCtx.createScriptProcessor(4096, 1, 1);
+                        // 버퍼를 줄여 초기 전송 지연 최소화
+                        const processor = inputCtx.createScriptProcessor(1024, 1, 1);
                         processorRef.current = processor;
+
+                        // 세션 예열용 무음 버퍼 전송(초기 한 조각 손실 방지)
+                        try {
+                            const warmup = new Float32Array(1600); // 100ms @16kHz
+                            const pcm16 = float32ToInt16(warmup);
+                            session.sendRealtimeInput({
+                                media: {
+                                    data: arrayBufferToBase64(pcm16.buffer),
+                                    mimeType: 'audio/pcm;rate=16000'
+                                }
+                            });
+                        } catch (e) {
+                            console.warn('warmup send failed', e);
+                        }
 
                         processor.onaudioprocess = async (e) => {
                             const session = await sessionPromise;
-                            if (session && geminiMicDesiredRef.current) {
-                                const inputData = e.inputBuffer.getChannelData(0);
-                                const pcm16 = float32ToInt16(inputData);
-                                session.send({
-                                    realtimeInput: {
-                                        mediaChunks: [{
+                            // sendRealtimeInput이 Live API의 올바른 메서드
+                            if (!session || typeof session.sendRealtimeInput !== 'function') {
+                                console.error('Gemini session is not ready or sendRealtimeInput is unavailable');
+                                return;
+                            }
+                            if (geminiMicDesiredRef.current) {
+                                try {
+                                    const inputData = e.inputBuffer.getChannelData(0);
+                                    const pcm16 = float32ToInt16(inputData);
+                                    session.sendRealtimeInput({
+                                        media: {
                                             data: arrayBufferToBase64(pcm16.buffer),
                                             mimeType: 'audio/pcm;rate=16000'
-                                        }]
+                                        }
+                                    });
+                                    if (status !== ConnectionStatus.CONNECTED && isCurrentAttempt()) {
+                                        setStatus(ConnectionStatus.CONNECTED);
                                     }
-                                });
-                                // Keep the camelCase but add a check for the session object readiness
-                                if (status !== ConnectionStatus.CONNECTED && isCurrentAttempt()) {
-                                    setStatus(ConnectionStatus.CONNECTED);
+                                } catch (err) {
+                                    console.error('Gemini send error:', err);
+                                    setErrorMessage('음성 전송 중 오류가 발생했습니다.');
+                                    setStatus(ConnectionStatus.ERROR);
                                 }
                             }
                         };
@@ -221,23 +266,41 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                         processor.connect(inputCtx.destination);
                     },
                     onmessage: async (msg: any) => {
+                        console.log('[DEBUG] Gemini onmessage received:', JSON.stringify(msg).slice(0, 500));
                         if (!isCurrentAttempt()) return;
+
+                        // inputTranscription 처리 (실시간 전사) - 조각을 누적
+                        if (msg.serverContent?.inputTranscription?.text) {
+                            const chunk = msg.serverContent.inputTranscription.text;
+                            currentTurnTranscriptRef.current += chunk;
+                            // 실시간으로 누적된 텍스트 표시
+                            onTranscriptReceived(currentTurnTranscriptRef.current, false);
+                        }
+
                         if (msg.serverContent?.modelTurn?.parts) {
-                            for (const part of msg.serverContent.modelTurn.parts) {
-                                if (part.inlineData) {
-                                    onAudioReceived(part.inlineData.data);
-                                    await playPCM(part.inlineData.data);
-                                }
-                            }
+                            // Gemini Live의 음성 응답은 재생하지 않음
+                            // (이 앱은 전사만 필요하고, 번역 TTS는 별도로 처리)
+                            // for (const part of msg.serverContent.modelTurn.parts) {
+                            //     if (part.inlineData) {
+                            //         onAudioReceived(part.inlineData.data);
+                            //         await playPCM(part.inlineData.data);
+                            //     }
+                            // }
                         }
                         if (msg.serverContent?.interruption) {
                             // Handle interruption if needed
                         }
                         if (msg.serverContent?.turnComplete) {
-                            // Handle turn complete if needed
+                            // 턴이 완료되면 누적된 전사를 최종 확정
+                            if (currentTurnTranscriptRef.current.trim()) {
+                                onTranscriptReceived(currentTurnTranscriptRef.current.trim(), true);
+                            }
+                            // 다음 턴을 위해 초기화
+                            currentTurnTranscriptRef.current = '';
                         }
                     },
                     ontranscript: (t: any) => {
+                        console.log('[DEBUG] ontranscript received:', t);
                         if (!isCurrentAttempt()) return;
                         onTranscriptReceived(t.text, t.isFinal);
                     },
@@ -338,13 +401,14 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
         status,
         isMicOn,
         errorMessage,
-        setErrorMessage,
         analyser,
         isRecordingOriginal,
         connectToGemini,
         toggleMic,
         cleanupAudio,
         playPCM,
-        stopPCM
+        stopPCM,
+        ensureAudioContext,
+        setErrorMessage
     };
 }

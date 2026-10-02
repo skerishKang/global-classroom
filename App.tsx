@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
+﻿import React, { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
   logOut,
@@ -23,6 +23,7 @@ import {
   MODEL_TRANSLATE,
   MODEL_VISION,
   MODEL_TTS,
+  DEFAULT_TRANSLATION_MODEL,
   TRANSLATIONS,
   VOICE_OPTIONS,
   GOOGLE_CLIENT_ID,
@@ -138,23 +139,33 @@ export default function App() {
     handleSaveEdit,
     handleClearSessions,
     loadSession,
-    deleteSession
+    deleteSession,
+    handleNewConversation
   } = useConversationHistory();
 
   // --- UI Settings ---
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '' };
+      if (!raw) return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '', translationModel: DEFAULT_TRANSLATION_MODEL };
       const parsed = JSON.parse(raw) as Partial<AppSettings>;
+
+      // 마이그레이션: gemini-2.5-flash 사용자는 flash-lite로 강제 이동 (무료 쿼터 소진 방지)
+      let migratedModel = parsed.translationModel;
+      if (migratedModel === 'gemini-2.5-flash') {
+        migratedModel = DEFAULT_TRANSLATION_MODEL; // gemini-2.5-flash-lite
+        console.log('[Settings Migration] Upgraded translationModel from gemini-2.5-flash to flash-lite');
+      }
+
       return {
         driveBackupMode: parsed.driveBackupMode === 'auto' ? 'auto' : 'manual',
         audioCacheEnabled: typeof parsed.audioCacheEnabled === 'boolean' ? parsed.audioCacheEnabled : true,
         recordOriginalEnabled: typeof parsed.recordOriginalEnabled === 'boolean' ? parsed.recordOriginalEnabled : true,
         userApiKey: typeof parsed.userApiKey === 'string' ? parsed.userApiKey : '',
+        translationModel: migratedModel || DEFAULT_TRANSLATION_MODEL,
       };
     } catch {
-      return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '' };
+      return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '', translationModel: DEFAULT_TRANSLATION_MODEL };
     }
   });
 
@@ -177,7 +188,19 @@ export default function App() {
     setHistory,
     isAutoPlay,
     playTTS: (text, id) => playTTS(text, id),
-    MODEL_TRANSLATE
+    MODEL_TRANSLATE: settings.translationModel || DEFAULT_TRANSLATION_MODEL,
+    onQuotaExhausted: (detail?: string) => {
+      enqueueToast(
+        uiLangCode === 'ko'
+          ? '기본 번역 키의 무료 쿼터를 모두 사용했습니다. 개인 키 설정 또는 로그인 후 다시 시도해 주세요.'
+          : 'Free quota for default translation key is exhausted. Please set your own API key or sign in, then try again.',
+        'warning',
+        6000
+      );
+      if (detail) {
+        console.warn('Quota exhausted detail:', detail);
+      }
+    }
   });
 
   // --- Live Sharing ---
@@ -256,6 +279,7 @@ export default function App() {
     cleanupAudio,
     playPCM,
     stopPCM,
+    ensureAudioContext,
     setErrorMessage
   } = useGeminiLive({
     langInput,
@@ -282,6 +306,16 @@ export default function App() {
     MODEL_TTS,
     t
   });
+
+  // 자동 읽기 토글 시 오디오 컨텍스트를 즉시 깨워서 브라우저 자동재생 차단을 회피
+  const handleToggleAutoPlay = useCallback(async () => {
+    try {
+      await ensureAudioContext();
+    } catch (e) {
+      console.warn('ensureAudioContext 실패', e);
+    }
+    setIsAutoPlay(prev => !prev);
+  }, [ensureAudioContext]);
 
   const {
     isExportMenuOpen,
@@ -391,6 +425,15 @@ export default function App() {
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const notificationMenuRef = useRef<HTMLDivElement>(null);
 
+  // 공유방 전환 시 로컬 표시 히스토리 초기화
+  useEffect(() => {
+    if (roomStatus === 'hosting' || roomStatus === 'joined') {
+      setHistory([]);
+      setCurrentTurnText('');
+      setEditingItemId(null);
+    }
+  }, [roomStatus, setHistory]);
+
   const unreadVisionCount = visionNotifications.filter((n) => !n.isRead).length;
 
   const handleLoadMoreHistory = () => {
@@ -404,6 +447,26 @@ export default function App() {
     }
     setHistoryRenderLimit(nextLimit);
   };
+
+  const handleNewConversationAction = useCallback(() => {
+    if (history.length === 0) {
+      handleNewConversation();
+      return;
+    }
+
+    const confirmMsg = uiLangCode === 'ko'
+      ? '현재 대화를 저장하고 새로운 대화를 시작하시겠습니까?'
+      : 'Would you like to save the current conversation and start a new one?';
+
+    if (window.confirm(confirmMsg)) {
+      // The saving logic is already handled by the auto-sync in useConversationHistory
+      handleNewConversation();
+      setCurrentTurnText('');
+      setLangInput(SUPPORTED_LANGUAGES[0]); // Reset to Auto
+      setLangOutput(SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1]); // Reset to Vietnamese
+      enqueueToast(uiLangCode === 'ko' ? '새 대화가 시작되었습니다.' : 'New conversation started.', 'success');
+    }
+  }, [history, handleNewConversation, uiLangCode, enqueueToast]);
 
   const handleSummarize = async () => {
     if (history.length < 2) {
@@ -539,6 +602,7 @@ export default function App() {
         setUiLangCode={setUiLangCode}
         setIsExportMenuOpen={setIsExportMenuOpen}
         handleSummarize={handleSummarize}
+        onNewConversation={handleNewConversationAction}
         t={t}
       />
 
@@ -569,6 +633,7 @@ export default function App() {
       />
 
       <ConversationList
+        key={`list_${currentSessionId}`}
         analyser={analyser}
         isMicOn={isMicOn}
         history={history}
@@ -598,6 +663,7 @@ export default function App() {
       />
 
       <BottomControls
+        key={`controls_${currentSessionId}`}
         isAutoPlay={isAutoPlay}
         setIsAutoPlay={setIsAutoPlay}
         isScrollLocked={isScrollLocked}
@@ -612,6 +678,22 @@ export default function App() {
         handRaiseStatus={handRaiseStatus}
         isHost={isHost}
         uiLangCode={uiLangCode}
+        onTextSubmit={(text) => {
+          // Same flow as voice transcription
+          const newItem = {
+            id: crypto.randomUUID(),
+            original: text,
+            translated: '',
+            isTranslating: true,
+            timestamp: Date.now(),
+          };
+          setHistory(prev => [...prev, newItem]);
+          translateText(text, newItem.id, langInput, langOutput);
+          // Broadcast if in live sharing
+          if (roomStatus === 'hosting' || (roomStatus === 'joined' && (!micRestricted || handRaiseStatus === 'approved'))) {
+            broadcastMessage(text, langInput.code);
+          }
+        }}
       />
 
       <CameraView

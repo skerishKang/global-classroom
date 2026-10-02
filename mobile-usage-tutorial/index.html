@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>글로벌 클래스룸 모바일 사용 가이드</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@400;600;800&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="background-blobs">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+        <div class="blob blob-3"></div>
+    </div>
+
+    <main class="tutorial-container">
+        <header class="tutorial-header">
+            <div class="logo">
+                <img src="https://7-global-classroom.netlify.app/logo.png" alt="Logo"
+                    onerror="this.src='https://raw.githubusercontent.com/google/material-design-icons/master/png/action/language/materialicons/48dp/2x/baseline_language_black_48dp.png'">
+                <h1>Global Classroom</h1>
+            </div>
+            <p class="subtitle">모바일 상세 사용 가이드 (v2.0)</p>
+        </header>
+
+        <section class="tutorial-card">
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+
+            <div class="step-content" id="stepContent">
+                <!-- Slide 1: Landing -->
+                <div class="slide active" data-step="1">
+                    <div class="image-wrapper">
+                        <img src="assets/step1.png" alt="랜딩 페이지">
+                    </div>
+                    <div class="text-content">
+                        <h2>01. 시작하기</h2>
+                        <p>모바일에서도 AI 실시간 통역을 경험해보세요. 중앙의 마이크 버튼을 터치하여 바로 대화를 시작할 수 있습니다.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 2: Login & Sync -->
+                <div class="slide" data-step="2">
+                    <div class="image-wrapper">
+                        <img src="assets/step2.png" alt="로그인 및 연동">
+                    </div>
+                    <div class="text-content">
+                        <h2>02. 로그인 및 구글 연동</h2>
+                        <p>현재 테스트 버전으로 이메일 주소를 통한 승인 후 정식 로그인이 가능합니다. 로그인 시 <strong>구글 독스, 드라이브, 클래스룸,
+                                NotebookLM</strong>과 완벽하게 연동됩니다.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 3: Top Settings -->
+                <div class="slide" data-step="3">
+                    <div class="image-wrapper">
+                        <img src="assets/top_toolbar.png" alt="상단 설정">
+                    </div>
+                    <div class="text-content">
+                        <h2>03. 상단 툴바 활용</h2>
+                        <p>상단에서 <strong>사이트 언어</strong>와 <strong>출력 목소리</strong>를 변경할 수 있습니다. <code>+</code> 버튼으로 대화 내용을
+                            저장하고 새로운 창을 열 수도 있습니다.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 4: Real-time Voice (Moved up) -->
+                <div class="slide" data-step="4">
+                    <div class="image-wrapper">
+                        <img src="assets/step5.png" alt="음성 번역">
+                    </div>
+                    <div class="text-content">
+                        <h2>04. 실시간 음성 통역</h2>
+                        <p>입력 언어는 <strong>수정 버튼</strong>으로 언제든 교정할 수 있으며, 마이크를 통해 들어온 음성은 즉시 텍스트로 기록되고 통역됩니다.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 5: Class Sharing -->
+                <div class="slide" data-step="5">
+                    <div class="image-wrapper">
+                        <img src="assets/step6.png" alt="강의 공유">
+                    </div>
+                    <div class="text-content">
+                        <h2>05. 실시간 강의 공유</h2>
+                        <p>교수님이 공유방을 만들면 학생들은 각자의 폰으로 <strong>가장 선명한 음성</strong>과 <strong>원하는 언어의 번역</strong>을 실시간으로 확인할
+                            수 있습니다.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 6: Interaction Details -->
+                <div class="slide" data-step="6">
+                    <div class="image-wrapper">
+                        <img src="assets/interaction_details.png" alt="인터랙션 상세">
+                    </div>
+                    <div class="text-content">
+                        <h2>06. 편리한 인터랙션</h2>
+                        <p><strong>자동 읽기</strong> 활성화 시 번역 즉시 음성이 나오며, <strong>전체 듣기</strong>로 지금까지의 내용을 모두 들을 수 있습니다.
+                            <strong>출력만</strong> 모드로 번역문만 깔끔하게 보기도 가능합니다.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 7: AI Tools & Export -->
+                <div class="slide" data-step="7">
+                    <div class="image-wrapper">
+                        <img src="assets/export_menu.png" alt="AI 도구 및 내보내기">
+                    </div>
+                    <div class="text-content">
+                        <h2>07. AI 요약 및 내보내기</h2>
+                        <p>상단의 <strong>별 아이콘(AI 요약)</strong>으로 내용을 요약하고, <strong>내보내기 버튼</strong>을 통해 구글의 다양한 교육 도구로
+                            데이터를 즉시 전송하세요.</p>
+                    </div>
+                </div>
+
+                <!-- Slide 8: AI Vision (Moved to last) -->
+                <div class="slide" data-step="8">
+                    <div class="image-wrapper">
+                        <img src="assets/step4.png" alt="AI 비전">
+                    </div>
+                    <div class="text-content">
+                        <h2>08. AI 비전 (준비 중)</h2>
+                        <p>칠판이나 노트를 촬영하여 번역하는 기능은 현재 <strong>활발히 개발 중</strong>인 기능입니다. 곧 더욱 향상된 비전 기능을 만나보실 수 있습니다.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="controls">
+                <button id="prevBtn" class="btn btn-secondary" disabled>이전</button>
+                <div class="step-indicator"><span id="currentStep">1</span> / 8</div>
+                <button id="nextBtn" class="btn btn-primary">다음</button>
+            </div>
+        </section>
+
+        <footer class="tutorial-footer">
+            <button class="btn btn-outline"
+                onclick="window.location.href='https://7-global-classroom.netlify.app/'">사이트로 이동하기</button>
+        </footer>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+
+</html>

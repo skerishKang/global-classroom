@@ -54,13 +54,23 @@ export const VOICE_OPTIONS: VoiceOption[] = [
 ];
 
 export const MODEL_LIVE = 'gemini-2.5-flash-native-audio-preview-09-2025';
-export const MODEL_TRANSLATE = 'gemini-2.5-flash';
-export const MODEL_VISION = 'gemini-2.5-flash';
+// 기본 번역 모델을 경량 모델로 설정 (무료 쿼터 확보용)
+export const MODEL_TRANSLATE = 'gemini-2.5-flash-lite';
+export const MODEL_VISION = 'gemini-2.0-flash';
 export const MODEL_TTS = 'gemini-2.5-flash-preview-tts';
+
+// 번역에 사용 가능한 모델들 (무료 제한량 많은 순서)
+export const TRANSLATION_MODELS = [
+  { id: 'gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', desc: '무료 1,000+ RPD, 빠름', recommended: true },
+  { id: 'gemini-2.0-flash', name: 'Gemini 2.0 Flash', desc: 'GA 안정 버전', recommended: false },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', desc: '최신, 고품질', recommended: false },
+] as const;
+
+export const DEFAULT_TRANSLATION_MODEL = 'gemini-2.5-flash-lite';
 
 export const TRANSLATIONS: Record<string, TranslationMap> = {
   ko: {
-    appTitle: "Global Class",
+    appTitle: "Global Classroom",
     subtitle: "실시간 AI 통역 노트",
     inputLang: "입력 언어",
     outputLang: "출력 언어",
@@ -119,8 +129,8 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
     mobileTipDesc: "하단 고정 버튼으로 한 손 조작, 세로 모드 최적화",
   },
   en: {
-    appTitle: "Global Class",
-    subtitle: "AI Live Interpreter",
+    appTitle: "Global Classroom",
+    subtitle: "실시간 AI 통역 노트",
     inputLang: "Input",
     outputLang: "Output",
     autoPlay: "Auto Read",
@@ -179,7 +189,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   ja: {
     appTitle: "グローバル教室",
-    subtitle: "AIリアルタイム通訳",
+    subtitle: "リアルタイムAI通訳ノート",
     inputLang: "入力",
     outputLang: "出力",
     autoPlay: "自動再生",
@@ -238,7 +248,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   zh: {
     appTitle: "全球课堂",
-    subtitle: "AI 实时翻译",
+    subtitle: "实时AI口译笔记",
     inputLang: "输入",
     outputLang: "输出",
     autoPlay: "自动朗读",
@@ -297,7 +307,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   vi: {
     appTitle: "Lớp Học Toàn Cầu",
-    subtitle: "Phiên dịch AI",
+    subtitle: "Ghi chú phiên dịch AI thời gian thực",
     inputLang: "Đầu vào",
     outputLang: "Đầu ra",
     autoPlay: "Tự động đọc",
@@ -356,7 +366,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   es: {
     appTitle: "Clase Global",
-    subtitle: "Intérprete IA",
+    subtitle: "Notas de interpretación AI en tiempo real",
     inputLang: "Entrada",
     outputLang: "Salida",
     autoPlay: "Auto Leer",
@@ -415,7 +425,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   fr: {
     appTitle: "Classe Mondiale",
-    subtitle: "Interprète AI Live",
+    subtitle: "Notes d'interprétation AI en temps réel",
     inputLang: "Entrée",
     outputLang: "Sortie",
     autoPlay: "Lecture Auto",
@@ -474,7 +484,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   de: {
     appTitle: "Globale Klasse",
-    subtitle: "KI-Live-Dolmetscher",
+    subtitle: "Echtzeit-KI-Dolmetschernotizen",
     inputLang: "Eingang",
     outputLang: "Ausgang",
     autoPlay: "Auto-Wiedergabe",
@@ -533,7 +543,7 @@ export const TRANSLATIONS: Record<string, TranslationMap> = {
   },
   ru: {
     appTitle: "Глобальный класс",
-    subtitle: "Живой AI переводчик",
+    subtitle: "Заметки синхронного AI-перевода",
     inputLang: "Ввод",
     outputLang: "Вывод",
     autoPlay: "Авточтение",

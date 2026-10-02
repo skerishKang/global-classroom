@@ -29,7 +29,7 @@ export const handler = async (event: any) => {
   const base64Image = typeof body.base64Image === 'string' ? body.base64Image : '';
   const langA = typeof body.langA === 'string' ? body.langA : '';
   const langB = typeof body.langB === 'string' ? body.langB : '';
-  const model = typeof body.model === 'string' ? body.model : 'gemini-2.5-flash';
+  const model = typeof body.model === 'string' ? body.model : 'gemini-2.0-flash';
 
   if (!base64Image || !langA || !langB) {
     return {

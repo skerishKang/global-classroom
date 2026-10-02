@@ -22,7 +22,8 @@ export const handler = async (event: any) => {
   let body: any = {};
   try {
     body = event.body ? JSON.parse(event.body) : {};
-  } catch {
+  } catch (err) {
+    console.error('tts: failed to parse body', err);
     body = {};
   }
 
@@ -42,7 +43,7 @@ export const handler = async (event: any) => {
     const ai = new GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({
       model,
-      contents: { parts: [{ text }] },
+      contents: [{ role: 'user', parts: [{ text }] }],
       config: {
         responseModalities: [Modality.AUDIO],
         speechConfig: {
@@ -67,6 +68,7 @@ export const handler = async (event: any) => {
       body: JSON.stringify({ audioBase64: base64Audio }),
     };
   } catch (error: any) {
+    console.error('tts: generation failed', error);
     return {
       statusCode: 500,
       headers: { 'Content-Type': 'application/json' },

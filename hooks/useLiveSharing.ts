@@ -296,7 +296,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         }
         setIsVideoOn(false);
 
-        Object.values(peerConnectionsRef.current).forEach(pc => pc.close());
+        Object.values(peerConnectionsRef.current as Record<string, RTCPeerConnection>).forEach(pc => pc.close());
         peerConnectionsRef.current = {};
         setRemoteStreams({});
     }, [localStream]);

@@ -1,2 +1,8 @@
 @import "tailwindcss";
 @config "./tailwind.config.cjs";
+
+@layer base {
+  body {
+    font-family: 'Outfit', sans-serif;
+  }
+}
