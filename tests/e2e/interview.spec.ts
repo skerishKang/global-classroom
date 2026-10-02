@@ -34,7 +34,7 @@ test.describe('AI Interview Interpreter', () => {
     await page.getByRole('button', { name: '영어로 전달' }).click();
 
     await expect(
-      page.getByText('I build AI systems that help people communicate complex ideas clearly.')
+      page.getByText('I build AI systems that help people communicate complex ideas clearly.').first()
     ).toBeVisible();
 
     await page.getByRole('button', { name: '크게 보여주기' }).click();
@@ -63,7 +63,7 @@ test.describe('AI Interview Interpreter', () => {
     await page.getByRole('button', { name: '한국어로 이해' }).click();
 
     await expect(
-      page.getByText('저는 복잡한 기술 문제를 어떻게 해결하는지 설명해 주세요.')
+      page.getByText('저는 복잡한 기술 문제를 어떻게 해결하는지 설명해 주세요.').first()
     ).toBeVisible();
   });
 });
