@@ -354,7 +354,7 @@ export function useInterviewLive({
     token: string,
     targetLanguageCode: LiveTranslationTarget,
   ) => {
-    const ai = new GoogleGenAI({ apiKey: token, apiVersion: 'v1beta' });
+    const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
     const ref = targetLanguageCode === 'en' ? enPreviewRef : koPreviewRef;
 
     const session = await ai.live.connect({
@@ -405,7 +405,7 @@ export function useInterviewLive({
       const transcribeToken = await fetchLiveToken(TRANSCRIBE_MODEL);
       if (!desiredRef.current) return;
 
-      const transcribeAi = new GoogleGenAI({ apiKey: transcribeToken, apiVersion: 'v1beta' });
+      const transcribeAi = new GoogleGenAI({ apiKey: transcribeToken, httpOptions: { apiVersion: 'v1alpha' } });
       const transcribeSession = await transcribeAi.live.connect({
         model: TRANSCRIBE_MODEL,
         config: {
