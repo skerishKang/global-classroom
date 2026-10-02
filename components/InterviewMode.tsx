@@ -171,6 +171,12 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
       }
     },
   });
+  const {
+    status: liveStatus,
+    translatePreviewAvailable,
+    start: startLive,
+    stop: stopLive,
+  } = live;
 
   const stopBrowserFallback = useCallback(() => {
     if (browserRestartTimerRef.current) {
@@ -359,30 +365,30 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
     setFallbackMode('none');
 
     try {
-      await live.start();
+      await startLive();
     } catch {
       startBrowserFallback();
     }
-  }, [live, startBrowserFallback]);
+  }, [startBrowserFallback, startLive]);
 
   const stopMic = useCallback(() => {
     setMicWanted(false);
     micWantedRef.current = false;
-    live.stop();
+    stopLive();
     stopBrowserFallback();
     stopGroqFallback();
     setFallbackMode('none');
     setCurrentTranscript('');
-  }, [live, stopBrowserFallback, stopGroqFallback]);
+  }, [stopBrowserFallback, stopGroqFallback, stopLive]);
 
   useEffect(() => {
     return () => {
       micWantedRef.current = false;
-      live.stop();
+      stopLive();
       stopBrowserFallback();
       stopGroqFallback();
     };
-  }, [live, stopBrowserFallback, stopGroqFallback]);
+  }, [stopBrowserFallback, stopGroqFallback, stopLive]);
 
   useEffect(() => {
     if (!historyRef.current) return;
@@ -404,9 +410,9 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
         : '';
 
   const statusLabel =
-    live.status === 'connecting'
+    liveStatus === 'connecting'
       ? 'Gemini Live 연결 중'
-      : live.status === 'live'
+      : liveStatus === 'live'
         ? 'Gemini 3.5 Transcribe Live'
         : fallbackMode === 'browser'
           ? 'Browser STT fallback'
@@ -558,7 +564,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
                     Live Translate 미리보기
                   </div>
                   <div className="text-[11px] font-bold text-gray-400">
-                    {live.translatePreviewAvailable ? '실시간 스트림' : '연결 대기 / fallback'}
+                    {translatePreviewAvailable ? '실시간 스트림' : '연결 대기 / fallback'}
                   </div>
                 </div>
                 <p className="mt-1 whitespace-pre-wrap text-lg font-semibold leading-8 text-indigo-950">
@@ -606,7 +612,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
 
           <button
             type="button"
-            disabled={live.status === 'connecting'}
+            disabled={liveStatus === 'connecting'}
             onClick={() => void (micWanted ? stopMic() : startMic())}
             className={`min-w-44 rounded-full px-6 py-3.5 text-sm font-extrabold shadow-lg transition disabled:opacity-50 ${
               micWanted
@@ -614,7 +620,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
                 : 'bg-indigo-600 text-white hover:bg-indigo-700'
             }`}
           >
-            {live.status === 'connecting'
+            {liveStatus === 'connecting'
               ? '연결 중...'
               : micWanted
                 ? '■ 마이크 끄기'
