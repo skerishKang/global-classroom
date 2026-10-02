@@ -3,14 +3,14 @@ import Groq from 'groq-sdk';
 
 // Gemini 모델 우선순위 (무료 제한량 많은 순서)
 const GEMINI_MODELS = [
-  'gemini-2.5-flash-lite',  // 1순위: 1000+ RPD
-  'gemini-2.0-flash',       // 2순위: 1500 RPD
+  'gemini-3.5-flash-lite',  // 1순위: low-latency, cost-efficient translation
+  'gemini-3.8-flash',       // 2순위: higher-capability fallback
 ];
 
 // Groq 모델 우선순위 (Gemini 소진 시 폴백)
 const GROQ_MODELS = [
-  'llama-3.3-70b-versatile', // 3순위: 1000 RPD, 70B 고품질
-  'llama-3.1-8b-instant',    // 4순위: 14,400 RPD, 8B 비상용
+  'openai/gpt-oss-20b',      // 3순위: fastest production fallback
+  'openai/gpt-oss-120b',     // 4순위: higher-quality production fallback
 ];
 
 export const handler = async (event: any) => {
