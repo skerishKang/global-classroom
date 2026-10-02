@@ -392,7 +392,7 @@ export default function InterviewMode({ onExit }: InterviewModeProps) {
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white">
+    <div className="interview-scroll h-screen overflow-y-auto overscroll-contain bg-slate-950 text-white">
       <header className="border-b border-white/10 bg-slate-950/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 md:px-8">
           <div>
