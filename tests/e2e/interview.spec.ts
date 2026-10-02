@@ -66,4 +66,89 @@ test.describe('AI Interview Interpreter', () => {
       page.getByText('저는 복잡한 기술 문제를 어떻게 해결하는지 설명해 주세요.').first()
     ).toBeVisible();
   });
+
+  test('falls back to Groq Whisper when browser speech recognition is unavailable', async ({ page }) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: undefined });
+      Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, value: undefined });
+
+      const fakeTrack = { stop: () => {} } as unknown as MediaStreamTrack;
+      const fakeStream = { getTracks: () => [fakeTrack] } as unknown as MediaStream;
+
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: {
+          getUserMedia: async () => fakeStream,
+        },
+      });
+
+      class FakeMediaRecorder {
+        static isTypeSupported() {
+          return true;
+        }
+
+        state: RecordingState = 'inactive';
+        mimeType = 'audio/webm';
+        ondataavailable: ((event: BlobEvent) => void) | null = null;
+        onstop: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+
+        constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+          if (options?.mimeType) this.mimeType = options.mimeType;
+        }
+
+        start() {
+          this.state = 'recording';
+        }
+
+        stop() {
+          this.state = 'inactive';
+          const blob = new Blob(['fake-audio'], { type: this.mimeType });
+          this.ondataavailable?.({ data: blob } as BlobEvent);
+          this.onstop?.();
+        }
+      }
+
+      Object.defineProperty(window, 'MediaRecorder', {
+        configurable: true,
+        value: FakeMediaRecorder,
+      });
+    });
+
+    await page.route('**/api/transcribe', async (route) => {
+      const body = route.request().postDataJSON() as { audioDataUrl?: string; language?: string };
+      expect(body.language).toBe('ko');
+      expect(body.audioDataUrl?.startsWith('data:audio/')).toBeTruthy();
+
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          text: '저는 빠르고 신뢰할 수 있는 AI 제품을 만드는 개발자입니다.',
+          provider: 'groq',
+          model: 'whisper-large-v3-turbo',
+        }),
+      });
+    });
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await expect(
+      page.getByText('이 브라우저는 내장 음성 전사가 없어 Groq Whisper로 자동 전환합니다.')
+    ).toBeVisible();
+
+    await page.getByRole('button', { name: '한국어 말하기' }).click();
+    await expect(page.getByRole('button', { name: '서버 녹음 중지' })).toBeVisible();
+
+    await page.getByRole('button', { name: '서버 녹음 중지' }).click();
+
+    await expect(
+      page.getByPlaceholder('여기에 한국어로 답하거나 마이크 버튼을 누르세요.')
+    ).toHaveValue('저는 빠르고 신뢰할 수 있는 AI 제품을 만드는 개발자입니다.');
+
+    await expect(
+      page.getByText('I build AI systems that help people communicate complex ideas clearly.').first()
+    ).toBeVisible();
+  });
+
 });
