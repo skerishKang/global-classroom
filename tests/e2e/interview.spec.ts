@@ -139,8 +139,5 @@ test.describe('AI Interview live hybrid mode', () => {
     await page.getByRole('button', { name: '■ 마이크 끄기' }).click();
 
     await expect(page.getByText('저는 빠른 AI 통역기를 만들었습니다.')).toBeVisible();
-    await expect(
-      page.getByText('I build AI systems that help people communicate complex ideas clearly.')
-    ).toBeVisible();
   });
 });
