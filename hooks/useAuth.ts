@@ -15,7 +15,7 @@ import {
     ADMIN_EMAIL
 } from '../constants';
 
-export function useAuth() {
+export function useAuth(enabled: boolean = true) {
     const [user, setUser] = useState<User | any | null>(() => {
         try {
             const raw = sessionStorage.getItem(GOOGLE_USER_STORAGE_KEY);
@@ -49,6 +49,7 @@ export function useAuth() {
 
     // 1. Initialize GIS Client
     useEffect(() => {
+        if (!enabled) return;
         const checkGoogle = setInterval(() => {
             if (typeof (window as any).google !== 'undefined' && (window as any).google.accounts && (window as any).google.accounts.oauth2) {
                 if (!GOOGLE_CLIENT_ID) {
@@ -96,10 +97,14 @@ export function useAuth() {
         }, 500);
 
         return () => clearInterval(checkGoogle);
-    }, []);
+    }, [enabled]);
 
     // 2. Monitor Firebase Auth State
     useEffect(() => {
+        if (!enabled) {
+            setIsAuthReady(true);
+            return;
+        }
         const auth = getAppAuth();
         const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
             setIsAuthReady(true);
@@ -124,7 +129,7 @@ export function useAuth() {
             });
         });
         return () => unsubscribe();
-    }, [accessToken]);
+    }, [accessToken, enabled]);
 
     const handleEmailLogin = async () => {
         if (isEmailAuthBusy) return;

@@ -52,11 +52,12 @@ import ExportMenu from './components/ExportMenu';
 import VisionToastSystem from './components/VisionToastSystem';
 import ToastSystem from './components/ToastSystem';
 import LiveSharingModal from './components/LiveSharingModal';
-import InterviewMode from './components/InterviewMode';
+
 
 import { useAuth } from './hooks/useAuth';
 import { useConversationHistory } from './hooks/useConversationHistory';
 import { useGeminiLive } from './hooks/useGeminiLive';
+import { useInterviewLive } from './hooks/useInterviewLive';
 import { useExport } from './hooks/useExport';
 import { useVision } from './hooks/useVision';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -90,22 +91,10 @@ export default function App() {
     typeof window !== 'undefined' &&
     new URLSearchParams(window.location.search).get('mode') === 'interview';
 
-  if (interviewModeRequested) {
-    return (
-      <InterviewMode
-        onExit={() => {
-          const url = new URL(window.location.href);
-          url.searchParams.delete('mode');
-          window.location.href = url.toString();
-        }}
-      />
-    );
-  }
-
-  return <ClassroomApp />;
+  return <ClassroomApp interviewMode={interviewModeRequested} />;
 }
 
-function ClassroomApp() {
+function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   // --- UI Translation State ---
   const [langInput, setLangInput] = useState<Language>(SUPPORTED_LANGUAGES[0]); // Default: Auto
   const [langOutput, setLangOutput] = useState<Language>(SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1]); // Default: Vietnamese
@@ -138,7 +127,7 @@ function ClassroomApp() {
     handleEmailSignUp,
     handleLoginSelection,
     handleLogout,
-  } = useAuth();
+  } = useAuth(!interviewMode);
 
   const { toasts, enqueueToast, dismissToast } = useToast();
 
@@ -395,11 +384,104 @@ function ClassroomApp() {
   const [summaryText, setSummaryText] = useState('');
 
   const [currentTurnText, setCurrentTurnText] = useState('');
+  const [interviewLivePreview, setInterviewLivePreview] = useState('');
+  const [interviewLiveError, setInterviewLiveError] = useState('');
+  const [interviewLiveWarning, setInterviewLiveWarning] = useState('');
   const historyRef = useRef<HTMLDivElement>(null);
   const pendingHistoryExpandRef = useRef<{ prevScrollHeight: number; prevScrollTop: number } | null>(null);
   const langInputRef = useRef(langInput);
   const langOutputRef = useRef(langOutput);
   const isLangAutoRef = useRef(false);
+
+  const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
+  const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
+
+  useEffect(() => {
+    if (!interviewMode) return;
+    setLangInput(interviewAuto);
+    setLangOutput(interviewEnglish);
+    setIsOutputOnly(false);
+    setIsScrollLocked(false);
+    setCurrentTurnText('');
+    setInterviewLivePreview('');
+    setInterviewLiveError('');
+    setInterviewLiveWarning('');
+  }, [interviewMode]);
+
+  const onInterviewFinalTranscript = useCallback((text: string) => {
+    const normalized = text.trim();
+    if (!normalized) return;
+
+    setCurrentTurnText('');
+    setInterviewLivePreview('');
+
+    const newItem: ConversationItem = {
+      id: crypto.randomUUID(),
+      original: normalized,
+      translated: '',
+      isTranslating: true,
+      timestamp: Date.now(),
+    };
+    setHistory((prev) => [...prev, newItem]);
+    translateText(normalized, newItem.id, interviewAuto, interviewEnglish);
+  }, [setHistory, translateText]);
+
+  const onInterviewLiveTranslation = useCallback((_target: 'en' | 'ko', text: string) => {
+    setInterviewLivePreview(text);
+  }, []);
+
+  const {
+    status: interviewLiveStatus,
+    backend: interviewBackend,
+    translatePreviewAvailable: interviewTranslatePreviewAvailable,
+    start: startInterviewLive,
+    stop: stopInterviewLive,
+  } = useInterviewLive({
+    onInterimTranscript: (text) => setCurrentTurnText(text),
+    onFinalTranscript: onInterviewFinalTranscript,
+    onLiveTranslation: onInterviewLiveTranslation,
+    onWarning: (message) => setInterviewLiveWarning(message),
+    onFatalError: (message) => setInterviewLiveError(message),
+  });
+
+  const interviewConnectionStatus =
+    interviewLiveStatus === 'connecting'
+      ? ConnectionStatus.CONNECTING
+      : interviewLiveStatus === 'live'
+        ? ConnectionStatus.CONNECTED
+        : interviewLiveStatus === 'error'
+          ? ConnectionStatus.ERROR
+          : ConnectionStatus.DISCONNECTED;
+
+  const toggleInterviewMic = useCallback(() => {
+    if (interviewLiveStatus === 'live' || interviewLiveStatus === 'connecting') {
+      stopInterviewLive();
+      setCurrentTurnText('');
+      setInterviewLivePreview('');
+      return;
+    }
+
+    setInterviewLiveError('');
+    setInterviewLiveWarning('');
+    void startInterviewLive().catch((liveError) => {
+      setInterviewLiveError(liveError instanceof Error ? liveError.message : String(liveError));
+    });
+  }, [interviewLiveStatus, startInterviewLive, stopInterviewLive]);
+
+  useEffect(() => {
+    if (!interviewMode) {
+      stopInterviewLive();
+    }
+  }, [interviewMode, stopInterviewLive]);
+
+  const effectiveStatus = interviewMode ? interviewConnectionStatus : status;
+  const effectiveIsMicOn = interviewMode ? interviewLiveStatus === 'live' : isMicOn;
+  const effectiveAnalyser = interviewMode ? null : analyser;
+  const effectiveToggleMic = interviewMode ? toggleInterviewMic : toggleMic;
+  const effectiveConnect = interviewMode ? (() => { void startInterviewLive(); }) : connectToGemini;
+  const effectiveErrorMessage = interviewMode
+    ? interviewLiveError || interviewLiveWarning
+    : errorMessage;
 
   // --- Editing State ---
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -624,21 +706,16 @@ function ClassroomApp() {
         setIsExportMenuOpen={setIsExportMenuOpen}
         handleSummarize={handleSummarize}
         onNewConversation={handleNewConversationAction}
-        t={t}
-      />
-
-      <button
-        type="button"
-        onClick={() => {
+        interviewMode={interviewMode}
+        interviewBackend={interviewBackend}
+        onToggleInterviewMode={() => {
           const url = new URL(window.location.href);
-          url.searchParams.set('mode', 'interview');
+          if (interviewMode) url.searchParams.delete('mode');
+          else url.searchParams.set('mode', 'interview');
           window.location.href = url.toString();
         }}
-        className="fixed bottom-24 right-4 z-40 rounded-full bg-slate-950 px-4 py-3 text-sm font-bold text-white shadow-xl hover:bg-slate-800 md:bottom-6 md:right-6"
-        aria-label="AI 인터뷰 모드 열기"
-      >
-        AI 인터뷰
-      </button>
+        t={t}
+      />
 
       <ExportMenu
         isOpen={isExportMenuOpen}
@@ -668,17 +745,20 @@ function ClassroomApp() {
 
       <ConversationList
         key={`list_${currentSessionId}`}
-        analyser={analyser}
-        isMicOn={isMicOn}
+        analyser={effectiveAnalyser}
+        isMicOn={effectiveIsMicOn}
         history={history}
         currentTurnText={currentTurnText}
         isOutputOnly={isOutputOnly}
         historyRef={historyRef}
         t={t}
-        status={status}
-        errorMessage={errorMessage}
-        connectToGemini={connectToGemini}
-        toggleMic={toggleMic}
+        status={effectiveStatus}
+        errorMessage={effectiveErrorMessage}
+        connectToGemini={effectiveConnect}
+        toggleMic={effectiveToggleMic}
+        currentTurnTranslation={interviewMode ? interviewLivePreview : ''}
+        interviewMode={interviewMode}
+        interviewPreviewAvailable={interviewTranslatePreviewAvailable}
         editingItemId={editingItemId}
         setEditingItemId={setEditingItemId}
         editOriginalText={editOriginalText}
@@ -702,8 +782,8 @@ function ClassroomApp() {
         setIsAutoPlay={setIsAutoPlay}
         isScrollLocked={isScrollLocked}
         setIsScrollLocked={setIsScrollLocked}
-        status={status}
-        toggleMic={toggleMic}
+        status={effectiveStatus}
+        toggleMic={effectiveToggleMic}
         playAll={playAll}
         stopTTS={stopTTS}
         setIsCameraOpen={setIsCameraOpen}

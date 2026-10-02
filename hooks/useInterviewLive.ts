@@ -48,6 +48,15 @@ function mergeStreamText(previous: string, incoming: string) {
   return `${previous}${spacer}${next}`;
 }
 
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error || new Error('오디오를 읽지 못했습니다.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
 async function fetchLiveToken(model: string) {
   const response = await fetch('/api/live-token', {
     method: 'POST',
@@ -70,7 +79,16 @@ export function useInterviewLive({
 }: UseInterviewLiveOptions) {
   const [status, setStatus] = useState<InterviewLiveStatus>('idle');
   const [translatePreviewAvailable, setTranslatePreviewAvailable] = useState(false);
+  const [backend, setBackend] = useState<'idle' | 'gemini' | 'browser' | 'groq'>('idle');
   const desiredRef = useRef(false);
+  const fallbackStartedRef = useRef(false);
+  const browserRecognitionRef = useRef<any>(null);
+  const browserRestartTimerRef = useRef<number | null>(null);
+  const groqRecorderRef = useRef<MediaRecorder | null>(null);
+  const groqActiveRef = useRef(false);
+  const groqStreamRef = useRef<MediaStream | null>(null);
+  const groqChunksRef = useRef<Blob[]>([]);
+  const groqCycleTimerRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -89,6 +107,34 @@ export function useInterviewLive({
   }, []);
 
   const cleanup = useCallback(() => {
+    if (browserRestartTimerRef.current) {
+      window.clearTimeout(browserRestartTimerRef.current);
+      browserRestartTimerRef.current = null;
+    }
+    try {
+      browserRecognitionRef.current?.stop?.();
+    } catch {
+      // no-op
+    }
+    browserRecognitionRef.current = null;
+
+    if (groqCycleTimerRef.current) {
+      window.clearTimeout(groqCycleTimerRef.current);
+      groqCycleTimerRef.current = null;
+    }
+    try {
+      if (groqRecorderRef.current?.state === 'recording') {
+        groqRecorderRef.current.stop();
+      }
+    } catch {
+      // no-op
+    }
+    groqRecorderRef.current = null;
+    groqActiveRef.current = false;
+    groqStreamRef.current?.getTracks().forEach((track) => track.stop());
+    groqStreamRef.current = null;
+    groqChunksRef.current = [];
+
     if (processorRef.current) {
       try {
         processorRef.current.disconnect();
@@ -115,13 +161,194 @@ export function useInterviewLive({
     enPreviewRef.current = '';
     koPreviewRef.current = '';
     setTranslatePreviewAvailable(false);
+    setBackend('idle');
   }, [closeSession]);
 
   const stop = useCallback(() => {
     desiredRef.current = false;
+    fallbackStartedRef.current = false;
     cleanup();
     setStatus('idle');
   }, [cleanup]);
+
+  const postGroqTranscribe = useCallback(async (blob: Blob) => {
+    const audioDataUrl = await blobToDataUrl(blob);
+    const response = await fetch('/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioDataUrl, language: 'auto' }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || typeof data?.text !== 'string') {
+      throw new Error(data?.detail || data?.error || 'Groq 음성 전사에 실패했습니다.');
+    }
+    return data.text.trim();
+  }, []);
+
+  const startGroqFallback = useCallback(async () => {
+    if (!desiredRef.current || groqRecorderRef.current || groqActiveRef.current) return;
+    groqActiveRef.current = true;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+      if (!desiredRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        groqActiveRef.current = false;
+        return;
+      }
+
+      groqStreamRef.current = stream;
+      groqChunksRef.current = [];
+      const mimeType = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+      ].find((type) => MediaRecorder.isTypeSupported?.(type));
+
+      const recorder = new MediaRecorder(
+        stream,
+        mimeType ? { mimeType, audioBitsPerSecond: 32_000 } : { audioBitsPerSecond: 32_000 }
+      );
+      groqRecorderRef.current = recorder;
+      setBackend('groq');
+      setStatus('live');
+      onWarning?.('Gemini/브라우저 실시간 전사를 사용할 수 없어 Groq Whisper 자동 fallback을 사용합니다.');
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) groqChunksRef.current.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        if (groqCycleTimerRef.current) {
+          window.clearTimeout(groqCycleTimerRef.current);
+          groqCycleTimerRef.current = null;
+        }
+
+        const blob = new Blob(groqChunksRef.current, {
+          type: recorder.mimeType || mimeType || 'audio/webm',
+        });
+        groqChunksRef.current = [];
+        groqRecorderRef.current = null;
+        groqActiveRef.current = false;
+        groqStreamRef.current?.getTracks().forEach((track) => track.stop());
+        groqStreamRef.current = null;
+
+        if (!desiredRef.current || !blob.size) return;
+
+        try {
+          const transcript = await postGroqTranscribe(blob);
+          if (transcript) onFinalTranscript(transcript);
+        } catch (error) {
+          onWarning?.(`Groq Whisper 전사 오류: ${error instanceof Error ? error.message : String(error)}`);
+        }
+
+        if (desiredRef.current) {
+          window.setTimeout(() => void startGroqFallback(), 100);
+        }
+      };
+
+      recorder.start(250);
+      groqCycleTimerRef.current = window.setTimeout(() => {
+        if (groqRecorderRef.current?.state === 'recording') {
+          groqRecorderRef.current.stop();
+        }
+      }, 5500);
+    } catch (error) {
+      groqStreamRef.current?.getTracks().forEach((track) => track.stop());
+      groqStreamRef.current = null;
+      groqActiveRef.current = false;
+      setStatus('error');
+      const message = error instanceof Error ? error.message : String(error);
+      onFatalError?.(`마이크 fallback을 시작하지 못했습니다: ${message}`);
+    }
+  }, [onFatalError, onFinalTranscript, onWarning, postGroqTranscribe]);
+
+  const startBrowserFallback = useCallback(() => {
+    if (!desiredRef.current) return;
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      void startGroqFallback();
+      return;
+    }
+
+    const runRecognition = () => {
+      if (!desiredRef.current || groqActiveRef.current) return;
+
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || 'ko-KR';
+      let finalized = '';
+
+      recognition.onstart = () => {
+        setBackend('browser');
+        setStatus('live');
+        onWarning?.('Gemini Live를 사용할 수 없어 브라우저 실시간 전사를 사용합니다.');
+      };
+
+      recognition.onresult = (event: any) => {
+        let interim = '';
+        for (let index = event.resultIndex; index < event.results.length; index += 1) {
+          const text = event.results[index][0]?.transcript || '';
+          if (event.results[index].isFinal) {
+            finalized += text;
+            const committed = finalized.trim();
+            finalized = '';
+            if (committed) onFinalTranscript(committed);
+          } else {
+            interim += text;
+          }
+        }
+        onInterimTranscript((finalized + interim).trim());
+      };
+
+      recognition.onerror = (event: any) => {
+        const code = event?.error || 'unknown';
+        browserRecognitionRef.current = null;
+        if (!desiredRef.current) return;
+
+        if (['network', 'service-not-allowed', 'language-not-supported'].includes(code)) {
+          onWarning?.(`브라우저 전사 오류(${code}). Groq Whisper로 전환합니다.`);
+          void startGroqFallback();
+        } else {
+          onWarning?.(`브라우저 음성 인식 오류: ${code}`);
+        }
+      };
+
+      recognition.onend = () => {
+        browserRecognitionRef.current = null;
+        if (!desiredRef.current || groqActiveRef.current) return;
+        browserRestartTimerRef.current = window.setTimeout(runRecognition, 150);
+      };
+
+      browserRecognitionRef.current = recognition;
+      try {
+        recognition.start();
+      } catch {
+        browserRecognitionRef.current = null;
+        void startGroqFallback();
+      }
+    };
+
+    runRecognition();
+  }, [onFinalTranscript, onInterimTranscript, onWarning, startGroqFallback]);
+
+  const beginFallback = useCallback((reason: string) => {
+    if (!desiredRef.current || fallbackStartedRef.current) return;
+    fallbackStartedRef.current = true;
+    cleanup();
+    onWarning?.(`${reason} 브라우저 전사로 자동 전환합니다.`);
+    startBrowserFallback();
+  }, [cleanup, onWarning, startBrowserFallback]);
 
   const connectTranslationSession = useCallback(async (
     token: string,
@@ -169,6 +396,8 @@ export function useInterviewLive({
   const start = useCallback(async () => {
     if (desiredRef.current) return;
     desiredRef.current = true;
+    fallbackStartedRef.current = false;
+    setBackend('idle');
     setStatus('connecting');
     cleanup();
 
@@ -204,13 +433,11 @@ export function useInterviewLive({
           onerror: (error: any) => {
             if (!desiredRef.current) return;
             const message = error?.message || String(error);
-            setStatus('error');
-            onFatalError?.(`Gemini 실시간 전사 오류: ${message}`);
+            beginFallback(`Gemini 실시간 전사 오류: ${message}`);
           },
           onclose: (event: any) => {
             if (!desiredRef.current) return;
-            setStatus('error');
-            onFatalError?.(`Gemini 실시간 전사 연결이 종료되었습니다: ${event?.reason || 'connection closed'}`);
+            beginFallback(`Gemini 실시간 전사 연결이 종료되었습니다: ${event?.reason || 'connection closed'}`);
           },
         },
       } as any);
@@ -289,21 +516,20 @@ export function useInterviewLive({
 
       source.connect(processor);
       processor.connect(inputContext.destination);
+      setBackend('gemini');
       setStatus('live');
     } catch (error) {
-      cleanup();
       if (!desiredRef.current) return;
-      desiredRef.current = false;
-      setStatus('error');
-      onFatalError?.(
-        error instanceof Error ? error.message : String(error)
+      beginFallback(
+        error instanceof Error
+          ? `Gemini Live 시작 실패: ${error.message}`
+          : `Gemini Live 시작 실패: ${String(error)}`
       );
-      throw error;
     }
   }, [
+    beginFallback,
     cleanup,
     connectTranslationSession,
-    onFatalError,
     onFinalTranscript,
     onInterimTranscript,
     onWarning,
@@ -311,6 +537,7 @@ export function useInterviewLive({
 
   return {
     status,
+    backend,
     translatePreviewAvailable,
     start,
     stop,

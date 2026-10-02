@@ -8,6 +8,9 @@ interface ConversationListProps {
     isMicOn: boolean;
     history: ConversationItem[];
     currentTurnText: string;
+    currentTurnTranslation?: string;
+    interviewMode?: boolean;
+    interviewPreviewAvailable?: boolean;
     isOutputOnly: boolean;
     historyRef: React.RefObject<HTMLDivElement>;
     t: TranslationMap;
@@ -37,6 +40,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
     isMicOn,
     history,
     currentTurnText,
+    currentTurnTranslation = '',
+    interviewMode = false,
+    interviewPreviewAvailable = false,
     isOutputOnly,
     historyRef,
     t,
@@ -74,11 +80,17 @@ const ConversationList: React.FC<ConversationListProps> = ({
                 ref={historyRef}
                 className="flex-1 overflow-y-auto p-4 pb-40 md:pb-24 z-10 relative scroll-smooth"
             >
-                {history.length === 0 && !currentTurnText && (
+                {history.length === 0 && !currentTurnText && !currentTurnTranslation && (
                     <div className="h-full flex flex-col items-center justify-start text-gray-400 text-center px-4 opacity-70 overflow-y-auto py-0">
                         <div className="mt-32 mb-3 flex flex-col items-center gap-1.5" title={t.statusStandby}>
                             <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[11px] font-black shadow-lg animate-bounce duration-1000">
-                                {(isMicOn || status === ConnectionStatus.CONNECTED) ? (uiLangCode === 'ko' ? '듣고 있습니다...' : 'Listening...') : t.statusStandby}
+                                {interviewMode
+                                    ? ((isMicOn || status === ConnectionStatus.CONNECTED)
+                                        ? (uiLangCode === 'ko' ? '인터뷰 · 듣는 중' : 'Interview · Listening')
+                                        : (uiLangCode === 'ko' ? '인터뷰 모드 · 자동 언어 감지' : 'Interview mode · Auto language'))
+                                    : ((isMicOn || status === ConnectionStatus.CONNECTED)
+                                        ? (uiLangCode === 'ko' ? '듣고 있습니다...' : 'Listening...')
+                                        : t.statusStandby)}
                             </span>
                             <button
                                 onClick={toggleMic}
@@ -95,28 +107,42 @@ const ConversationList: React.FC<ConversationListProps> = ({
 
 
                         {!(isMicOn || status === ConnectionStatus.CONNECTED) ? (
-                            <>
-                                <p className="mb-2 whitespace-pre-wrap text-[10px] font-semibold leading-relaxed max-w-[280px] text-gray-400">{t.emptyHint}</p>
-                                <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/80 border border-gray-200 rounded-2xl p-4 shadow-sm">
-                                    <div className="font-bold text-gray-700 text-sm">{t.guideTitle}</div>
-                                    <ul className="list-disc list-inside space-y-0.5 mt-1 leading-snug">
-                                        <li>{t.guideMic}</li>
-                                        <li>{t.guideDrive}</li>
-                                        <li>{t.guideVision}</li>
-                                        <li>{t.guideAuto}</li>
+                            interviewMode ? (
+                                <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/90 border border-indigo-100 rounded-2xl p-4 shadow-sm">
+                                    <div className="font-bold text-indigo-700 text-sm">
+                                        {uiLangCode === 'ko' ? '인터뷰 모드' : 'Interview mode'}
+                                    </div>
+                                    <ul className="list-disc list-inside space-y-1 leading-snug">
+                                        <li>{uiLangCode === 'ko' ? '입력 언어는 자동 감지합니다.' : 'Input language is detected automatically.'}</li>
+                                        <li>{uiLangCode === 'ko' ? '한국어와 영어가 섞여도 원문 자막은 그대로 표시합니다.' : 'Mixed Korean and English remain visible in the source transcript.'}</li>
+                                        <li>{uiLangCode === 'ko' ? '말하는 동안 실시간 자막과 Live Translate 미리보기를 표시합니다.' : 'Live transcript and translation preview appear while you speak.'}</li>
+                                        <li>{uiLangCode === 'ko' ? '발화가 끝나면 확정 번역을 대화 기록에 저장합니다.' : 'Final translation is saved to the conversation after each utterance.'}</li>
                                     </ul>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
-                                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2" title={uiLangCode === 'ko' ? '키보드 단축키' : 'Keyboard Shortcuts'}>
-                                            <div className="font-bold text-gray-700">{t.shortcutTitle}</div>
-                                            <div className="mt-1 text-gray-500">{t.shortcutSpace}<br />Enter: {uiLangCode === 'ko' ? '최근 번역 듣기' : 'Play recent'}</div>
-                                        </div>
-                                        <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2" title={uiLangCode === 'ko' ? '모바일 사용 팁' : 'Mobile Usage Tips'}>
-                                            <div className="font-bold text-gray-700">{t.mobileTipTitle}</div>
-                                            <div className="mt-1 text-gray-500">{t.mobileTipDesc}</div>
+                                </div>
+                            ) : (
+                                <>
+                                    <p className="mb-2 whitespace-pre-wrap text-[10px] font-semibold leading-relaxed max-w-[280px] text-gray-400">{t.emptyHint}</p>
+                                    <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/80 border border-gray-200 rounded-2xl p-4 shadow-sm">
+                                        <div className="font-bold text-gray-700 text-sm">{t.guideTitle}</div>
+                                        <ul className="list-disc list-inside space-y-0.5 mt-1 leading-snug">
+                                            <li>{t.guideMic}</li>
+                                            <li>{t.guideDrive}</li>
+                                            <li>{t.guideVision}</li>
+                                            <li>{t.guideAuto}</li>
+                                        </ul>
+                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                                            <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2" title={uiLangCode === 'ko' ? '키보드 단축키' : 'Keyboard Shortcuts'}>
+                                                <div className="font-bold text-gray-700">{t.shortcutTitle}</div>
+                                                <div className="mt-1 text-gray-500">{t.shortcutSpace}<br />Enter: {uiLangCode === 'ko' ? '최근 번역 듣기' : 'Play recent'}</div>
+                                            </div>
+                                            <div className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2" title={uiLangCode === 'ko' ? '모바일 사용 팁' : 'Mobile Usage Tips'}>
+                                                <div className="font-bold text-gray-700">{t.mobileTipTitle}</div>
+                                                <div className="mt-1 text-gray-500">{t.mobileTipDesc}</div>
+                                            </div>
                                         </div>
                                     </div>
-                                </div>
-                            </>
+                                </>
+                            )
                         ) : (
                             <div className="mt-8 animate-pulse flex flex-col items-center">
                                 <p className="text-sm font-bold text-indigo-500">{uiLangCode === 'ko' ? '실시간으로 통역을 준비하고 있습니다.' : 'Ready to translate in real-time.'}</p>
@@ -338,21 +364,27 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         );
                     })}
 
-                    {/* Live Transcription Placeholder (Left Side) */}
-                    {currentTurnText && (
+                    {/* Live transcription keeps the original two-column Global Classroom layout. */}
+                    {(currentTurnText || currentTurnTranslation) && (
                         isOutputOnly ? (
-                            <div className="opacity-70">
-                                <div className="flex items-center justify-center text-gray-300 text-sm italic border border-gray-200 border-dashed p-4 rounded-xl bg-white">
-                                    ...
+                            <div className="opacity-80">
+                                <div className="border border-indigo-100 bg-indigo-50/60 p-4 rounded-xl text-indigo-900 font-medium">
+                                    {currentTurnTranslation || '...'}
                                 </div>
                             </div>
                         ) : (
-                            <div className="grid grid-cols-2 gap-4 opacity-70">
-                                <div className="bg-gray-50 border border-gray-300 border-dashed p-4 rounded-xl text-gray-600 italic animate-pulse">
-                                    {currentTurnText}
+                            <div className="grid grid-cols-2 gap-4 opacity-80">
+                                <div className="bg-gray-50 border border-gray-300 border-dashed p-4 rounded-xl text-gray-700 italic animate-pulse">
+                                    {currentTurnText || (uiLangCode === 'ko' ? '듣는 중...' : 'Listening...')}
                                 </div>
-                                <div className="flex items-center justify-center text-gray-300 text-sm italic">
-                                    ...
+                                <div className="border border-indigo-200 border-dashed bg-indigo-50/60 p-4 rounded-xl text-indigo-900">
+                                    <div className="mb-1 flex items-center justify-between gap-2 text-[9px] font-black uppercase tracking-wide text-indigo-400">
+                                        <span>{interviewMode ? 'Live Translate' : (uiLangCode === 'ko' ? '번역 대기' : 'Translation')}</span>
+                                        {interviewMode && interviewPreviewAvailable && <span>LIVE</span>}
+                                    </div>
+                                    <div className={currentTurnTranslation ? 'font-medium' : 'text-gray-300 italic'}>
+                                        {currentTurnTranslation || '...'}
+                                    </div>
                                 </div>
                             </div>
                         )
