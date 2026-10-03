@@ -925,12 +925,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         handRaiseStatus={handRaiseStatus}
         isHost={isHost}
         uiLangCode={uiLangCode}
-        onTextSubmit={(text) => {
-          if (interviewMode) {
-            handleInterviewTextSubmit(text);
-            return;
-          }
-
+        onTextSubmit={interviewMode ? undefined : (text) => {
           const newItem = {
             id: crypto.randomUUID(),
             original: text,
