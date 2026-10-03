@@ -433,7 +433,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const interviewLivePreviewRef = useRef('');
   const interviewPreviewIsFinalRef = useRef(false);
   const interviewTargetRef = useRef<'en' | 'ko'>('en');
-  const pendingInterviewItemRef = useRef<string | null>(null);
+  const pendingInterviewItemsRef = useRef<Array<{ id: string; target: 'en' | 'ko' }>>([]);
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -448,7 +448,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setInterviewLivePreview('');
     interviewLivePreviewRef.current = '';
     interviewPreviewIsFinalRef.current = false;
-    pendingInterviewItemRef.current = null;
+    pendingInterviewItemsRef.current = [];
     setInterviewLiveError('');
     setInterviewLiveWarning('');
   }, [interviewMode]);
@@ -473,7 +473,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     };
 
     setHistory((prev) => [...prev, newItem]);
-    pendingInterviewItemRef.current = liveTranslationWasFinal ? null : newItem.id;
+    if (!liveTranslationWasFinal) {
+      pendingInterviewItemsRef.current.push({ id: newItem.id, target: interviewTargetRef.current });
+    }
     setCurrentTurnText('');
     setInterviewLivePreview('');
     interviewLivePreviewRef.current = '';
@@ -492,25 +494,28 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   }, []);
 
   const onInterviewLiveTranslation = useCallback((target: 'en' | 'ko', text: string, isFinal: boolean) => {
-    if (target !== interviewTargetRef.current) return;
+    if (isFinal) {
+      const pendingIndex = pendingInterviewItemsRef.current.findIndex((entry) => entry.target === target);
+      if (pendingIndex >= 0) {
+        const [{ id: pendingItemId }] = pendingInterviewItemsRef.current.splice(pendingIndex, 1);
+        setHistory((prev) => prev.map((item) =>
+          item.id === pendingItemId
+            ? { ...item, translated: text.trim(), translationKind: 'live', translationStale: false }
+            : item
+        ));
+      }
 
-    interviewLivePreviewRef.current = text;
-    interviewPreviewIsFinalRef.current = isFinal;
-    const pendingItemId = pendingInterviewItemRef.current;
-
-    if (isFinal && pendingItemId) {
-      setHistory((prev) => prev.map((item) =>
-        item.id === pendingItemId
-          ? { ...item, translated: text.trim(), translationKind: 'live', translationStale: false }
-          : item
-      ));
-      pendingInterviewItemRef.current = null;
-      interviewLivePreviewRef.current = '';
-      interviewPreviewIsFinalRef.current = false;
-      setInterviewLivePreview('');
+      if (target === interviewTargetRef.current) {
+        interviewLivePreviewRef.current = '';
+        interviewPreviewIsFinalRef.current = false;
+        setInterviewLivePreview('');
+      }
       return;
     }
 
+    if (target !== interviewTargetRef.current) return;
+    interviewLivePreviewRef.current = text;
+    interviewPreviewIsFinalRef.current = false;
     setInterviewLivePreview(text);
   }, [setHistory]);
 
@@ -540,6 +545,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const toggleInterviewMic = useCallback(() => {
     if (interviewLiveStatus === 'live' || interviewLiveStatus === 'connecting') {
       stopInterviewLive();
+      pendingInterviewItemsRef.current = [];
+      interviewLivePreviewRef.current = '';
+      interviewPreviewIsFinalRef.current = false;
       setCurrentTurnText('');
       setInterviewLivePreview('');
       return;
