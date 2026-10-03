@@ -25,6 +25,8 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('AI 인터뷰 통역')).toBeVisible();
     // Interview mode uses the persistent bottom mic only; the old empty-state mic overlapped the tools bar.
     await expect(page.getByTitle(/마이크 켜기/)).toHaveCount(1);
+    await expect(page.getByRole('textbox', { name: '인터뷰 텍스트 입력' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '키보드 입력' })).toHaveCount(0);
 
     // Auto-scroll must not move an empty interview screen after React effects settle.
     const conversationScroll = page.locator('div.flex-1.overflow-y-auto').first();
@@ -87,17 +89,12 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.getByRole('button', { name: '용어집' }).click();
     await page.getByPlaceholder('파디엠 = Padiem\n컨트롤 플레인 = Control Plane').fill('파디엠 = Padiem');
 
-    await page.getByRole('button', { name: '키보드 입력' }).click();
-    const textarea = page.getByPlaceholder('여기에 입력하거나 붙여넣으세요. 원문은 그대로 보존됩니다.');
-    await textarea.evaluate((element) => {
-      const transfer = new DataTransfer();
-      transfer.setData('text/plain', '저는 파디엠을 만들었습니다.');
-      element.dispatchEvent(new ClipboardEvent('paste', {
-        clipboardData: transfer,
-        bubbles: true,
-        cancelable: true,
-      }));
-    });
+    const textarea = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+    await textarea.fill('저는 파디엠을 만들었습니다.');
+
+    // Typing/pasting does not submit until Enter, so the user can correct mistakes first.
+    await expect(page.getByText('I built Padiem.')).toHaveCount(0);
+    await textarea.press('Enter');
 
     await expect(page.getByText('저는 파디엠을 만들었습니다.')).toBeVisible();
     await expect(page.getByText('I built Padiem.')).toBeVisible();
