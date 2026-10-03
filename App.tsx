@@ -603,11 +603,13 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
 
   // --- Editing State ---
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [editingField, setEditingField] = useState<'original' | 'translated' | 'both'>('both');
   const [editOriginalText, setEditOriginalText] = useState('');
   const [editTranslatedText, setEditTranslatedText] = useState('');
 
-  const startEditing = useCallback((item: ConversationItem) => {
+  const startEditing = useCallback((item: ConversationItem, field: 'original' | 'translated' | 'both' = 'both') => {
     setEditingItemId(item.id);
+    setEditingField(field);
     setEditOriginalText(item.original);
     setEditTranslatedText(item.translated);
   }, []);
@@ -615,6 +617,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const handleSaveEditAction = useCallback((id: string) => {
     handleSaveEdit(id, editOriginalText, editTranslatedText);
     setEditingItemId(null);
+    setEditingField('both');
   }, [editOriginalText, editTranslatedText, handleSaveEdit]);
 
   const copyToClipboard = (text: string) => {
@@ -887,6 +890,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         currentTurnTranslation={interviewMode ? interviewLivePreview : ''}
         interviewMode={interviewMode}
         editingItemId={editingItemId}
+        editingField={editingField}
         setEditingItemId={setEditingItemId}
         editOriginalText={editOriginalText}
         setEditOriginalText={setEditOriginalText}
