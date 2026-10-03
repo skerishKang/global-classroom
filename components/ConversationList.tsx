@@ -105,7 +105,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                 </div>
                             </button>
                         </div>
- 
+
                         )}
 
                         {!(isMicOn || status === ConnectionStatus.CONNECTED) ? (
