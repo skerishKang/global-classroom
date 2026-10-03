@@ -136,7 +136,10 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
 
                     <div className="pt-4 mt-4 border-t border-gray-100">
                         <div className="flex items-center justify-between gap-2 mb-2">
-                            <div className="text-xs text-gray-500">로컬 세션: <span className="font-bold text-gray-800">{sessions.length}</span></div>
+                            <div>
+                                <div className="text-xs text-gray-500">이 브라우저에 자동 저장된 대화: <span className="font-bold text-gray-800">{sessions.length}</span></div>
+                                <div className="mt-0.5 text-[10px] text-gray-400">로그인 없이 저장됩니다. 브라우저 사이트 데이터를 삭제하면 함께 삭제됩니다.</div>
+                            </div>
                             <div className="flex items-center gap-2">
                                 <button
                                     onClick={handleLoadSessionFromLocal}
