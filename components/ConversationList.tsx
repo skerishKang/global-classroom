@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useState } from 'react';
 import Visualizer from './Visualizer';
 import { MicIcon, CopyIcon } from './Icons';
 import { ConversationItem, TranslationMap, ConnectionStatus } from '../types';
@@ -34,6 +34,7 @@ interface ConversationListProps {
     startEditing: (item: ConversationItem, field?: 'original' | 'translated' | 'both') => void;
     uiLangCode: string;
     onRetranslate?: (item: ConversationItem) => void;
+    onSubmitText?: (text: string) => void;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -67,7 +68,16 @@ const ConversationList: React.FC<ConversationListProps> = ({
     startEditing,
     uiLangCode,
     onRetranslate,
+    onSubmitText,
 }) => {
+    const [interviewDraft, setInterviewDraft] = useState('');
+
+    const submitInterviewDraft = () => {
+        if (!onSubmitText || !interviewDraft.trim()) return;
+        onSubmitText(interviewDraft);
+        setInterviewDraft('');
+    };
+
     return (
         <div className="flex-1 overflow-hidden relative bg-slate-50 flex flex-col">
             {/* Visualizer Background: 마이크 켜졌을 때만 표시 */}
@@ -533,9 +543,46 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         )
                     )}
                 </div>
-
-                <div className="h-40"></div> {/* Spacer for bottom bar */}
+                <div className={interviewMode ? "h-24" : "h-40"}></div> {/* Spacer for bottom bar */}
             </div>
+
+            {interviewMode && !isOutputOnly && onSubmitText && (
+                <div className="shrink-0 border-t border-gray-200 bg-white/95 px-4 py-2.5 z-20">
+                    <div className="grid grid-cols-2 gap-4 items-end">
+                        <div className="flex items-end gap-2 rounded-2xl border border-gray-200 bg-white p-2 shadow-sm focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
+                            <textarea
+                                value={interviewDraft}
+                                onChange={(event) => setInterviewDraft(event.target.value)}
+                                onKeyDown={(event) => {
+                                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                                        event.preventDefault();
+                                        submitInterviewDraft();
+                                    }
+                                }}
+                                rows={1}
+                                aria-label={uiLangCode === 'ko' ? '인터뷰 텍스트 입력' : 'Interview text input'}
+                                placeholder={uiLangCode === 'ko' ? '직접 입력하거나 붙여넣기…' : 'Type or paste here…'}
+                                className="max-h-28 min-h-10 flex-1 resize-none overflow-y-auto bg-transparent px-2 py-2 text-sm leading-relaxed text-gray-900 outline-none placeholder:text-gray-400"
+                            />
+                            <button
+                                type="button"
+                                onClick={submitInterviewDraft}
+                                disabled={!interviewDraft.trim()}
+                                className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-indigo-600 text-white shadow-sm transition hover:bg-indigo-700 disabled:bg-gray-300"
+                                title={uiLangCode === 'ko' ? '번역하기 (Enter)' : 'Translate (Enter)'}
+                                aria-label={uiLangCode === 'ko' ? '입력한 텍스트 번역' : 'Translate typed text'}
+                            >
+                                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 12h14m-6-6 6 6-6 6" />
+                                </svg>
+                            </button>
+                        </div>
+                        <div className="hidden min-h-10 items-center text-[11px] text-gray-400 sm:flex">
+                            {uiLangCode === 'ko' ? 'Enter 번역 · Shift+Enter 줄바꿈 · 음성은 마이크로 자동 통역' : 'Enter to translate · Shift+Enter for newline · Voice stays automatic'}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
