@@ -188,7 +188,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     return saved || 'ko';
   });
 
-  const [isInterviewTextInputOpen, setIsInterviewTextInputOpen] = useState(false);
 
   const [interviewGlossaryText, setInterviewGlossaryText] = useState<string>(() => {
     try {
@@ -865,8 +864,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         onLanguageManualSelect={() => { isLangAutoRef.current = false; }}
         onSwapLanguages={handleSwapLanguages}
         uiLangCode={uiLangCode}
-        showKeyboardInput={interviewMode}
-        onKeyboardInput={interviewMode ? () => setIsInterviewTextInputOpen((open) => !open) : undefined}
       />
 
       {interviewMode && (
@@ -874,9 +871,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
           uiLangCode={uiLangCode}
           glossaryText={interviewGlossaryText}
           onGlossaryChange={setInterviewGlossaryText}
-          onSubmitText={handleInterviewTextSubmit}
-          textInputOpen={isInterviewTextInputOpen}
-          onTextInputOpenChange={setIsInterviewTextInputOpen}
         />
       )}
 
@@ -912,6 +906,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         stopTTS={stopTTS}
         uiLangCode={uiLangCode}
         onRetranslate={interviewMode ? handleInterviewRetranslate : undefined}
+        onSubmitText={interviewMode ? handleInterviewTextSubmit : undefined}
       />
 
       <BottomControls
