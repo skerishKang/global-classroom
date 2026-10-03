@@ -94,8 +94,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     const translateBodies = await page.evaluate(() => (window as any).__translateBodies);
     expect(translateBodies[0]?.glossary).toEqual([{ source: '파디엠', target: 'Padiem' }]);
 
-    await page.getByTitle('수정').click();
-    const originalEditor = page.getByText('원본 텍스트').locator('..').locator('textarea');
+    // Interview editing stays in the same left/right columns. Merge arrows are intentionally hidden.
+    await expect(page.getByTitle('위 항목과 병합')).toHaveCount(0);
+    await expect(page.getByTitle('아래 항목과 병합')).toHaveCount(0);
+
+    await page.getByTitle('원문 수정').click();
+    const originalEditor = page.getByRole('textbox', { name: '원문 수정' });
+    await expect(page.getByText('I built Padiem.')).toBeVisible();
     await originalEditor.fill('저는 직접 파디엠을 만들었습니다.');
     await page.getByRole('button', { name: '저장' }).click();
     await expect(page.getByText('원문이 수정됨 · 다시 번역 권장')).toBeVisible();
@@ -103,6 +108,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.getByRole('button', { name: '다시 번역' }).click();
     await expect(page.getByText('I personally built Padiem.')).toBeVisible();
     await expect(page.getByText('원문이 수정됨 · 다시 번역 권장')).toHaveCount(0);
+
+    await page.getByTitle('번역 수정').click();
+    const translationEditor = page.getByRole('textbox', { name: '번역 수정' });
+    await expect(page.getByText('저는 직접 파디엠을 만들었습니다.')).toBeVisible();
+    await translationEditor.fill('I built Padiem myself.');
+    await page.getByRole('button', { name: '저장' }).click();
+    await expect(page.getByText('I built Padiem myself.')).toBeVisible();
   });
 
   test('falls back to Groq STT inside the same UI when Gemini Live and browser STT are unavailable', async ({ page }) => {
