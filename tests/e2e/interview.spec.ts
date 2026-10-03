@@ -32,6 +32,16 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect.poll(async () => conversationScroll.evaluate((element) => element.scrollTop)).toBe(0);
   });
 
+  test('anonymous interview history is discoverable and stored locally', async ({ page }) => {
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+
+    await expect(page.getByRole('button', { name: '대화 기록' })).toBeVisible();
+    await page.getByRole('button', { name: '대화 기록' }).click();
+    await expect(page.getByText(/이 브라우저에 자동 저장된 대화:/)).toBeVisible();
+    await expect(page.getByText('로그인 없이 저장됩니다. 브라우저 사이트 데이터를 삭제하면 함께 삭제됩니다.')).toBeVisible();
+    await expect(page.getByText('Drive 세션을 보려면 Google 로그인이 필요합니다.')).toBeVisible();
+  });
+
   test('the same header toggle enters and exits interview mode', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: 'INTERVIEW' }).click();
@@ -77,7 +87,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.getByRole('button', { name: '용어집' }).click();
     await page.getByPlaceholder('파디엠 = Padiem\n컨트롤 플레인 = Control Plane').fill('파디엠 = Padiem');
 
-    await page.getByRole('button', { name: '텍스트 입력' }).click();
+    await page.getByRole('button', { name: '키보드 입력' }).click();
     const textarea = page.getByPlaceholder('여기에 입력하거나 붙여넣으세요. 원문은 그대로 보존됩니다.');
     await textarea.evaluate((element) => {
       const transfer = new DataTransfer();
