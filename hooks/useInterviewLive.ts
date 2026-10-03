@@ -455,7 +455,20 @@ export function useInterviewLive({
               onInterimTranscript(String(interim).trim());
             }
             if (finalText) {
-              onFinalTranscript(String(finalText).trim());
+              const committedTranscript = String(finalText).trim();
+              if (committedTranscript) {
+                // Transcribe Live and Live Translate are independent continuous streams.
+                // Use the authoritative transcript boundary to flush both translation
+                // streams so one finalized source segment maps to one translation segment.
+                onFinalTranscript(committedTranscript);
+                for (const session of [translateEnSessionRef.current, translateKoSessionRef.current]) {
+                  try {
+                    session?.sendRealtimeInput?.({ audioStreamEnd: true });
+                  } catch {
+                    // Translation preview is best effort; the next audio chunk reopens the stream.
+                  }
+                }
+              }
             }
           },
           onerror: (error: any) => {
