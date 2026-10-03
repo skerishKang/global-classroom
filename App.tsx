@@ -779,10 +779,11 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   }, [currentSessionId, setHistoryRenderLimit]);
 
   useEffect(() => {
-    if (!isScrollLocked && historyRef.current) {
+    const hasConversationContent = history.length > 0 || !!currentTurnText || !!interviewLivePreview;
+    if (!isScrollLocked && hasConversationContent && historyRef.current) {
       historyRef.current.scrollTop = historyRef.current.scrollHeight;
     }
-  }, [history, currentTurnText, isScrollLocked]);
+  }, [history, currentTurnText, interviewLivePreview, isScrollLocked]);
 
   useLayoutEffect(() => {
     if (!pendingHistoryExpandRef.current || !historyRef.current) return;
