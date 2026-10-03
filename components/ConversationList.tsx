@@ -18,6 +18,7 @@ interface ConversationListProps {
     connectToGemini: () => void;
     toggleMic: () => void;
     editingItemId: string | null;
+    editingField: 'original' | 'translated' | 'both';
     setEditingItemId: (v: string | null) => void;
     editOriginalText: string;
     setEditOriginalText: (v: string) => void;
@@ -30,7 +31,7 @@ interface ConversationListProps {
     copyToClipboard: (text: string) => void;
     playTTS: (text: string, id: string) => void;
     stopTTS: () => void;
-    startEditing: (item: ConversationItem) => void;
+    startEditing: (item: ConversationItem, field?: 'original' | 'translated' | 'both') => void;
     uiLangCode: string;
     onRetranslate?: (item: ConversationItem) => void;
 }
@@ -50,6 +51,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
     connectToGemini,
     toggleMic,
     editingItemId,
+    editingField,
     setEditingItemId,
     editOriginalText,
     setEditOriginalText,
@@ -193,6 +195,123 @@ const ConversationList: React.FC<ConversationListProps> = ({
 
                     {history.map((item) => {
                         const isEditing = editingItemId === item.id;
+                        const isEditingOriginal = isEditing && editingField === 'original';
+                        const isEditingTranslated = isEditing && editingField === 'translated';
+
+                        if (interviewMode && !isOutputOnly) {
+                            const sourceEditLabel = item.sourceKind === 'voice'
+                                ? (uiLangCode === 'ko' ? '전사 수정' : 'Edit transcript')
+                                : (uiLangCode === 'ko' ? '원문 수정' : 'Edit source');
+                            const translationEditLabel = uiLangCode === 'ko' ? '번역 수정' : 'Edit translation';
+                            const cancelLabel = uiLangCode === 'ko' ? '취소' : 'Cancel';
+                            const saveLabel = uiLangCode === 'ko' ? '저장' : 'Save';
+
+                            return (
+                                <div key={item.id} className="grid grid-cols-2 gap-4 items-stretch">
+                                    <div className="relative bg-white border border-gray-200 p-4 rounded-xl shadow-sm text-gray-800 leading-relaxed text-sm md:text-base min-w-0">
+                                        {isEditingOriginal ? (
+                                            <div className="flex h-full flex-col gap-3">
+                                                <label className="text-[11px] font-black text-indigo-600 tracking-wide">{sourceEditLabel}</label>
+                                                <textarea
+                                                    autoFocus
+                                                    value={editOriginalText}
+                                                    onChange={(event) => setEditOriginalText(event.target.value)}
+                                                    className="min-h-[140px] w-full flex-1 resize-y rounded-lg border border-indigo-200 bg-white p-3 text-sm leading-relaxed text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    aria-label={sourceEditLabel}
+                                                />
+                                                <div className="flex justify-end gap-2">
+                                                    <button type="button" onClick={() => setEditingItemId(null)} className="rounded-full bg-gray-100 px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-200">{cancelLabel}</button>
+                                                    <button type="button" onClick={() => handleSaveEdit(item.id)} className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700">{saveLabel}</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="pr-9 whitespace-pre-wrap">{item.original}</div>
+                                                {!item.isTranslating && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(event) => { event.stopPropagation(); startEditing(item, 'original'); }}
+                                                        className="absolute right-2 top-2 rounded-lg border border-gray-200 bg-white/90 p-1.5 text-gray-500 shadow-sm transition hover:border-indigo-600 hover:bg-indigo-600 hover:text-white"
+                                                        title={sourceEditLabel}
+                                                        aria-label={sourceEditLabel}
+                                                    >
+                                                        <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                    </button>
+                                                )}
+                                            </>
+                                        )}
+                                    </div>
+
+                                    <div className={`relative min-w-0 rounded-xl border p-4 text-sm transition-all md:text-base ${item.isTranslating ? 'border-gray-100 bg-gray-50' : 'border-indigo-100 bg-indigo-50/50 shadow-sm'}`}>
+                                        {item.isTranslating ? (
+                                            <div className="flex h-6 items-center gap-1">
+                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
+                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 delay-75" />
+                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 delay-150" />
+                                            </div>
+                                        ) : isEditingTranslated ? (
+                                            <div className="flex h-full flex-col gap-3">
+                                                <label className="text-[11px] font-black text-indigo-600 tracking-wide">{translationEditLabel}</label>
+                                                <textarea
+                                                    autoFocus
+                                                    value={editTranslatedText}
+                                                    onChange={(event) => setEditTranslatedText(event.target.value)}
+                                                    className="min-h-[140px] w-full flex-1 resize-y rounded-lg border border-indigo-200 bg-white p-3 text-sm font-medium leading-relaxed text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    aria-label={translationEditLabel}
+                                                />
+                                                <div className="flex justify-end gap-2">
+                                                    <button type="button" onClick={() => setEditingItemId(null)} className="rounded-full bg-gray-100 px-4 py-2 text-xs font-bold text-gray-600 hover:bg-gray-200">{cancelLabel}</button>
+                                                    <button type="button" onClick={() => handleSaveEdit(item.id)} className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-bold text-white hover:bg-indigo-700">{saveLabel}</button>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className="flex h-full flex-col gap-3 pr-9">
+                                                {item.translationStale && (
+                                                    <span className="w-fit rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">
+                                                        {uiLangCode === 'ko' ? '원문이 수정됨 · 다시 번역 권장' : 'Source edited · retranslation recommended'}
+                                                    </span>
+                                                )}
+                                                <span className="block whitespace-pre-wrap text-sm font-medium leading-relaxed text-indigo-900 md:text-base">
+                                                    {item.translated || (uiLangCode === 'ko' ? '번역 없음' : 'No translation yet')}
+                                                </span>
+                                                <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
+                                                    {item.translated && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(event) => {
+                                                                event.stopPropagation();
+                                                                if (item.ttsStatus === 'playing') stopTTS();
+                                                                else playTTS(item.translated, item.id);
+                                                            }}
+                                                            className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-white px-3 py-2 text-xs font-bold text-indigo-600 shadow-sm hover:bg-indigo-50"
+                                                            aria-label={item.ttsStatus === 'playing' ? '정지' : '재생'}
+                                                        >
+                                                            <span>{item.ttsStatus === 'playing' ? '■' : '▶'}</span>
+                                                            <span>{item.ttsStatus === 'playing' ? (uiLangCode === 'ko' ? '정지' : 'Stop') : (uiLangCode === 'ko' ? '재생' : 'Play')}</span>
+                                                        </button>
+                                                    )}
+                                                    {onRetranslate && (
+                                                        <button type="button" onClick={(event) => { event.stopPropagation(); onRetranslate(item); }} className="rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs font-bold text-indigo-700 hover:bg-indigo-50">
+                                                            {uiLangCode === 'ko' ? '다시 번역' : 'Retranslate'}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={(event) => { event.stopPropagation(); startEditing(item, 'translated'); }}
+                                                    className="absolute right-2 top-2 rounded-lg border border-gray-200 bg-white/90 p-1.5 text-gray-500 shadow-sm transition hover:border-indigo-600 hover:bg-indigo-600 hover:text-white"
+                                                    title={translationEditLabel}
+                                                    aria-label={translationEditLabel}
+                                                >
+                                                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            );
+                        }
+
                         return (
                             <div key={item.id} className="group relative">
                                 {isEditing ? (
