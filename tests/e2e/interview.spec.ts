@@ -25,6 +25,11 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('AI 인터뷰 통역')).toBeVisible();
     // Interview mode uses the persistent bottom mic only; the old empty-state mic overlapped the tools bar.
     await expect(page.getByTitle(/마이크 켜기/)).toHaveCount(1);
+
+    // Auto-scroll must not move an empty interview screen after React effects settle.
+    const conversationScroll = page.locator('div.flex-1.overflow-y-auto').first();
+    await page.waitForTimeout(750);
+    await expect.poll(async () => conversationScroll.evaluate((element) => element.scrollTop)).toBe(0);
   });
 
   test('the same header toggle enters and exits interview mode', async ({ page }) => {
