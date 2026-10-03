@@ -25,8 +25,12 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('AI 인터뷰 통역')).toBeVisible();
     // Interview mode uses the persistent bottom mic only; the old empty-state mic overlapped the tools bar.
     await expect(page.getByTitle(/마이크 켜기/)).toHaveCount(1);
-    await expect(page.getByRole('textbox', { name: '인터뷰 텍스트 입력' })).toBeVisible();
+    const composer = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+    await expect(composer).toBeVisible();
     await expect(page.getByRole('button', { name: '키보드 입력' })).toHaveCount(0);
+    const composerBox = await composer.boundingBox();
+    expect(composerBox).not.toBeNull();
+    expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual((page.viewportSize()?.width || 1280) / 2 + 80);
 
     // Auto-scroll must not move an empty interview screen after React effects settle.
     const conversationScroll = page.locator('div.flex-1.overflow-y-auto').first();
@@ -55,7 +59,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByRole('button', { name: 'INTERVIEW' })).toBeVisible();
   });
 
-  test('text paste preserves source, applies glossary, and retranslates only on request', async ({ page }) => {
+  test('left text composer waits for Enter, applies glossary, and retranslates only on request', async ({ page }) => {
     await page.addInitScript(() => {
       const realFetch = window.fetch.bind(window);
       let translateCall = 0;
