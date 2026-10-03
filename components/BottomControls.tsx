@@ -65,6 +65,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
     };
 
     const handleLongPressStart = () => {
+        if (!onTextSubmit) return;
         longPressTimerRef.current = window.setTimeout(() => {
             // Start rotation animation
             setIsAnimating(true);

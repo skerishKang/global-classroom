@@ -12,8 +12,6 @@ interface LanguageSelectorProps {
     t: TranslationMap;
     onLanguageManualSelect: () => void;
     uiLangCode: string;
-    showKeyboardInput?: boolean;
-    onKeyboardInput?: () => void;
 }
 
 const LanguageSelector: React.FC<LanguageSelectorProps> = ({
@@ -25,8 +23,6 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
     t,
     onLanguageManualSelect,
     uiLangCode,
-    showKeyboardInput = false,
-    onKeyboardInput,
 }) => {
     return (
         <div className="bg-white px-3 py-1 shadow-sm z-10 flex flex-col shrink-0">
@@ -52,23 +48,6 @@ const LanguageSelector: React.FC<LanguageSelectorProps> = ({
                             {langInput.flag} {langInput.name}
                         </div>
                     </div>
-                    {showKeyboardInput && onKeyboardInput && (
-                        <button
-                            type="button"
-                            onClick={(event) => {
-                                event.stopPropagation();
-                                onKeyboardInput();
-                            }}
-                            className="relative z-20 mb-1 flex items-center gap-1.5 rounded-full border border-indigo-100 bg-indigo-50 px-2.5 py-1 text-[10px] font-black text-indigo-700 hover:bg-indigo-100"
-                            title={uiLangCode === 'ko' ? '키보드로 입력하거나 텍스트 붙여넣기' : 'Type or paste text'}
-                            aria-label={uiLangCode === 'ko' ? '키보드 입력' : 'Keyboard input'}
-                        >
-                            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 7h18v10H3V7zm3 3h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M6 13h.01M9 13h.01M12 13h6" />
-                            </svg>
-                            {uiLangCode === 'ko' ? '키보드 입력' : 'Keyboard'}
-                        </button>
-                    )}
                 </div>
 
                 <div className="relative group/swap">
