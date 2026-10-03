@@ -20,8 +20,11 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     const outputLanguage = page.getByTitle('번역 언어 선택 (듣고 싶은 언어)');
     await expect(inputLanguage).toHaveValue('auto');
     await expect(outputLanguage).toHaveValue('en');
-    await expect(page.getByText('인터뷰 모드 · 자동 언어 감지')).toBeVisible();
+    await expect(page.getByText('인터뷰 모드 · 자동 언어 감지')).toHaveCount(0);
+    await expect(page.getByText('인터뷰 모드', { exact: true })).toBeVisible();
     await expect(page.getByText('AI 인터뷰 통역')).toBeVisible();
+    // Interview mode uses the persistent bottom mic only; the old empty-state mic overlapped the tools bar.
+    await expect(page.getByTitle(/마이크 켜기/)).toHaveCount(1);
   });
 
   test('the same header toggle enters and exits interview mode', async ({ page }) => {
@@ -151,8 +154,9 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
 
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
 
-    const micButtons = page.getByTitle('마이크 켜기');
-    await micButtons.last().click();
+    const micButton = page.getByTitle(/마이크 켜기/);
+    await expect(micButton).toHaveCount(1);
+    await micButton.click();
 
     await expect(page.getByText(/AUTO · KO ↔ EN · GROQ STT/)).toBeVisible();
   });

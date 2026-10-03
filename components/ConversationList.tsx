@@ -82,6 +82,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
             >
                 {history.length === 0 && !currentTurnText && !currentTurnTranslation && (
                     <div className="h-full flex flex-col items-center justify-start text-gray-400 text-center px-4 opacity-70 overflow-y-auto py-0">
+                        {!interviewMode && (
                         <div className="mt-32 mb-3 flex flex-col items-center gap-1.5" title={t.statusStandby}>
                             <span className="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-[11px] font-black shadow-lg animate-bounce duration-1000">
                                 {interviewMode
@@ -105,10 +106,11 @@ const ConversationList: React.FC<ConversationListProps> = ({
                             </button>
                         </div>
 
+                        )}
 
                         {!(isMicOn || status === ConnectionStatus.CONNECTED) ? (
                             interviewMode ? (
-                                <div className="mt-4 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/90 border border-indigo-100 rounded-2xl p-4 shadow-sm">
+                                <div className="mt-12 md:mt-16 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/90 border border-indigo-100 rounded-2xl p-4 shadow-sm">
                                     <div className="font-bold text-indigo-700 text-sm">
                                         {uiLangCode === 'ko' ? '인터뷰 모드' : 'Interview mode'}
                                     </div>
@@ -144,7 +146,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                 </>
                             )
                         ) : (
-                            <div className="mt-8 animate-pulse flex flex-col items-center">
+                            <div className={`${interviewMode ? 'mt-16 md:mt-20' : 'mt-8'} animate-pulse flex flex-col items-center`}>
                                 <p className="text-sm font-bold text-indigo-500">{uiLangCode === 'ko' ? '실시간으로 통역을 준비하고 있습니다.' : 'Ready to translate in real-time.'}</p>
                                 <p className="text-[11px] text-gray-400 mt-2">{uiLangCode === 'ko' ? '지금 바로 말씀해 주세요!' : 'Please start speaking now!'}</p>
                             </div>
