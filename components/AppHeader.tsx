@@ -110,6 +110,21 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                         </span>
                     </button>
 
+                    {interviewMode && (
+                        <button
+                            type="button"
+                            onClick={() => setIsHistoryModalOpen(true)}
+                            className="flex h-9 items-center gap-1.5 rounded-full border border-gray-200 bg-white px-3 text-[11px] font-black text-gray-600 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                            title={uiLangCode === 'ko' ? '이 브라우저에 저장된 대화 기록 보기' : 'View conversations saved in this browser'}
+                            aria-label={uiLangCode === 'ko' ? '대화 기록' : 'Conversation history'}
+                        >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-3-6.708M21 3v6h-6" />
+                            </svg>
+                            <span className="hidden md:inline">{uiLangCode === 'ko' ? '대화 기록' : 'History'}</span>
+                        </button>
+                    )}
+
                     {interviewMode ? (
                         <div className="hidden sm:flex items-center rounded-full bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-700 border border-emerald-100">
                             AUTO · KO ↔ EN · {interviewBackend === 'gemini' ? 'GEMINI LIVE' : interviewBackend === 'browser' ? 'BROWSER STT' : interviewBackend === 'groq' ? 'GROQ STT' : 'READY'}

@@ -1,10 +1,12 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 
 interface InterviewToolsBarProps {
   uiLangCode: string;
   glossaryText: string;
   onGlossaryChange: (value: string) => void;
   onSubmitText: (text: string) => void;
+  textInputOpen: boolean;
+  onTextInputOpenChange: (open: boolean) => void;
 }
 
 const InterviewToolsBar: React.FC<InterviewToolsBarProps> = ({
@@ -12,9 +14,15 @@ const InterviewToolsBar: React.FC<InterviewToolsBarProps> = ({
   glossaryText,
   onGlossaryChange,
   onSubmitText,
+  textInputOpen,
+  onTextInputOpenChange,
 }) => {
-  const [panel, setPanel] = useState<'text' | 'glossary' | null>(null);
+  const [glossaryOpen, setGlossaryOpen] = useState(false);
   const [text, setText] = useState('');
+
+  useEffect(() => {
+    if (textInputOpen) setGlossaryOpen(false);
+  }, [textInputOpen]);
 
   const submit = () => {
     if (!text.trim()) return;
@@ -25,17 +33,14 @@ const InterviewToolsBar: React.FC<InterviewToolsBarProps> = ({
   return (
     <div className="shrink-0 border-b border-gray-100 bg-white/90 px-3 py-2">
       <div className="mx-auto flex max-w-5xl items-center gap-2">
-        <button
+<button
           type="button"
-          onClick={() => setPanel(panel === 'text' ? null : 'text')}
-          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${panel === 'text' ? 'bg-indigo-600 text-white' : 'bg-indigo-50 text-indigo-700'}`}
-        >
-          {uiLangCode === 'ko' ? '텍스트 입력' : 'Text input'}
-        </button>
-        <button
-          type="button"
-          onClick={() => setPanel(panel === 'glossary' ? null : 'glossary')}
-          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${panel === 'glossary' ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700'}`}
+          onClick={() => {
+            const next = !glossaryOpen;
+            setGlossaryOpen(next);
+            if (next) onTextInputOpenChange(false);
+          }}
+          className={`rounded-full px-3 py-1.5 text-xs font-bold transition ${glossaryOpen ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-700'}`}
         >
           {uiLangCode === 'ko' ? '용어집' : 'Glossary'}
         </button>
@@ -44,7 +49,7 @@ const InterviewToolsBar: React.FC<InterviewToolsBarProps> = ({
         </span>
       </div>
 
-      {panel === 'text' && (
+      {textInputOpen && (
         <div className="mx-auto mt-2 grid max-w-5xl grid-cols-[1fr_auto] gap-2">
           <textarea
             value={text}
@@ -77,7 +82,7 @@ const InterviewToolsBar: React.FC<InterviewToolsBarProps> = ({
         </div>
       )}
 
-      {panel === 'glossary' && (
+      {glossaryOpen && (
         <div className="mx-auto mt-2 max-w-5xl">
           <textarea
             value={glossaryText}

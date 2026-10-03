@@ -188,6 +188,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     return saved || 'ko';
   });
 
+  const [isInterviewTextInputOpen, setIsInterviewTextInputOpen] = useState(false);
+
   const [interviewGlossaryText, setInterviewGlossaryText] = useState<string>(() => {
     try {
       return localStorage.getItem('global-classroom-interview-glossary-v1') || '';
@@ -863,6 +865,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         onLanguageManualSelect={() => { isLangAutoRef.current = false; }}
         onSwapLanguages={handleSwapLanguages}
         uiLangCode={uiLangCode}
+        showKeyboardInput={interviewMode}
+        onKeyboardInput={interviewMode ? () => setIsInterviewTextInputOpen((open) => !open) : undefined}
       />
 
       {interviewMode && (
@@ -871,6 +875,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
           glossaryText={interviewGlossaryText}
           onGlossaryChange={setInterviewGlossaryText}
           onSubmitText={handleInterviewTextSubmit}
+          textInputOpen={isInterviewTextInputOpen}
+          onTextInputOpenChange={setIsInterviewTextInputOpen}
         />
       )}
 
