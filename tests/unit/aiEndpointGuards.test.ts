@@ -30,13 +30,20 @@ import { MODEL_LIVE, MODEL_TTS, MODEL_VISION } from '../../constants';
 import {
   ALLOWED_LIVE_MODELS,
   ALLOWED_TTS_MODELS,
+  ALLOWED_TTS_VOICES,
   ALLOWED_VISION_MODELS,
+  MAX_GLOSSARY_ENTRIES,
+  MAX_GLOSSARY_TERM_CHARS,
+  MAX_LANGUAGE_CODE_CHARS,
+  MAX_LANGUAGE_LABEL_CHARS,
   MAX_DETECT_TEXT_CHARS,
   MAX_LIVE_TOKEN_BODY_BYTES,
   MAX_SUMMARY_TEXT_CHARS,
+  MAX_TRANSLATE_BODY_BYTES,
   MAX_TRANSLATE_TEXT_CHARS,
   MAX_TTS_TEXT_CHARS,
   MAX_VISION_IMAGE_BYTES,
+  MAX_VISION_BODY_BYTES,
   redactSecrets,
 } from '../../netlify/functions/_aiGuards';
 import { handler as detectHandler } from '../../netlify/functions/detect-language';
@@ -45,6 +52,9 @@ import { handler as summarizeHandler } from '../../netlify/functions/summarize';
 import { handler as translateHandler } from '../../netlify/functions/translate';
 import { handler as ttsHandler } from '../../netlify/functions/tts';
 import { handler as visionHandler } from '../../netlify/functions/vision';
+import transcribeHandler from '../../netlify/functions/transcribe.mts';
+
+const GROQ_STT_MAX_AUDIO_BYTES = 3 * 1024 * 1024;
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -79,6 +89,8 @@ beforeEach(() => {
 
 afterEach(() => {
   delete process.env.GEMINI_API_KEY;
+  delete (globalThis as Record<string, unknown>).Netlify;
+  vi.restoreAllMocks();
 });
 
 describe('#36 summarize runtime API', () => {
@@ -285,5 +297,185 @@ describe('#36 secret redaction', () => {
     expect(redactSecrets('token gsk_abcdefghijklmnopqrstuvwxyz123')).not.toContain('gsk_abcdefghij');
     expect(redactSecrets('Authorization: Bearer abcdefghijklmnop')).not.toContain('Bearer abcdefghijklmnop');
     expect(redactSecrets('429 RESOURCE_EXHAUSTED')).toContain('429');
+  });
+});
+
+describe('#36 secondary input bounds', () => {
+  test('oversized translate.from is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await translateHandler(
+        makeEvent({ text: 'hi', from: repeat(MAX_LANGUAGE_LABEL_CHARS + 1), to: 'Korean' }),
+      ),
+    );
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+    expect(mocks.groqCreate).not.toHaveBeenCalled();
+  });
+
+  test('oversized translate.to is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await translateHandler(
+        makeEvent({ text: 'hi', from: 'English', to: repeat(MAX_LANGUAGE_LABEL_CHARS + 1) }),
+      ),
+    );
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('oversized glossary.source is rejected before any provider call', async () => {
+    const glossary = [{ source: repeat(MAX_GLOSSARY_TERM_CHARS + 1), target: 'ok' }];
+    const res = parseResponse(
+      await translateHandler(makeEvent({ text: 'hi', from: 'English', to: 'Korean', glossary })),
+    );
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('oversized glossary.target is rejected before any provider call', async () => {
+    const glossary = [{ source: 'ok', target: repeat(MAX_GLOSSARY_TERM_CHARS + 1) }];
+    const res = parseResponse(
+      await translateHandler(makeEvent({ text: 'hi', from: 'English', to: 'Korean', glossary })),
+    );
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('glossary entry count is bounded to MAX_GLOSSARY_ENTRIES', async () => {
+    mocks.generateContent.mockResolvedValue({ text: 'translated' });
+    const glossary = Array.from({ length: MAX_GLOSSARY_ENTRIES }, (_, i) => ({
+      source: `term-${i}`,
+      target: `term-${i}`,
+    }));
+    glossary.push({ source: 'SHOULD_NOT_REACH_PROVIDER', target: 'SHOULD_NOT_REACH_PROVIDER' });
+    const res = parseResponse(
+      await translateHandler(makeEvent({ text: 'hi', from: 'English', to: 'Korean', glossary })),
+    );
+    expect(res.statusCode).toBe(200);
+    const requestText = JSON.stringify(mocks.generateContent.mock.calls[0][0]);
+    expect(requestText).toContain('term-0');
+    expect(requestText).toContain(`term-${MAX_GLOSSARY_ENTRIES - 1}`);
+    expect(requestText).not.toContain('SHOULD_NOT_REACH_PROVIDER');
+  });
+
+  test('oversized translate request body is rejected before any provider call', async () => {
+    const raw = `{"text":"${'a'.repeat(MAX_TRANSLATE_BODY_BYTES + 1)}"}`;
+    const res = parseResponse(await translateHandler(makeEvent(null, raw)));
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('oversized vision langA is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await visionHandler(
+        makeEvent({
+          base64Image: 'QUJD',
+          langA: repeat(MAX_LANGUAGE_CODE_CHARS + 1),
+          langB: 'en',
+          model: MODEL_VISION,
+        }),
+      ),
+    );
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('oversized vision langB is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await visionHandler(
+        makeEvent({
+          base64Image: 'QUJD',
+          langA: 'ko',
+          langB: repeat(MAX_LANGUAGE_CODE_CHARS + 1),
+          model: MODEL_VISION,
+        }),
+      ),
+    );
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('oversized vision request body is rejected before any provider call', async () => {
+    const raw = `{"base64Image":"${'a'.repeat(MAX_VISION_BODY_BYTES + 1)}"}`;
+    const res = parseResponse(await visionHandler(makeEvent(null, raw)));
+    expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test.each([...ALLOWED_TTS_VOICES])('allowed tts voice %s passes validation', async (voiceName) => {
+    mocks.generateContent.mockResolvedValue({
+      candidates: [{ content: { parts: [{ inlineData: { data: 'QUJD' } }] } }],
+    });
+    const res = parseResponse(
+      await ttsHandler(makeEvent({ text: 'hello', voiceName, model: MODEL_TTS })),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.json.audioBase64).toBe('QUJD');
+  });
+
+  test('unsupported tts voice is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await ttsHandler(makeEvent({ text: 'hello', voiceName: 'evil-voice', model: MODEL_TTS })),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+
+  test('oversized tts voice name is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await ttsHandler(makeEvent({ text: 'hello', voiceName: 'x'.repeat(200), model: MODEL_TTS })),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+});
+
+describe('#36 transcribe logging', () => {
+  test('transcribe logs and returns redacted provider errors', async () => {
+    const secretLike = 'AIzaSyD-1234567890abcdefghijklmnopqrstuv';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => {
+      const response = new Response(
+        JSON.stringify({ error: { message: `Invalid key ${secretLike}` } }),
+        { status: 401 },
+      );
+      return response as unknown as Response;
+    });
+    (globalThis as Record<string, unknown>).Netlify = {
+      env: { get: (key: string) => (key === 'GROQ_API_KEY' ? 'gsk_test_fake_key_123' : undefined) },
+    };
+
+    const request = new Request('http://localhost/api/transcribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ audioDataUrl: 'data:audio/webm;base64,QUJDRA==', language: 'en' }),
+    });
+    const response = await transcribeHandler(request);
+    const bodyText = await response.text();
+
+    expect(response.status).toBe(502);
+    expect(bodyText).not.toContain(secretLike);
+    expect(bodyText).toContain('[redacted]');
+    const logged = errorSpy.mock.calls.map((args) => args.map(String).join(' ')).join('\n');
+    expect(errorSpy).toHaveBeenCalled();
+    expect(logged).not.toContain(secretLike);
+    expect(logged).toContain('[redacted]');
+
+    errorSpy.mockRestore();
+    fetchSpy.mockRestore();
+  });
+
+  test('transcribe source applies redactSecrets to every console.error site', () => {
+    const source = readSource('netlify/functions/transcribe.mts');
+    const logLines = source.split('\n').filter((line) => line.includes('console.error'));
+    expect(logLines.length).toBeGreaterThan(0);
+    for (const line of logLines) {
+      expect(line).toContain('redactSecrets(');
+    }
+  });
+
+  test('transcribe keeps its 3MB decoded audio bound', () => {
+    const source = readSource('netlify/functions/transcribe.mts');
+    expect(source).toContain('MAX_AUDIO_BYTES = 3 * 1024 * 1024');
+    expect(GROQ_STT_MAX_AUDIO_BYTES).toBe(3 * 1024 * 1024);
   });
 });

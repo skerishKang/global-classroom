@@ -97,7 +97,7 @@ export default async (req: Request) => {
       const data: any = await response.json().catch(() => ({}));
       if (!response.ok) {
         lastError = data?.error?.message || data?.error || `Groq STT HTTP ${response.status}`;
-        console.error(`transcribe: ${model} failed:`, lastError);
+        console.error(`transcribe: ${model} failed:`, redactSecrets(lastError));
         continue;
       }
 
@@ -114,7 +114,7 @@ export default async (req: Request) => {
       });
     } catch (error: any) {
       lastError = error?.message || String(error);
-      console.error(`transcribe: ${model} failed:`, lastError);
+      console.error(`transcribe: ${model} failed:`, redactSecrets(lastError));
     }
   }
 

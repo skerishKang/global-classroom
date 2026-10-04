@@ -1,12 +1,16 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import {
     decodedBase64Bytes,
+    enforceBodySize,
+    enforceTextLimit,
     errorResponse,
-    isAllowedModel,
+    isAllowedString,
     readJsonBody,
     safeErrorDetail,
     ALLOWED_VISION_MODELS,
+    MAX_LANGUAGE_CODE_CHARS,
     MAX_VISION_IMAGE_BYTES,
+    MAX_VISION_BODY_BYTES,
 } from './_aiGuards';
 
 const DEFAULT_VISION_MODEL = 'gemini-2.0-flash';
@@ -30,6 +34,9 @@ export const handler = async (event: any) => {
     };
   }
 
+  const tooLarge = enforceBodySize(event, MAX_VISION_BODY_BYTES);
+  if (tooLarge) return tooLarge;
+
   const parsedBody = readJsonBody(event);
   if (parsedBody.ok === false) return parsedBody.response;
   const body = parsedBody.body;
@@ -43,7 +50,11 @@ export const handler = async (event: any) => {
     return errorResponse(400, '필수 값(base64Image/langA/langB)이 누락되었습니다.');
   }
 
-  if (!isAllowedModel(model, ALLOWED_VISION_MODELS)) {
+  const langOversize = enforceTextLimit(langA, MAX_LANGUAGE_CODE_CHARS, 'langA')
+    || enforceTextLimit(langB, MAX_LANGUAGE_CODE_CHARS, 'langB');
+  if (langOversize) return langOversize;
+
+  if (!isAllowedString(model, ALLOWED_VISION_MODELS)) {
     return errorResponse(400, '지원하지 않는 모델입니다.');
   }
 

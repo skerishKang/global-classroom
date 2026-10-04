@@ -2,7 +2,7 @@ import { GoogleGenAI } from '@google/genai';
 import {
     enforceBodySize,
     errorResponse,
-    isAllowedModel,
+    isAllowedString,
     readJsonBody,
     safeErrorDetail,
     ALLOWED_LIVE_MODELS,
@@ -37,7 +37,7 @@ export const handler = async (event: any) => {
 
   // Only models this repo's clients actually use may receive a token (#36).
   const model = body.model;
-  if (!isAllowedModel(model, ALLOWED_LIVE_MODELS)) {
+  if (!isAllowedString(model, ALLOWED_LIVE_MODELS)) {
     return errorResponse(400, '지원하지 않는 모델입니다.');
   }
 

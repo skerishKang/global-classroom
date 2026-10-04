@@ -2,10 +2,11 @@ import { GoogleGenAI, Modality } from '@google/genai';
 import {
     enforceTextLimit,
     errorResponse,
-    isAllowedModel,
+    isAllowedString,
     readJsonBody,
     safeErrorDetail,
     ALLOWED_TTS_MODELS,
+    ALLOWED_TTS_VOICES,
     MAX_TTS_TEXT_CHARS,
 } from './_aiGuards';
 
@@ -45,8 +46,12 @@ export const handler = async (event: any) => {
   const oversize = enforceTextLimit(text, MAX_TTS_TEXT_CHARS, 'text');
   if (oversize) return oversize;
 
-  if (!isAllowedModel(model, ALLOWED_TTS_MODELS)) {
+  if (!isAllowedString(model, ALLOWED_TTS_MODELS)) {
     return errorResponse(400, '지원하지 않는 모델입니다.');
+  }
+
+  if (!isAllowedString(voiceName, ALLOWED_TTS_VOICES)) {
+    return errorResponse(400, '지원하지 않는 음성입니다.');
   }
 
   try {

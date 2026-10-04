@@ -43,6 +43,21 @@ export const ALLOWED_LIVE_MODELS = [
   'gemini-3.5-live-translate-preview', // interview translation (useInterviewLive)
 ] as const;
 
+// --- Secondary provider-facing inputs (#36 follow-up) ---------------------
+// translate from/to are language display names (constants.ts SUPPORTED_LANGUAGES.name).
+export const MAX_LANGUAGE_LABEL_CHARS = 100;
+// vision langA/langB are language codes ('ko', 'en', ... or 'auto').
+export const MAX_LANGUAGE_CODE_CHARS = 32;
+// Glossary: entry count stays bounded by slicing; oversized kept terms are
+// rejected explicitly instead of being silently truncated.
+export const MAX_GLOSSARY_ENTRIES = 100;
+export const MAX_GLOSSARY_TERM_CHARS = 200;
+// tts voiceName: only the voices shipped in constants.ts VOICE_OPTIONS.
+export const ALLOWED_TTS_VOICES = ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'] as const;
+// Defense-in-depth request body caps (valid payloads stay well below these).
+export const MAX_TRANSLATE_BODY_BYTES = 256 * 1024;
+export const MAX_VISION_BODY_BYTES = 5 * 1024 * 1024;
+
 // --- Responses ------------------------------------------------------------
 export function errorResponse(
   statusCode: number,
@@ -104,9 +119,9 @@ export function decodedBase64Bytes(base64: string): number {
   return Buffer.from(base64, 'base64').length;
 }
 
-// --- Model guard ----------------------------------------------------------
-export function isAllowedModel(model: unknown, allowed: readonly string[]): model is string {
-  return typeof model === 'string' && (allowed as readonly string[]).includes(model);
+// --- Value guards ---------------------------------------------------------
+export function isAllowedString(value: unknown, allowed: readonly string[]): value is string {
+  return typeof value === 'string' && (allowed as readonly string[]).includes(value);
 }
 
 // --- Secret redaction -----------------------------------------------------
