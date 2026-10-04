@@ -14,7 +14,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('button', { name: 'GLOBAL CLASSROOM' })).toBeVisible();
-    await expect(page.getByText(/AUTO · KO ↔ EN/)).toBeVisible();
+    const readyBadge = page.getByText(/AUTO · KO ↔ EN/);
+    await expect(readyBadge).toHaveCount(1);
+    if ((page.viewportSize()?.width ?? 1280) < 640) {
+      await expect(readyBadge).toBeHidden();
+    } else {
+      await expect(readyBadge).toBeVisible();
+    }
 
     const inputLanguage = page.getByTitle('입력 언어 선택 (내가 말하는 언어)');
     const outputLanguage = page.getByTitle('번역 언어 선택 (듣고 싶은 언어)');
@@ -33,7 +39,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     const composerBox = await composer.boundingBox();
     expect(composerBox).not.toBeNull();
     const viewport = page.viewportSize() || { width: 1280, height: 720 };
-    expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual(viewport.width / 2 + 80);
+    if (viewport.width < 640) {
+      // Mobile uses the responsive content width rather than the desktop left-column split.
+      expect(composerBox!.x).toBeGreaterThanOrEqual(0);
+      expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual(viewport.width - 16);
+    } else {
+      expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual(viewport.width / 2 + 80);
+    }
     // The composer must sit above the fixed bottom controls rather than underneath them.
     expect(composerBox!.y + composerBox!.height).toBeLessThan(viewport.height - 70);
 
@@ -242,7 +254,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(micButton).toHaveCount(1);
     await micButton.click();
 
-    await expect(page.getByText(/AUTO · KO ↔ EN · GROQ STT/)).toBeVisible();
+    const groqBadge = page.getByText(/AUTO · KO ↔ EN · GROQ STT/);
+    await expect(groqBadge).toHaveCount(1);
+    if ((page.viewportSize()?.width ?? 1280) < 640) {
+      await expect(groqBadge).toBeHidden();
+    } else {
+      await expect(groqBadge).toBeVisible();
+    }
   });
 
   test('live translate keeps one context per utterance instead of accumulating earlier translations', async ({ page }) => {
