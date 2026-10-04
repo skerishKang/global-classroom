@@ -57,7 +57,7 @@ import LiveSharingModal from './components/LiveSharingModal';
 import { useAuth } from './hooks/useAuth';
 import { useConversationHistory } from './hooks/useConversationHistory';
 import { useGeminiLive } from './hooks/useGeminiLive';
-import { useInterviewLive } from './hooks/useInterviewLive';
+import { useInterviewLive, type LiveTranslationUpdate } from './hooks/useInterviewLive';
 import { useExport } from './hooks/useExport';
 import { useVision } from './hooks/useVision';
 import { useAudioPlayer } from './hooks/useAudioPlayer';
@@ -431,9 +431,13 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const langOutputRef = useRef(langOutput);
   const isLangAutoRef = useRef(false);
   const interviewLivePreviewRef = useRef('');
-  const interviewPreviewIsFinalRef = useRef(false);
   const interviewTargetRef = useRef<'en' | 'ko'>('en');
-  const pendingInterviewItemsRef = useRef<Array<{ id: string; target: 'en' | 'ko' }>>([]);
+  // Live translation is keyed by the utterance it belongs to, so a delayed
+  // completion can only ever land on the row that produced it.
+  const interviewUtteranceIdRef = useRef<string | null>(null);
+  const interviewRowIdsRef = useRef<Set<string>>(new Set());
+  const interviewPreviewByUtteranceRef = useRef<Map<string, string>>(new Map());
+  const interviewFinalByUtteranceRef = useRef<Map<string, string>>(new Map());
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -447,21 +451,34 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setCurrentTurnText('');
     setInterviewLivePreview('');
     interviewLivePreviewRef.current = '';
-    interviewPreviewIsFinalRef.current = false;
-    pendingInterviewItemsRef.current = [];
+    interviewUtteranceIdRef.current = null;
+    interviewRowIdsRef.current = new Set();
+    interviewPreviewByUtteranceRef.current = new Map();
+    interviewFinalByUtteranceRef.current = new Map();
     setInterviewLiveError('');
     setInterviewLiveWarning('');
   }, [interviewMode]);
 
-  const onInterviewFinalTranscript = useCallback((text: string) => {
+  const onInterviewUtteranceStart = useCallback((utteranceId: string) => {
+    interviewUtteranceIdRef.current = utteranceId;
+    interviewLivePreviewRef.current = '';
+    setInterviewLivePreview('');
+  }, []);
+
+  const onInterviewFinalTranscript = useCallback((text: string, utteranceId: string) => {
     const normalized = text.trim();
     if (!normalized) return;
 
     interviewTargetRef.current = inferInterviewTarget(normalized);
-    const frozenLiveTranslation = interviewLivePreviewRef.current.trim();
-    const liveTranslationWasFinal = interviewPreviewIsFinalRef.current;
+    const settledTranslation = interviewFinalByUtteranceRef.current.get(utteranceId);
+    interviewFinalByUtteranceRef.current.delete(utteranceId);
+    const frozenLiveTranslation = settledTranslation
+      || interviewPreviewByUtteranceRef.current.get(utteranceId)
+      || '';
+    interviewPreviewByUtteranceRef.current.delete(utteranceId);
+
     const newItem: ConversationItem = {
-      id: crypto.randomUUID(),
+      id: utteranceId || crypto.randomUUID(),
       original: normalized,
       originalRaw: normalized,
       translated: frozenLiveTranslation,
@@ -473,50 +490,54 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     };
 
     setHistory((prev) => [...prev, newItem]);
-    if (!liveTranslationWasFinal) {
-      pendingInterviewItemsRef.current.push({ id: newItem.id, target: interviewTargetRef.current });
-    }
+    interviewRowIdsRef.current.add(newItem.id);
     setCurrentTurnText('');
-    setInterviewLivePreview('');
-    interviewLivePreviewRef.current = '';
-    interviewPreviewIsFinalRef.current = false;
   }, [setHistory]);
 
   const onInterviewInterimTranscript = useCallback((text: string) => {
     const nextTarget = inferInterviewTarget(text);
     if (nextTarget !== interviewTargetRef.current) {
+      // A language switch starts a different translation stream; drop the
+      // preview that belongs to the abandoned target.
       interviewLivePreviewRef.current = '';
-      interviewPreviewIsFinalRef.current = false;
+      interviewPreviewByUtteranceRef.current.clear();
       setInterviewLivePreview('');
     }
     interviewTargetRef.current = nextTarget;
     setCurrentTurnText(text);
   }, []);
 
-  const onInterviewLiveTranslation = useCallback((target: 'en' | 'ko', text: string, isFinal: boolean) => {
-    if (isFinal) {
-      const pendingIndex = pendingInterviewItemsRef.current.findIndex((entry) => entry.target === target);
-      if (pendingIndex >= 0) {
-        const [{ id: pendingItemId }] = pendingInterviewItemsRef.current.splice(pendingIndex, 1);
-        setHistory((prev) => prev.map((item) =>
-          item.id === pendingItemId
-            ? { ...item, translated: text.trim(), translationKind: 'live', translationStale: false }
-            : item
-        ));
-      }
+  const onInterviewLiveTranslation = useCallback(({ utteranceId, target, text, isFinal }: LiveTranslationUpdate) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
 
-      if (target === interviewTargetRef.current) {
+    // The row already exists: the translation of a frozen utterance may keep
+    // streaming in, and it can only ever touch its own row.
+    if (interviewRowIdsRef.current.has(utteranceId)) {
+      setHistory((prev) => prev.map((item) =>
+        item.id === utteranceId && item.translationKind === 'live'
+          ? { ...item, translated: trimmed, translationStale: false }
+          : item
+      ));
+      return;
+    }
+
+    if (target !== interviewTargetRef.current) return;
+
+    if (isFinal) {
+      // The translation may settle before its transcript row is created.
+      interviewFinalByUtteranceRef.current.set(utteranceId, trimmed);
+      if (utteranceId === interviewUtteranceIdRef.current) {
         interviewLivePreviewRef.current = '';
-        interviewPreviewIsFinalRef.current = false;
         setInterviewLivePreview('');
       }
       return;
     }
 
-    if (target !== interviewTargetRef.current) return;
-    interviewLivePreviewRef.current = text;
-    interviewPreviewIsFinalRef.current = false;
-    setInterviewLivePreview(text);
+    if (utteranceId !== interviewUtteranceIdRef.current) return;
+    interviewPreviewByUtteranceRef.current.set(utteranceId, trimmed);
+    interviewLivePreviewRef.current = trimmed;
+    setInterviewLivePreview(trimmed);
   }, [setHistory]);
 
   const {
@@ -527,6 +548,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   } = useInterviewLive({
     onInterimTranscript: onInterviewInterimTranscript,
     onFinalTranscript: onInterviewFinalTranscript,
+    onUtteranceStart: onInterviewUtteranceStart,
     onLiveTranslation: onInterviewLiveTranslation,
     glossaryTerms: interviewGlossaryTerms,
     onWarning: (message) => setInterviewLiveWarning(message),
@@ -545,9 +567,13 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const toggleInterviewMic = useCallback(() => {
     if (interviewLiveStatus === 'live' || interviewLiveStatus === 'connecting') {
       stopInterviewLive();
-      pendingInterviewItemsRef.current = [];
+      // Mic stop invalidates every pending utterance: outstanding translation
+      // callbacks must not repopulate a conversation the user just cleared.
+      interviewUtteranceIdRef.current = null;
+      interviewRowIdsRef.current = new Set();
+      interviewPreviewByUtteranceRef.current = new Map();
+      interviewFinalByUtteranceRef.current = new Map();
       interviewLivePreviewRef.current = '';
-      interviewPreviewIsFinalRef.current = false;
       setCurrentTurnText('');
       setInterviewLivePreview('');
       return;
