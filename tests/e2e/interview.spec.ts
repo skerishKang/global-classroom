@@ -30,7 +30,10 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByRole('button', { name: '키보드 입력' })).toHaveCount(0);
     const composerBox = await composer.boundingBox();
     expect(composerBox).not.toBeNull();
-    expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual((page.viewportSize()?.width || 1280) / 2 + 80);
+    const viewport = page.viewportSize() || { width: 1280, height: 720 };
+    expect(composerBox!.x + composerBox!.width).toBeLessThanOrEqual(viewport.width / 2 + 80);
+    // The composer must sit above the fixed bottom controls rather than underneath them.
+    expect(composerBox!.y + composerBox!.height).toBeLessThan(viewport.height - 70);
 
     // Auto-scroll must not move an empty interview screen after React effects settle.
     const conversationScroll = page.locator('div.flex-1.overflow-y-auto').first();

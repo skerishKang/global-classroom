@@ -543,13 +543,12 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         )
                     )}
                 </div>
-                <div className={interviewMode ? "h-24" : "h-40"}></div> {/* Spacer for bottom bar */}
+                <div className={interviewMode ? "h-48" : "h-40"}></div> {/* Spacer for fixed interview composer + bottom bar */}
             </div>
 
             {interviewMode && !isOutputOnly && onSubmitText && (
-                <div className="shrink-0 border-t border-gray-200 bg-white/95 px-4 py-2.5 z-20">
-                    <div className="grid grid-cols-2 gap-4 items-end">
-                        <div className="flex items-end gap-2 rounded-2xl border border-gray-200 bg-white p-2 shadow-sm focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
+                <div className="fixed bottom-[92px] left-3 right-3 z-40 sm:left-4 sm:right-[calc(50%+8px)]">
+                    <div className="flex items-end gap-2 rounded-2xl border border-gray-200 bg-white/95 p-2 shadow-lg backdrop-blur-md focus-within:border-indigo-300 focus-within:ring-2 focus-within:ring-indigo-100">
                             <textarea
                                 value={interviewDraft}
                                 onChange={(event) => setInterviewDraft(event.target.value)}
@@ -576,10 +575,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 12h14m-6-6 6 6-6 6" />
                                 </svg>
                             </button>
-                        </div>
-                        <div className="hidden min-h-10 items-center text-[11px] text-gray-400 sm:flex">
-                            {uiLangCode === 'ko' ? 'Enter 번역 · Shift+Enter 줄바꿈 · 음성은 마이크로 자동 통역' : 'Enter to translate · Shift+Enter for newline · Voice stays automatic'}
-                        </div>
+                    </div>
+                    <div className="mt-1 pl-2 text-[10px] font-medium text-gray-400">
+                        {uiLangCode === 'ko' ? 'Enter 번역 · Shift+Enter 줄바꿈' : 'Enter to translate · Shift+Enter for newline'}
                     </div>
                 </div>
             )}
