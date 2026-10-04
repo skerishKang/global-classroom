@@ -1,6 +1,10 @@
 import React, { useCallback, useRef } from 'react';
 import { Language, ConversationItem, AppSettings, GlossaryEntry, TranslationVariant } from '../types';
 import { SUPPORTED_LANGUAGES } from '../constants';
+import {
+    getTargetsForSource,
+    type InterviewLanguagePolicy,
+} from '../utils/interviewLanguageRouting';
 
 interface UseTranslationServiceProps {
     settings: AppSettings;
@@ -140,11 +144,11 @@ export function useTranslationService({
         text: string,
         id: string,
         fromLang: Language,
-        targetCodes: readonly string[],
+        policy: InterviewLanguagePolicy,
         glossary: GlossaryEntry[] = [],
         detectedCodeOverride?: string
     ) => {
-        const uniqueTargets = Array.from(new Set(targetCodes.filter((code) => code && code !== 'auto')));
+        const uniqueTargets = Array.from(new Set(policy.targets.filter((code) => code && code !== 'auto')));
         if (uniqueTargets.length === 0) {
             setHistory(prev => prev.map(item => item.id === id ? { ...item, isTranslating: false } : item));
             return;
@@ -165,8 +169,12 @@ export function useTranslationService({
             }
             const sourceLang = SUPPORTED_LANGUAGES.find(l => l.code === detectedCode) || fromLang;
 
-            // Routing policy: the detected source is excluded from the target set.
-            const effectiveTargets = uniqueTargets.filter(code => code !== detectedCode);
+            // Routing policy: explicit pair rules win when they name the source;
+            // otherwise the detected source is excluded from the selected set.
+            const effectiveTargets = getTargetsForSource(detectedCode, {
+                targets: uniqueTargets,
+                pairRules: policy.pairRules,
+            });
             if (effectiveTargets.length === 0) {
                 setHistory(prev => prev.map(item => item.id === id
                     ? { ...item, isTranslating: false, sourceLanguage: sourceLang.code }

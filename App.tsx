@@ -751,7 +751,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setHistory((prev) => [...prev, newItem]);
     // Voice and text share one routing policy: detect the source, then
     // translate into every selected target except the source language.
-    void translateToTargets(text, newItem.id, interviewAuto, interviewPolicyRef.current.targets, interviewGlossary);
+    void translateToTargets(text, newItem.id, interviewAuto, interviewPolicyRef.current, interviewGlossary);
   }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
 
   const handleInterviewRetranslate = useCallback((item: ConversationItem) => {
@@ -767,7 +767,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       item.original,
       item.id,
       sourceLanguage,
-      interviewPolicyRef.current.targets,
+      interviewPolicyRef.current,
       interviewGlossary,
       item.sourceLanguage
     );
