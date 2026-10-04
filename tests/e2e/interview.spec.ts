@@ -136,8 +136,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('I built Padiem myself.')).toBeVisible();
   });
 
-  test('falls back to Groq STT inside the same UI when Gemini Live and browser STT are unavailable', async ({ page }) => {
-    await page.addInitScript(() => {
+  test('falls back to Groq STT inside the same UI when Gemini Live and browser STT are unavailable', async ({ page }) => {    await page.addInitScript(() => {
       Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: undefined });
       Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, value: undefined });
 
@@ -195,5 +194,243 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await micButton.click();
 
     await expect(page.getByText(/AUTO · KO ↔ EN · GROQ STT/)).toBeVisible();
+  });
+
+  test('live translate keeps one context per utterance instead of accumulating earlier translations', async ({ page }) => {
+    // A Gemini Live session keeps one conversation history for its whole life,
+    // so the mock below accumulates every audio chunk it has ever received and
+    // translates the whole accumulated context — exactly how the production
+    // bleed happens when one translate session outlives an utterance.
+    await page.addInitScript(() => {
+      // Intercept the token endpoint in-page: Playwright route interception is
+      // unreliable for these fetches, and the dev proxy would 500 them.
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('/live-token')) {
+          return new Response(JSON.stringify({ token: 'e2e-fake-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+
+      const PHRASES: Record<string, string> = {
+        'Apple is red.': '사과는 빨갛습니다.',
+        'Kubernetes runs containers.': '쿠버네티스는 컨테이너를 실행합니다.',
+      };
+      const translateContext = (context: string) =>
+        Object.entries(PHRASES)
+          .filter(([source]) => context.includes(source))
+          .map(([, target]) => target)
+          .join(' ');
+
+      const sockets: any[] = [];
+
+      // Audio chunks are int16 PCM; encode an ASCII tag as (code + 0.5)/0x7FFF
+      // so the low byte survives int16 truncation on both sides.
+      const decodeTag = (base64: string) => {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        let tag = '';
+        for (let i = 0; i + 1 < bytes.length; i += 2) {
+          const code = bytes[i] | (bytes[i + 1] << 8);
+          if (code >= 32 && code < 127) tag += String.fromCharCode(code);
+        }
+        return tag;
+      };
+
+      class FakeLiveSocket {
+        readyState = 0;
+        onopen: ((event?: unknown) => void) | null = null;
+        onmessage: ((event: { data: string }) => void) | null = null;
+        onerror: ((event?: unknown) => void) | null = null;
+        onclose: ((event?: unknown) => void) | null = null;
+        role: 'transcribe' | 'translate' = 'translate';
+        target = '';
+        context = '';
+        turn = '';
+
+        constructor(readonly url: string) {
+          // Vite HMR also opens a WebSocket; only track the Live API endpoint.
+          if (url.includes('generativelanguage.googleapis.com')) {
+            sockets.push(this);
+          }
+          setTimeout(() => {
+            this.readyState = 1;
+            this.onopen?.({});
+          }, 0);
+        }
+
+        emit(data: unknown) {
+          this.onmessage?.({ data: JSON.stringify(data) });
+        }
+
+        emitTranslation(isFinal: boolean) {
+          const text = translateContext(this.context);
+          if (!text) return;
+          this.emit({
+            serverContent: {
+              outputTranscription: { text },
+              ...(isFinal ? { turnComplete: true } : {}),
+            },
+          });
+        }
+
+        send(raw: string) {
+          const message = JSON.parse(raw);
+          if (message.setup) {
+            const model = String(message.setup.model || '');
+            this.role = model.includes('transcribe') ? 'transcribe' : 'translate';
+            this.target = message.setup?.generationConfig?.translationConfig?.targetLanguageCode || '';
+            this.emit({ setupComplete: {} });
+            return;
+          }
+          const realtime = message.realtimeInput;
+          if (!realtime) return;
+          const mediaChunks = realtime.mediaChunks || (realtime.media ? [realtime.media] : []);
+          if (mediaChunks.length) {
+            for (const chunk of mediaChunks) {
+              const tag = decodeTag(chunk.data);
+              this.context += tag;
+              this.turn += tag;
+            }
+            return;
+          }
+          if (realtime.audioStreamEnd && this.role === 'translate') {
+            // Documented server behaviour: finalise what this session holds.
+            this.emitTranslation(true);
+          }
+        }
+
+        close() {
+          this.readyState = 3;
+        }
+      }
+
+      (window as any).WebSocket = class {
+        constructor(url: string) {
+          return new FakeLiveSocket(url);
+        }
+      } as unknown as typeof WebSocket;
+
+      const fakeTrack = { stop: () => {} } as unknown as MediaStreamTrack;
+      const fakeStream = { getTracks: () => [fakeTrack] } as unknown as MediaStream;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => fakeStream },
+      });
+
+      let audioHandler: ((event: { inputBuffer: { getChannelData: (channel: number) => Float32Array } }) => void) | null = null;
+
+      class FakeAudioContext {
+        sampleRate = 16000;
+        destination = {};
+        async resume() {}
+        async close() {}
+        createMediaStreamSource() {
+          return { connect: () => {} };
+        }
+        createScriptProcessor() {
+          const node = {
+            onaudioprocess: null as typeof audioHandler,
+            connect: () => {},
+            disconnect: () => {},
+          };
+          audioHandler = (event) => node.onaudioprocess?.(event);
+          return node;
+        }
+      }
+      (window as any).AudioContext = FakeAudioContext;
+      (window as any).webkitAudioContext = FakeAudioContext;
+
+      (window as any).__liveMock = {
+        speak(tag: string) {
+          const samples = new Float32Array(1024);
+          for (let i = 0; i < tag.length; i += 1) {
+            samples[i] = (tag.charCodeAt(i) + 0.5) / 0x7fff;
+          }
+          audioHandler?.({ inputBuffer: { getChannelData: () => samples } });
+        },
+        interim() {
+          for (const socket of sockets) {
+            if (socket.role === 'transcribe' && socket.readyState === 1 && socket.turn.trim()) {
+              socket.emit({ serverContent: { interimInputTranscription: { text: socket.turn } } });
+            }
+          }
+        },
+        preview() {
+          for (const socket of sockets) {
+            if (socket.role === 'translate' && socket.readyState === 1) {
+              socket.emitTranslation(false);
+            }
+          }
+        },
+        finalize() {
+          for (const socket of sockets) {
+            if (socket.role !== 'transcribe' || socket.readyState !== 1) continue;
+            const text = socket.turn.trim();
+            if (!text) continue;
+            socket.emit({ serverContent: { inputTranscription: { text } } });
+            socket.turn = '';
+          }
+        },
+        counts() {
+          return {
+            transcribe: sockets.filter((socket) => socket.role === 'transcribe').length,
+            translate: sockets.filter((socket) => socket.role === 'translate').length,
+          };
+        },
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    await page.getByTitle(/마이크 켜기/).click();
+
+    // One continuous transcribe session plus live translate sessions per target.
+    await expect
+      .poll(async () => {
+        const counts = await page.evaluate(() => (window as any).__liveMock.counts());
+        return counts.transcribe === 1 && counts.translate >= 2;
+      }, { timeout: 15_000 })
+      .toBe(true);
+
+    // --- Utterance 1 ---
+    await page.evaluate(() => (window as any).__liveMock.speak('Apple is red.'));
+    await page.evaluate(() => (window as any).__liveMock.interim());
+    await page.evaluate(() => (window as any).__liveMock.preview());
+    await expect(page.getByText('Apple is red.')).toBeVisible();
+    await expect(page.getByText('사과는 빨갛습니다.')).toBeVisible();
+
+    await page.evaluate(() => (window as any).__liveMock.finalize());
+    await expect(page.getByText('사과는 빨갛습니다.')).toBeVisible();
+
+    // --- Utterance 2: a fresh translation context must start here ---
+    await page.evaluate(() => (window as any).__liveMock.speak('Kubernetes runs containers.'));
+    await page.evaluate(() => (window as any).__liveMock.interim());
+    await page.evaluate(() => (window as any).__liveMock.preview());
+
+    // The live preview of utterance 2 must not repeat utterance 1.
+    await expect(page.getByText('Kubernetes runs containers.')).toBeVisible();
+    await expect(page.getByText('쿠버네티스는 컨테이너를 실행합니다.')).toBeVisible();
+
+    await page.evaluate(() => (window as any).__liveMock.finalize());
+    await expect(page.getByText('쿠버네티스는 컨테이너를 실행합니다.')).toBeVisible();
+
+    // SOURCE 1 -> TRANSLATION 1 ONLY, SOURCE 2 -> TRANSLATION 2 ONLY. With the
+    // bleed defect the second row repeats the first translation, so this fails.
+    const firstRow = page.locator('div.grid.grid-cols-2', { hasText: 'Apple is red.' });
+    const secondRow = page.locator('div.grid.grid-cols-2', { hasText: 'Kubernetes runs containers.' });
+    await expect(firstRow).toContainText('사과는 빨갛습니다.');
+    await expect(firstRow).not.toContainText('쿠버네티스');
+    await expect(secondRow).toContainText('쿠버네티스는 컨테이너를 실행합니다.');
+    await expect(secondRow).not.toContainText('사과는');
+    await expect(secondRow).not.toContainText('Apple');
+
+    // The authoritative transcript is never rewritten by the translation side.
+    await expect(firstRow).toContainText('Apple is red.');
+    await expect(secondRow).toContainText('Kubernetes runs containers.');
   });
 });
