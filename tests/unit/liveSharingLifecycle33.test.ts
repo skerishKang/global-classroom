@@ -329,6 +329,11 @@ const firestore = vi.hoisted(() => {
         return Promise.resolve();
     };
     const updateDoc = (ref: any, data: DocData) => {
+        // Match Firestore updateDoc semantics: updating a document that was
+        // removed while an async signaling operation was in flight fails.
+        if (!docs.has(ref.path)) {
+            return Promise.reject(new Error('missing document: ' + ref.path));
+        }
         setPath(ref.path, data, true);
         return Promise.resolve();
     };
@@ -677,6 +682,33 @@ describe('#33 student lifecycle', () => {
 });
 
 describe('#33 listener ownership', () => {
+    test('host tolerates a peer disappearing while its offer is being created', async () => {
+        const h = renderLiveSharing({ uid: 'host-race' });
+        let created: string | null = null;
+        await h.act(async () => {
+            created = await h.current.createRoom();
+        });
+        await h.act(async () => {
+            await h.current.startWebRTC();
+        });
+
+        // Added callback starts setupHostPeer(), which yields at createOffer().
+        // Remove the signal document in the same turn before updateDoc(offer).
+        await h.act(async () => {
+            firestore.write('rooms/' + created + '/webRTC/fast-student', { uid: 'fast-student' });
+            await firestore.api.deleteDoc(
+                firestore.api.doc(firestore.db, 'rooms', created, 'webRTC', 'fast-student')
+            );
+            await sleep(0);
+        });
+
+        expect(firestore.read('rooms/' + created + '/webRTC/fast-student')).toBeUndefined();
+        expect(FakeRTCPeerConnection.instances).toHaveLength(1);
+        expect(FakeRTCPeerConnection.instances[0].closed).toBe(true);
+        // hands + host webRTC collection only; no stale per-peer listeners.
+        expect(firestore.activeListeners()).toHaveLength(2);
+    });
+
     test('host leave disposes every listener including per-peer ones', async () => {
         const h = renderLiveSharing({ uid: 'host-1' });
         let created: string | null = null;
@@ -757,6 +789,64 @@ describe('#33 listener ownership', () => {
         expect(firestore.read('rooms/222200')?.status).toBe('active');
         expect(firestore.read('rooms/222200')?.hostUid).toBe('host-1');
         expect(h.current.roomStatus).toBe('idle');
+    });
+
+    test('student stop/leave removes its signaling document so the host can drop the peer', async () => {
+        firestore.seed('rooms/222201', { id: '222201', hostUid: 'host-1', status: 'active' });
+        const h = renderLiveSharing({ uid: 'student-signal', displayName: 'Student' });
+
+        await h.act(async () => {
+            await h.current.joinRoom('222201');
+        });
+        await h.act(async () => {
+            await h.current.startWebRTC();
+        });
+
+        expect(firestore.read('rooms/222201/webRTC/student-signal')).toBeDefined();
+        expect(firestore.activeListeners()).toHaveLength(5);
+
+        // Explicit WebRTC stop removes remote signaling presence while keeping
+        // the joined-room listeners/session alive.
+        await h.act(async () => {
+            await h.current.stopWebRTC();
+        });
+        expect(firestore.read('rooms/222201/webRTC/student-signal')).toBeUndefined();
+        expect(firestore.activeListeners()).toHaveLength(3);
+        expect(h.current.roomId).toBe('222201');
+        expect(h.current.roomStatus).toBe('joined');
+
+        // Re-start creates exactly one fresh signaling document, and leave
+        // removes it before room state/listeners are reset.
+        await h.act(async () => {
+            await h.current.startWebRTC();
+        });
+        expect(firestore.read('rooms/222201/webRTC/student-signal')).toBeDefined();
+
+        await h.act(async () => {
+            await h.current.leaveRoom();
+        });
+        expect(firestore.read('rooms/222201/webRTC/student-signal')).toBeUndefined();
+        expect(firestore.read('rooms/222201')?.status).toBe('active');
+        expect(firestore.activeListeners()).toHaveLength(0);
+    });
+
+    test('student unmount best-effort removes its signaling document', async () => {
+        firestore.seed('rooms/222202', { id: '222202', hostUid: 'host-1', status: 'active' });
+        const h = renderLiveSharing({ uid: 'student-unmount', displayName: 'Student' });
+
+        await h.act(async () => {
+            await h.current.joinRoom('222202');
+        });
+        await h.act(async () => {
+            await h.current.startWebRTC();
+        });
+        expect(firestore.read('rooms/222202/webRTC/student-unmount')).toBeDefined();
+
+        h.unmount();
+        await sleep(0);
+
+        expect(firestore.read('rooms/222202/webRTC/student-unmount')).toBeUndefined();
+        expect(firestore.activeListeners()).toHaveLength(0);
     });
 
     test('unmount disposes all listeners', async () => {

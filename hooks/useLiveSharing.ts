@@ -69,6 +69,10 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
     }
     const localStreamRef = useRef<MediaStream | null>(null);
     const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
+    // Student signaling document is a remote lifecycle resource too. Keep its
+    // reference so stop/leave/unmount can remove it and let the host observe
+    // a collection 'removed' event instead of retaining a stale peer.
+    const studentSignalRefRef = useRef<any | null>(null);
     const lastMessageTimeRef = useRef<number>(0);
 
     const stopLocalMedia = useCallback(() => {
@@ -109,6 +113,36 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         disposeResources();
         resetRoomState();
     }, [disposeResources, resetRoomState]);
+
+    const clearStudentSignalDoc = useCallback(async () => {
+        const signalRef = studentSignalRefRef.current;
+        studentSignalRefRef.current = null;
+        if (!signalRef) return;
+        try {
+            await deleteDoc(signalRef);
+        } catch (err) {
+            // Local runtime must still be disposed even if the remote delete
+            // fails; a later room lifecycle must not keep ownership of this ref.
+            console.warn("Failed to remove WebRTC signaling document:", err);
+        }
+    }, []);
+
+    const stopWebRTC = useCallback(async () => {
+        stopLocalMedia();
+
+        Object.values(peerConnectionsRef.current as Record<string, RTCPeerConnection>).forEach(pc => pc.close());
+        peerConnectionsRef.current = {};
+
+        // Dispose WebRTC-owned listeners only; room listeners stay until leave/cleanup.
+        listenerTrackerRef.current?.disposeWebRtc();
+        listenerTrackerRef.current?.disposePeers();
+        setRemoteStreams({});
+
+        // For students, deleting the signaling document is what tells the host
+        // that this peer actually left. Await it on explicit stop/leave to
+        // prevent stale host peer connections and signaling listeners.
+        await clearStudentSignalDoc();
+    }, [clearStudentSignalDoc, stopLocalMedia]);
 
     // 1. Create a Room (Host)
     const createRoom = useCallback(async () => {
@@ -264,7 +298,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         try {
             // Dispose any previous WebRTC runtime first so start → stop → start
             // (or a double start) can never leave stale listeners/streams behind.
-            stopWebRTC();
+            await stopWebRTC();
 
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: true,
@@ -302,6 +336,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                     displayName: user.displayName || 'Student',
                     joinedAt: serverTimestamp()
                 }, { merge: true });
+                studentSignalRefRef.current = signalRef;
 
                 setupStudentPeer(signalRef, stream);
             }
@@ -309,19 +344,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
             console.error("Failed to get media devices:", err);
             throw err;
         }
-    }, [roomId, user, isHost, removePeer]);
-
-    const stopWebRTC = useCallback(() => {
-        stopLocalMedia();
-
-        Object.values(peerConnectionsRef.current as Record<string, RTCPeerConnection>).forEach(pc => pc.close());
-        peerConnectionsRef.current = {};
-
-        // Dispose WebRTC-owned listeners only; room listeners stay until leave/cleanup.
-        listenerTrackerRef.current?.disposeWebRtc();
-        listenerTrackerRef.current?.disposePeers();
-        setRemoteStreams({});
-    }, [stopLocalMedia]);
+    }, [roomId, user, isHost, removePeer, stopWebRTC]);
 
     const setupHostPeer = useCallback(async (studentUid: string, stream: MediaStream) => {
         if (!roomId || !user) return;
@@ -345,8 +368,19 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
+        // A fast student leave can remove the signaling document while the
+        // offer is being created. Treat that as a normal peer teardown, not an
+        // unhandled async rejection from updateDoc().
+        if (peerConnectionsRef.current[studentUid] !== pc) return;
         const signalRef = doc(db, "rooms", roomId, "webRTC", studentUid);
-        await updateDoc(signalRef, { offer: { sdp: offer.sdp, type: offer.type } });
+        try {
+            await updateDoc(signalRef, { offer: { sdp: offer.sdp, type: offer.type } });
+        } catch (err) {
+            if (peerConnectionsRef.current[studentUid] !== pc) return;
+            removePeer(studentUid);
+            console.warn("Failed to write WebRTC offer:", err);
+            return;
+        }
 
         // The peer may have been removed while the offer was being written.
         if (peerConnectionsRef.current[studentUid] !== pc) return;
@@ -369,7 +403,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                 }
             });
         }));
-    }, [roomId, user]);
+    }, [roomId, user, removePeer]);
 
     const setupStudentPeer = useCallback(async (signalRef: any, stream: MediaStream) => {
         const pc = new RTCPeerConnection(ICE_CONFIG);
@@ -397,7 +431,14 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                 await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
                 const answer = await pc.createAnswer();
                 await pc.setLocalDescription(answer);
-                await updateDoc(signalRef, { answer: { sdp: answer.sdp, type: answer.type } });
+                if (peerConnectionsRef.current[hostUid] !== pc) return;
+                try {
+                    await updateDoc(signalRef, { answer: { sdp: answer.sdp, type: answer.type } });
+                } catch (err) {
+                    if (peerConnectionsRef.current[hostUid] !== pc) return;
+                    removePeer(hostUid);
+                    console.warn("Failed to write WebRTC answer:", err);
+                }
             }
         }));
 
@@ -411,7 +452,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                 }
             });
         }));
-    }, []);
+    }, [removePeer]);
 
     // 6. Broadcast Message
     const broadcastMessage = useCallback(async (text: string, langCode: string) => {
@@ -436,13 +477,18 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
             const roomRef = doc(db, "rooms", roomId);
             await setDoc(roomRef, { status: 'closed' }, { merge: true });
         }
-        stopWebRTC();
+        await stopWebRTC();
         cleanup();
     }, [isHost, roomId, cleanup, stopWebRTC]);
 
     useEffect(() => {
-        return () => cleanup();
-    }, [cleanup]);
+        return () => {
+            // React cleanup cannot await, but remove the student's remote
+            // signaling presence on a best-effort basis before local disposal.
+            void clearStudentSignalDoc();
+            cleanup();
+        };
+    }, [cleanup, clearStudentSignalDoc]);
 
     return {
         roomId,
