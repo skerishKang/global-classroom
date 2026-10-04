@@ -48,7 +48,6 @@ import AppHeader from './components/AppHeader';
 import LanguageSelector from './components/LanguageSelector';
 import ConversationList from './components/ConversationList';
 import BottomControls from './components/BottomControls';
-import InterviewToolsBar from './components/InterviewToolsBar';
 import ExportMenu from './components/ExportMenu';
 import VisionToastSystem from './components/VisionToastSystem';
 import ToastSystem from './components/ToastSystem';
@@ -866,14 +865,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         uiLangCode={uiLangCode}
       />
 
-      {interviewMode && (
-        <InterviewToolsBar
-          uiLangCode={uiLangCode}
-          glossaryText={interviewGlossaryText}
-          onGlossaryChange={setInterviewGlossaryText}
-        />
-      )}
-
       <ConversationList
         key={`list_${currentSessionId}`}
         analyser={effectiveAnalyser}
@@ -1005,6 +996,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         settings={settings}
         setSettings={setSettings}
         t={t}
+        interviewMode={interviewMode}
+        interviewGlossaryText={interviewGlossaryText}
+        onInterviewGlossaryChange={setInterviewGlossaryText}
       />
 
       <ClassroomModal
