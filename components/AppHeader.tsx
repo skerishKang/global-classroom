@@ -125,6 +125,20 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                         </button>
                     )}
 
+                    {interviewMode && (
+                        <button
+                            type="button"
+                            onClick={() => setIsSettingsModalOpen(true)}
+                            className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm transition-all hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-700"
+                            title={uiLangCode === 'ko' ? '인터뷰 설정' : 'Interview settings'}
+                            aria-label={uiLangCode === 'ko' ? '인터뷰 설정' : 'Interview settings'}
+                        >
+                            <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM19.4 15a1.7 1.7 0 00.34 1.88l.06.06-2.12 2.12-.06-.06a1.7 1.7 0 00-1.88-.34 1.7 1.7 0 00-1.03 1.56V20.3h-3v-.08a1.7 1.7 0 00-1.03-1.56 1.7 1.7 0 00-1.88.34l-.06.06-2.12-2.12.06-.06A1.7 1.7 0 007 15a1.7 1.7 0 00-1.56-1.03H5.36v-3h.08A1.7 1.7 0 007 9a1.7 1.7 0 00-.34-1.88l-.06-.06 2.12-2.12.06.06A1.7 1.7 0 0010.66 5a1.7 1.7 0 001.03-1.56v-.08h3v.08A1.7 1.7 0 0015.72 5a1.7 1.7 0 001.88-.34l.06-.06 2.12 2.12-.06.06A1.7 1.7 0 0019.4 9a1.7 1.7 0 001.56 1.03h.08v3h-.08A1.7 1.7 0 0019.4 15z" />
+                            </svg>
+                        </button>
+                    )}
+
                     {interviewMode ? (
                         <div className="hidden sm:flex items-center rounded-full bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-700 border border-emerald-100">
                             AUTO · KO ↔ EN · {interviewBackend === 'gemini' ? 'GEMINI LIVE' : interviewBackend === 'browser' ? 'BROWSER STT' : interviewBackend === 'groq' ? 'GROQ STT' : 'READY'}
