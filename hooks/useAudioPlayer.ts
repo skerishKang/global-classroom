@@ -3,6 +3,12 @@ import { ConversationItem, VoiceOption, AppSettings } from '../types';
 import { getCachedAudioBase64, setCachedAudioBase64 } from '../utils/idbAudioCache';
 import { base64ToUint8Array, arrayBufferToBase64 } from '../utils/audioUtils';
 import { mergeAudioBlobs } from '../utils/audioMixer';
+import {
+    buildAudioCacheKey,
+    buildAudioProvenance,
+    canReuseItemAudio,
+    resolveTtsVariant,
+} from '../utils/ttsAudioVariant';
 
 interface UseAudioPlayerProps {
     history: ConversationItem[];
@@ -75,9 +81,18 @@ export function useAudioPlayer({
     };
 
     const playTTS = async (text: string, id?: string, notifyOnErrorValue: boolean = false): Promise<void> => {
-        const normalized = String(text || '').trim();
-        if (!normalized) return;
-        const cacheKey = id ? `${id}:${selectedVoice.name}:${MODEL_TTS}` : null;
+        const requestedText = String(text || '').trim();
+        if (!requestedText) return;
+
+        // One audio variant = active target + exact spoken text + voice + model (#34).
+        // The item is only consulted for the active target and its stored audio;
+        // the spoken text is what the caller (the UI / the just-finished
+        // translation) asked to speak.
+        const item = id ? history.find(i => i.id === id) : undefined;
+        const variant = resolveTtsVariant(item, requestedText);
+        if (!variant.text) return;
+        const provenance = buildAudioProvenance(variant, selectedVoice.name, MODEL_TTS);
+        const cacheKey = id ? buildAudioCacheKey(id, variant, selectedVoice.name, MODEL_TTS) : null;
 
         const updateStatus = (status: 'loading' | 'playing' | 'paused' | 'error' | undefined) => {
             if (id) {
@@ -85,20 +100,19 @@ export function useAudioPlayer({
             }
         };
 
-        if (id) {
-            const item = history.find(i => i.id === id);
-            if (item?.audioBase64) {
-                updateStatus('playing');
-                await playPCM(item.audioBase64);
-                updateStatus(undefined);
-                return;
-            }
+        // In-memory audio is only replayed when its provenance proves it was
+        // generated for exactly this variant (target/text/voice/model).
+        if (item && canReuseItemAudio(item, variant, selectedVoice.name, MODEL_TTS)) {
+            updateStatus('playing');
+            await playPCM(item.audioBase64!);
+            updateStatus(undefined);
+            return;
         }
 
         if (id && cacheKey && settings.audioCacheEnabled) {
             const cached = await getCachedAudioBase64(cacheKey);
             if (cached) {
-                setHistory(prev => prev.map(item => item.id === id ? { ...item, audioBase64: cached, ttsStatus: 'playing' } : item));
+                setHistory(prev => prev.map(item => item.id === id ? { ...item, audioBase64: cached, audioProvenance: provenance, ttsStatus: 'playing' } : item));
                 await playPCM(cached);
                 updateStatus(undefined);
                 return;
@@ -106,7 +120,7 @@ export function useAudioPlayer({
         }
 
         updateStatus('loading');
-        const chunks = splitTextForTts(normalized, 200);
+        const chunks = splitTextForTts(variant.text, 200);
         try {
             const pcmChunks: Uint8Array[] = [];
             for (const chunk of chunks) {
@@ -127,7 +141,7 @@ export function useAudioPlayer({
                 let offset = 0;
                 for (const x of pcmChunks) { merged.set(x, offset); offset += x.byteLength; }
                 const mergedBase64 = arrayBufferToBase64(merged.buffer);
-                setHistory(prev => prev.map(item => item.id === id ? { ...item, audioBase64: mergedBase64, ttsStatus: undefined } : item));
+                setHistory(prev => prev.map(item => item.id === id ? { ...item, audioBase64: mergedBase64, audioProvenance: provenance, ttsStatus: undefined } : item));
                 if (cacheKey && settings.audioCacheEnabled) await setCachedAudioBase64(cacheKey, mergedBase64);
             } else {
                 updateStatus(undefined);
