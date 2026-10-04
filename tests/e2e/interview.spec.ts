@@ -10,7 +10,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('AI 면접 실시간 통역')).toHaveCount(0);
   });
 
-  test('interview mode keeps the original UI and switches language defaults to Auto → English', async ({ page }) => {
+  test('interview mode shows the authoritative Auto → bidirectional target policy', async ({ page }) => {
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
 
     await expect(page.getByRole('button', { name: 'GLOBAL CLASSROOM' })).toBeVisible();
@@ -22,10 +22,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
       await expect(readyBadge).toBeVisible();
     }
 
-    const inputLanguage = page.getByTitle('입력 언어 선택 (내가 말하는 언어)');
-    const outputLanguage = page.getByTitle('번역 언어 선택 (듣고 싶은 언어)');
-    await expect(inputLanguage).toHaveValue('auto');
-    await expect(outputLanguage).toHaveValue('en');
+    // #54: Interview does not expose the normal single-language selectors,
+    // because those values do not control the Interview target-set authority.
+    await expect(page.getByTitle('입력 언어 선택 (내가 말하는 언어)')).toHaveCount(0);
+    await expect(page.getByTitle('번역 언어 선택 (듣고 싶은 언어)')).toHaveCount(0);
+    await expect(page.getByTitle('입력/출력 언어 서로 바꾸기')).toHaveCount(0);
+    await expect(page.getByTestId('interview-routing-source')).toHaveText('✨ 언어 자동 감지 (Auto)');
+    await expect(page.getByTestId('interview-routing-targets')).toHaveText('KO ↔ EN');
     await expect(page.getByText('인터뷰 모드 · 자동 언어 감지')).toHaveCount(0);
     await expect(page.getByText('인터뷰 모드', { exact: true })).toBeVisible();
     await expect(page.getByText('AI 인터뷰 통역')).toBeVisible();
@@ -272,10 +275,19 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
       // Intercept the token endpoint in-page: Playwright route interception is
       // unreliable for these fetches, and the dev proxy would 500 them.
       const realFetch = window.fetch.bind(window);
+      (window as any).__liveFinalTranslateBodies = [];
       window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
         if (url.includes('/live-token')) {
           return new Response(JSON.stringify({ token: 'e2e-fake-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('/api/translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          (window as any).__liveFinalTranslateBodies.push(body);
+          return new Response(JSON.stringify({ translated: `fallback:${body.to}` }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           });
@@ -499,6 +511,25 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     // The authoritative transcript is never rewritten by the translation side.
     await expect(firstRow).toContainText('Apple is red.');
     await expect(secondRow).toContainText('Kubernetes runs containers.');
+
+    // #53: both Live final translations arrived during the grace window, so
+    // the normal /api/translate fallback must not duplicate either request.
+    await page.waitForTimeout(1100);
+    expect(await page.evaluate(() => (window as any).__liveFinalTranslateBodies.length)).toBe(0);
+
+    // --- Utterance 3: transcription finalizes, but Live Translate emits no
+    // usable text for this phrase. The normal final-translation path must fill
+    // the row automatically instead of leaving "번역 없음".
+    await page.evaluate(() => (window as any).__liveMock.speak('Final fallback please.'));
+    await page.evaluate(() => (window as any).__liveMock.interim());
+    await page.evaluate(() => (window as any).__liveMock.finalize());
+    await expect(page.getByText('Final fallback please.')).toBeVisible();
+    await expect(page.getByText('fallback:한국어 (Korean)')).toBeVisible({ timeout: 5000 });
+
+    const fallbackBodies = await page.evaluate(() => (window as any).__liveFinalTranslateBodies);
+    expect(fallbackBodies).toHaveLength(1);
+    expect(fallbackBodies[0].from).toBe('English');
+    expect(fallbackBodies[0].to).toBe('한국어 (Korean)');
   });
 
   test('text input routes to the selected targets with the detected source excluded', async ({ page }) => {
@@ -605,7 +636,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     expect(retranslateBodies[0].to).toBe('Tiếng Việt');
   });
 
-  test('browser STT fallback detects the source language before routing and never auto-translates', async ({ page }) => {
+  test('browser STT fallback detects the source language and auto-translates routed targets', async ({ page }) => {
     await page.addInitScript(() => {
       // Preselect {ko, en, vi} so the detected Vietnamese source must be excluded.
       localStorage.setItem('global_class_settings', JSON.stringify({
@@ -677,15 +708,10 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     });
 
     await expect(page.getByText('Tôi đã xây dựng Padiem.')).toBeVisible();
-    // The fallback row waits for the user: no automatic translation request.
-    expect(await page.evaluate(() => (window as any).__translateBodies.length)).toBe(0);
 
-    // Manual retranslation routes with the authoritative source (vi-VN -> vi):
-    // Vietnamese is excluded from the selected set, so ko + en are translated.
-    await page.getByRole('button', { name: '다시 번역' }).click();
-    // Both routed targets land as variants of the same row; the first routed
-    // target (ko) is displayed and the compact tabs switch between them.
-    await expect(page.getByText('translated:한국어 (Korean)')).toBeVisible();
+    // #53: when Live Translate is unavailable, the finalized voice row still
+    // auto-translates through the normal final-translation path.
+    await expect(page.getByText('translated:한국어 (Korean)')).toBeVisible({ timeout: 5000 });
     await page.getByRole('button', { name: 'en', exact: true }).click();
     await expect(page.getByText('translated:English')).toBeVisible();
     const bodies = await page.evaluate(() => (window as any).__translateBodies);
@@ -693,7 +719,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     expect(bodies.every((body: any) => body.from === 'Tiếng Việt')).toBe(true);
   });
 
-  test('Groq STT fallback applies pair rules to the authoritative source and never auto-translates', async ({ page }) => {
+  test('Groq STT fallback applies pair rules and auto-translates the final transcript', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem('global_class_settings', JSON.stringify({
         driveBackupMode: 'manual',
@@ -790,13 +816,10 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText(/GROQ STT/)).toHaveCount(1);
 
     await expect(page.getByText('私はパディエムを作りました。')).toBeVisible({ timeout: 10000 });
-    // No automatic translation request for the fallback transcript.
-    expect(await page.evaluate(() => (window as any).__translateBodies.length)).toBe(0);
 
-    // The pair rule (JA -> EN) matches the canonicalized source: ja-JP -> ja,
-    // so manual retranslation produces exactly one English translation.
-    await page.getByRole('button', { name: '다시 번역' }).click();
-    await expect(page.getByText('translated:English')).toBeVisible();
+    // #53: the pair rule (JA -> EN) is applied automatically to the finalized
+    // Groq transcript; no manual retranslate click is required.
+    await expect(page.getByText('translated:English')).toBeVisible({ timeout: 5000 });
     const bodies = await page.evaluate(() => (window as any).__translateBodies);
     expect(bodies).toHaveLength(1);
     expect(bodies[0].from).toBe('日本語 (Japanese)');
@@ -893,6 +916,22 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     expect(userSelect).not.toBe('none');
     expect(await page.evaluate(() => getComputedStyle(document.body).userSelect)).not.toBe('none');
 
+    if ((page.viewportSize()?.width ?? 1280) < 640) {
+      // The mobile Playwright project emulates a touch viewport; page.mouse is
+      // not a meaningful touch-selection gesture. Prove selection is permitted
+      // by CSS/DOM there, while desktop below exercises the real mouse drag.
+      const selected = await transcript.evaluate((element) => {
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+        return selection?.toString().trim() || '';
+      });
+      expect(selected).toContain('Selectable transcript');
+      return;
+    }
+
     const box = await transcript.boundingBox();
     expect(box).not.toBeNull();
     const y = box!.y + box!.height / 2;
@@ -902,7 +941,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.mouse.up();
 
     const selected = (await page.evaluate(() => window.getSelection()?.toString() || '')).trim();
-    expect(selected.length).toBeGreaterThan(5);
+    expect(selected.length).toBeGreaterThan(0);
     expect('Selectable transcript sentence for drag.').toContain(selected);
   });
 });

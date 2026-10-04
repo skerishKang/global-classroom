@@ -92,6 +92,8 @@ import {
   SparklesIcon
 } from './components/Icons';
 
+const INTERVIEW_FINAL_TRANSLATION_GRACE_MS = 900;
+
 export default function App() {
   const interviewModeRequested =
     typeof window !== 'undefined' &&
@@ -542,7 +544,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     const activeTarget = pickActiveTarget(allowedTargets);
 
     const settled = interviewFinalByUtteranceRef.current.get(utteranceId);
-    interviewFinalByUtteranceRef.current.delete(utteranceId);
     const previewed = interviewPreviewByUtteranceRef.current.get(utteranceId);
     interviewPreviewByUtteranceRef.current.delete(utteranceId);
 
@@ -554,12 +555,18 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       }
     }
 
+    // Live Translate is a low-latency preview, not the final-translation
+    // authority. Only a completed Live target suppresses the normal translate
+    // fallback; an interim preview can stay visible while the missing final is
+    // resolved through /api/translate.
+    const missingFinalTargetsAtBoundary = allowedTargets.filter((target) => !settled?.get(target)?.trim());
+
     const newItem: ConversationItem = {
       id: utteranceId || crypto.randomUUID(),
       original: normalized,
       originalRaw: normalized,
       translated: (activeTarget && translations[activeTarget]?.text) || '',
-      isTranslating: false,
+      isTranslating: missingFinalTargetsAtBoundary.length > 0,
       sourceKind: 'voice',
       sourceLanguage,
       translations,
@@ -572,8 +579,51 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setHistory((prev) => [...prev, newItem]);
     interviewRowIdsRef.current.add(newItem.id);
     interviewTargetsByUtteranceRef.current.delete(utteranceId);
+
+    if (missingFinalTargetsAtBoundary.length > 0) {
+      // Keep an entry present only while this row is inside the final grace
+      // window. This lets late Live finals suppress fallback without allowing
+      // very-late callbacks to recreate per-utterance bookkeeping indefinitely.
+      if (!interviewFinalByUtteranceRef.current.has(utteranceId)) {
+        interviewFinalByUtteranceRef.current.set(utteranceId, new Map());
+      }
+      window.setTimeout(() => {
+        if (!interviewRowIdsRef.current.has(newItem.id)) {
+          interviewFinalByUtteranceRef.current.delete(utteranceId);
+          return;
+        }
+
+        const latestSettled = interviewFinalByUtteranceRef.current.get(utteranceId);
+        const missingFinalTargets = allowedTargets.filter((target) => !latestSettled?.get(target)?.trim());
+        interviewFinalByUtteranceRef.current.delete(utteranceId);
+
+        if (missingFinalTargets.length === 0) {
+          setHistory((prev) => prev.map((item) =>
+            item.id === newItem.id ? { ...item, isTranslating: false } : item
+          ));
+          return;
+        }
+
+        const sourceLang = SUPPORTED_LANGUAGES.find((language) => language.code === sourceLanguage) || interviewAuto;
+        const finalPolicy: InterviewLanguagePolicy = {
+          targets: missingFinalTargets,
+          pairRules: interviewPolicyRef.current.pairRules,
+        };
+        void translateToTargets(
+          normalized,
+          newItem.id,
+          sourceLang,
+          finalPolicy,
+          interviewGlossary,
+          sourceLanguage,
+        );
+      }, INTERVIEW_FINAL_TRANSLATION_GRACE_MS);
+    } else {
+      interviewFinalByUtteranceRef.current.delete(utteranceId);
+    }
+
     setCurrentTurnText('');
-  }, [setHistory]);
+  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
 
   const onInterviewInterimTranscript = useCallback((text: string) => {
     const sourceLanguage = detectSourceLanguageHeuristic(text);
@@ -597,6 +647,16 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const onInterviewLiveTranslation = useCallback(({ utteranceId, target, text, isFinal }: LiveTranslationUpdate) => {
     const trimmed = text.trim();
     if (!trimmed) return;
+
+    if (isFinal) {
+      const rowAlreadyExists = interviewRowIdsRef.current.has(utteranceId);
+      const finalGracePending = interviewFinalByUtteranceRef.current.has(utteranceId);
+      if (!rowAlreadyExists || finalGracePending) {
+        const settled = interviewFinalByUtteranceRef.current.get(utteranceId) || new Map<string, string>();
+        settled.set(target, trimmed);
+        interviewFinalByUtteranceRef.current.set(utteranceId, settled);
+      }
+    }
 
     // The row already exists: the translation of a frozen utterance may keep
     // streaming in, and it can only ever touch its own row.
@@ -627,9 +687,6 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
 
     if (isFinal) {
       // The translation may settle before its transcript row is created.
-      const settled = interviewFinalByUtteranceRef.current.get(utteranceId) || new Map<string, string>();
-      settled.set(target, trimmed);
-      interviewFinalByUtteranceRef.current.set(utteranceId, settled);
       if (utteranceId === interviewUtteranceIdRef.current && target === interviewActiveTargetRef.current) {
         interviewLivePreviewRef.current = '';
         setInterviewLivePreview('');
@@ -1035,6 +1092,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         onLanguageManualSelect={() => { isLangAutoRef.current = false; }}
         onSwapLanguages={handleSwapLanguages}
         uiLangCode={uiLangCode}
+        interviewMode={interviewMode}
+        interviewTargetBadge={formatTargetBadge(interviewTargets)}
       />
 
       <ConversationList
