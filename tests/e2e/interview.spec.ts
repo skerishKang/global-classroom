@@ -28,6 +28,8 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     const composer = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
     await expect(composer).toBeVisible();
     await expect(page.getByRole('button', { name: '키보드 입력' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '용어집' })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: '인터뷰 설정' })).toBeVisible();
     const composerBox = await composer.boundingBox();
     expect(composerBox).not.toBeNull();
     const viewport = page.viewportSize() || { width: 1280, height: 720 };
@@ -93,8 +95,11 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     });
 
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '용어집' }).click();
+    await expect(page.getByRole('button', { name: '용어집' })).toHaveCount(0);
+    await page.getByRole('button', { name: '인터뷰 설정' }).click();
+    await expect(page.getByText('인터뷰 통역 · 용어집')).toBeVisible();
     await page.getByPlaceholder('파디엠 = Padiem\n컨트롤 플레인 = Control Plane').fill('파디엠 = Padiem');
+    await page.locator('div.fixed.inset-0').getByRole('button').first().click();
 
     const textarea = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
     await textarea.fill('저는 파디엠을 만들었습니다.');
