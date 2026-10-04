@@ -256,7 +256,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 </button>
                             </div>
                             <p className="text-[10px] text-gray-400 leading-relaxed">
-                                준비된 무료 할당량이 소진될 경우, 본인의 API 키를 입력하여 계속 사용할 수 있습니다. 입력된 키는 본인의 브라우저에만 저장됩니다.
+                                준비된 무료 할당량이 소진될 경우, 본인의 API 키를 입력하여 계속 사용할 수 있습니다. 입력된 키는 이 브라우저에 저장됩니다. 기능 사용 시 API 요청 처리를 위해 서버 함수에 전달될 수 있지만, Firestore 사용자 프로필에는 저장되지 않습니다.
                             </p>
                         </div>
                         <div className="space-y-2">
