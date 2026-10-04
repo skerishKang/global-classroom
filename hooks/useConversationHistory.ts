@@ -1,9 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ConversationItem, ConversationSession } from '../types';
-import { loadSessions, saveSessions } from '../utils/localStorage';
+import {
+    loadSessions,
+    saveSessions,
+    pruneSessionsForRetention,
+    createSaveFailureGate,
+    SaveFailureGate,
+    SaveSessionsFailureReason,
+} from '../utils/localStorage';
 import { HISTORY_RENDER_STEP } from '../constants';
 
-export function useConversationHistory() {
+interface UseConversationHistoryProps {
+    // Called when persisting sessions fails so the app can surface it (#39).
+    onSaveFailure?: (reason: SaveSessionsFailureReason) => void;
+}
+
+export function useConversationHistory({ onSaveFailure }: UseConversationHistoryProps = {}) {
     const [history, setHistory] = useState<ConversationItem[]>([]);
     const [historyRenderLimit, setHistoryRenderLimit] = useState<number>(HISTORY_RENDER_STEP);
     const [sessions, setSessions] = useState<ConversationSession[]>([]);
@@ -11,6 +23,13 @@ export function useConversationHistory() {
     const [isSessionsReady, setIsSessionsReady] = useState(false);
     const [isOutputOnly, setIsOutputOnly] = useState(false);
     const isHydratingHistoryRef = useRef(false);
+    // Latest-callback ref: the app may pass an inline arrow, and the save
+    // effect must not re-run (and re-save) just because its identity changed.
+    const onSaveFailureRef = useRef(onSaveFailure);
+    const saveFailureGateRef = useRef<SaveFailureGate | null>(null);
+    if (!saveFailureGateRef.current) {
+        saveFailureGateRef.current = createSaveFailureGate();
+    }
 
     // 1. Load sessions on mount
     useEffect(() => {
@@ -101,10 +120,34 @@ export function useConversationHistory() {
         });
     }, [history, currentSessionId, isSessionsReady]);
 
+    // Track the latest failure callback without re-triggering saves.
+    useEffect(() => {
+        onSaveFailureRef.current = onSaveFailure;
+    }, [onSaveFailure]);
+
     useEffect(() => {
         if (!isSessionsReady) return;
-        saveSessions(sessions);
-    }, [sessions, isSessionsReady]);
+
+        // Bound local growth: prune the oldest inactive sessions first; the
+        // current session is never removed by retention (#39).
+        const pruned = pruneSessionsForRetention(sessions, currentSessionId);
+        if (pruned !== sessions) {
+            // Functional update so concurrent session updates are preserved;
+            // the resulting state change triggers the save below.
+            setSessions(prev => pruneSessionsForRetention(prev, currentSessionId));
+            return;
+        }
+
+        const result = saveSessions(sessions);
+        if (result.ok === false) {
+            console.error('Failed to persist conversation sessions', result.reason);
+            // Surface the failure at most once per interval so repeated state
+            // updates cannot flood the user with toasts (#39).
+            if (saveFailureGateRef.current?.shouldNotify(result.reason)) {
+                onSaveFailureRef.current?.(result.reason);
+            }
+        }
+    }, [sessions, isSessionsReady, currentSessionId]);
 
     // 3. Methods
     const handleNewConversation = useCallback(() => {
