@@ -51,6 +51,12 @@ export interface ConversationItem {
   /** Which translation key to display when several targets exist. */
   activeTarget?: string;
   audioBase64?: string; // Cache for TTS audio (in-memory)
+  /**
+   * Provenance of `audioBase64`: `<target>:<textHash>:<voice>:<model>` of the
+   * translation variant it was generated for. Audio without a provenance that
+   * matches the currently displayed variant must never be replayed (#34).
+   */
+  audioProvenance?: string;
   audioUrl?: string; // Firebase Storage URL
   updatedAt?: number;
   ttsStatus?: 'loading' | 'playing' | 'paused' | 'error';
