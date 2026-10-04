@@ -95,6 +95,43 @@ describe('service worker cache policy (#31)', () => {
     expect(policy.resolveRequestStrategy(documentRequest, LOCATION)).toBe('network-first-document');
   });
 
+  test('security conditions are evaluated before the document/navigation branch', () => {
+    // AUTH_DOCUMENT: an authenticated navigation must never reach the document
+    // cache refresh, so it is network-only.
+    const authedNavigation = plainGet(`${ORIGIN}/interview`, {
+      mode: 'navigate',
+      destination: 'document',
+      headers: new Headers({ Authorization: 'Bearer fixture' }),
+    });
+    expect(policy.resolveRequestStrategy(authedNavigation, LOCATION)).toBe('network-only');
+
+    // Same verdict when only destination=document marks the document.
+    const authedDocument = plainGet(`${ORIGIN}/`, {
+      destination: 'document',
+      headers: new Headers({ Authorization: 'Bearer fixture' }),
+    });
+    expect(policy.resolveRequestStrategy(authedDocument, LOCATION)).toBe('network-only');
+
+    // CROSS_ORIGIN_DOCUMENT: a document from another origin is never document-cached.
+    const crossOriginDocument = plainGet('https://example-other-origin.test/page', {
+      destination: 'document',
+    });
+    expect(policy.resolveRequestStrategy(crossOriginDocument, LOCATION)).toBe('network-only');
+
+    // The app API boundary also outranks the document branch.
+    const apiDocument = plainGet(`${ORIGIN}/api/translate`, { destination: 'document' });
+    expect(policy.resolveRequestStrategy(apiDocument, LOCATION)).toBe('network-only');
+
+    // NORMAL_SAME_ORIGIN_DOCUMENT: with every security check passed, a clean
+    // same-origin document keeps the network-first offline semantics — the
+    // only case allowed to.
+    const normalDocument = plainGet(`${ORIGIN}/interview`, {
+      mode: 'navigate',
+      destination: 'document',
+    });
+    expect(policy.resolveRequestStrategy(normalDocument, LOCATION)).toBe('network-first-document');
+  });
+
   test('non-GET and range requests are never cache eligible', () => {
     expect(
       policy.isCacheEligibleRequest({ method: 'POST', url: `${ORIGIN}/api/translate`, headers: new Headers() }, LOCATION)

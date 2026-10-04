@@ -43,17 +43,17 @@
    * Accepts a real Request or any request-like object (method/url/mode/
    * destination/headers) so the policy can be tested without a worker.
    *
+   * Precedence contract (#31): security conditions are evaluated BEFORE the
+   * document/navigation branch, so an authenticated or cross-origin document
+   * can never reach the document cache refresh. Offline convenience for
+   * documents only applies after every security check passes.
+   *
    * @returns {'network-first-document'|'cache-first-static'|'network-only'}
    */
   function resolveRequestStrategy(request, location) {
     if (!request) return 'network-only';
     var method = typeof request.method === 'string' ? request.method.toUpperCase() : '';
     if (method !== 'GET') return 'network-only';
-
-    // HTML/navigation keeps its network-first semantics (offline fallback).
-    if (request.mode === 'navigate' || request.destination === 'document') {
-      return 'network-first-document';
-    }
 
     var headers = requestHeaders(request);
     // Authenticated and range (partial) requests are never cacheable.
@@ -73,9 +73,16 @@
     // Defense in depth: the static allowlist already excludes the API, but the
     // app API boundary is called out explicitly.
     if (isAppApiPath(url.pathname)) return 'network-only';
-    if (!isReviewedStaticPath(url.pathname)) return 'network-only';
 
-    return 'cache-first-static';
+    // Only after every security check passed may a document/navigation request
+    // keep its network-first (offline fallback) semantics.
+    if (request.mode === 'navigate' || request.destination === 'document') {
+      return 'network-first-document';
+    }
+
+    if (isReviewedStaticPath(url.pathname)) return 'cache-first-static';
+
+    return 'network-only';
   }
 
   function isCacheEligibleRequest(request, location) {
