@@ -164,7 +164,22 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     loadSession,
     deleteSession,
     handleNewConversation
-  } = useConversationHistory();
+  } = useConversationHistory({
+    // Surface local-history write failures as an error toast (#39).
+    // The callback only runs after a failed save, by which point `uiLangCode`
+    // (declared below) is initialized.
+    onSaveFailure: (reason) => {
+      const isKo = uiLangCode === 'ko';
+      const message = reason === 'quota'
+        ? (isKo
+            ? '브라우저 저장 공간이 부족해 일부 대화 기록을 저장하지 못했습니다.'
+            : 'Not enough browser storage space — some conversation history was not saved.')
+        : (isKo
+            ? '일부 대화 기록을 저장하지 못했습니다. 브라우저 저장 설정을 확인해 주세요.'
+            : 'Some conversation history could not be saved. Check your browser storage settings.');
+      enqueueToast(message, 'error');
+    },
+  });
 
   // --- UI Settings ---
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
