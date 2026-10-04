@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AppSettings } from '../types';
-import { TRANSLATION_MODELS, DEFAULT_TRANSLATION_MODEL } from '../constants';
+import { TRANSLATION_MODELS, DEFAULT_TRANSLATION_MODEL, SUPPORTED_LANGUAGES } from '../constants';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -11,6 +11,10 @@ interface SettingsModalProps {
     interviewMode?: boolean;
     interviewGlossaryText?: string;
     onInterviewGlossaryChange?: (value: string) => void;
+    interviewTargets?: string[];
+    onInterviewTargetsChange?: (targets: string[]) => void;
+    interviewPairRulesText?: string;
+    onInterviewPairRulesChange?: (value: string) => void;
 }
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -22,6 +26,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     interviewMode = false,
     interviewGlossaryText = '',
     onInterviewGlossaryChange,
+    interviewTargets,
+    onInterviewTargetsChange,
+    interviewPairRulesText = '',
+    onInterviewPairRulesChange,
 }) => {
     if (!isOpen) return null;
 
@@ -72,6 +80,61 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             />
                             <p className="text-[10px] text-gray-400 leading-relaxed">
                                 한 줄에 하나씩 “원문 = 원하는 번역”으로 입력합니다. 텍스트 번역/다시 번역에 적용되고, 다음 Live 전사 세션의 맞춤 어휘에도 반영됩니다.
+                            </p>
+                        </div>
+                    )}
+
+                    {interviewMode && onInterviewTargetsChange && (
+                        <div className="space-y-2">
+                            <div className="text-sm font-bold text-gray-800">인터뷰 통역 · 번역 언어</div>
+                            <div className="flex flex-wrap gap-1.5">
+                                {SUPPORTED_LANGUAGES.filter((language) => language.code !== 'auto').map((language) => {
+                                    const selected = (interviewTargets || []).includes(language.code);
+                                    const isLastSelected = selected && (interviewTargets || []).length <= 1;
+                                    return (
+                                        <button
+                                            key={language.code}
+                                            type="button"
+                                            disabled={isLastSelected}
+                                            aria-pressed={selected}
+                                            onClick={() => {
+                                                const current = interviewTargets || [];
+                                                if (selected) {
+                                                    if (isLastSelected) return;
+                                                    onInterviewTargetsChange(current.filter((code) => code !== language.code));
+                                                } else {
+                                                    onInterviewTargetsChange([...current, language.code]);
+                                                }
+                                            }}
+                                            className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-all active:scale-95 ${selected
+                                                ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
+                                                : 'border-gray-200 bg-white text-gray-500 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600'} disabled:cursor-not-allowed disabled:opacity-40`}
+                                        >
+                                            <span className="mr-1">{language.flag}</span>
+                                            {language.name}
+                                            {selected ? ' ✓' : ''}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <p className="text-[10px] text-gray-400 leading-relaxed">
+                                입력 언어는 자동 감지되고, 감지된 언어는 번역 대상에서 자동으로 제외됩니다. 기본값은 한국어 + English입니다.
+                            </p>
+                        </div>
+                    )}
+
+                    {interviewMode && onInterviewPairRulesChange && (
+                        <div className="space-y-2">
+                            <div className="text-sm font-bold text-gray-800">인터뷰 통역 · 언어쌍 규칙 (고급)</div>
+                            <textarea
+                                value={interviewPairRulesText}
+                                onChange={(event) => onInterviewPairRulesChange(event.target.value)}
+                                rows={3}
+                                placeholder={"KO -> EN\nVI -> KO"}
+                                className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-relaxed outline-none transition-all focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                            />
+                            <p className="text-[10px] text-gray-400 leading-relaxed">
+                                한 줄에 하나씩 “원문언어 → 번역언어”로 입력하면 해당 언어쌍의 번역 대상을 고정합니다. 비워 두면 선택한 번역 언어에서 원문 언어를 자동으로 제외합니다.
                             </p>
                         </div>
                     )}

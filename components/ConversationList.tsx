@@ -35,6 +35,7 @@ interface ConversationListProps {
     uiLangCode: string;
     onRetranslate?: (item: ConversationItem) => void;
     onSubmitText?: (text: string) => void;
+    onSelectTranslationTarget?: (itemId: string, target: string) => void;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -69,6 +70,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
     uiLangCode,
     onRetranslate,
     onSubmitText,
+    onSelectTranslationTarget,
 }) => {
     const [interviewDraft, setInterviewDraft] = useState('');
 
@@ -207,6 +209,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         const isEditing = editingItemId === item.id;
                         const isEditingOriginal = isEditing && editingField === 'original';
                         const isEditingTranslated = isEditing && editingField === 'translated';
+                        const translationTargets = Object.keys(item.translations || {});
 
                         if (interviewMode && !isOutputOnly) {
                             const sourceEditLabel = item.sourceKind === 'voice'
@@ -276,6 +279,27 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                             </div>
                                         ) : (
                                             <div className="flex h-full flex-col gap-3 pr-9">
+                                                {translationTargets.length > 1 && (
+                                                    <div className="flex flex-wrap items-center gap-1.5">
+                                                        {translationTargets.map((target) => (
+                                                            <button
+                                                                key={target}
+                                                                type="button"
+                                                                onClick={(event) => {
+                                                                    event.stopPropagation();
+                                                                    onSelectTranslationTarget?.(item.id, target);
+                                                                }}
+                                                                aria-pressed={item.activeTarget === target}
+                                                                title={uiLangCode === 'ko' ? '번역 언어 전환' : 'Switch translation language'}
+                                                                className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition-all ${item.activeTarget === target
+                                                                    ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
+                                                                    : 'border-indigo-200 bg-white text-indigo-600 hover:bg-indigo-50'}`}
+                                                            >
+                                                                {target}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                )}
                                                 {item.translationStale && (
                                                     <span className="w-fit rounded-full bg-amber-100 px-2 py-1 text-[10px] font-bold text-amber-700">
                                                         {uiLangCode === 'ko' ? '원문이 수정됨 · 다시 번역 권장' : 'Source edited · retranslation recommended'}

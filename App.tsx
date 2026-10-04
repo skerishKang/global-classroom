@@ -65,7 +65,18 @@ import { useStorage } from './hooks/useStorage';
 import { useTranslationService } from './hooks/useTranslationService';
 import { useToast } from './hooks/useToast';
 import { useLiveSharing } from './hooks/useLiveSharing';
-import { AppSettings, VisionNotification } from './types';
+import { AppSettings, VisionNotification, TranslationVariant } from './types';
+import {
+  detectSourceLanguageHeuristic,
+  formatTargetBadge,
+  getDefaultTargets,
+  getTargetsForSource,
+  normalizeLanguageCode,
+  parsePairRules,
+  pickActiveTarget,
+  sanitizeTargets,
+  type InterviewLanguagePolicy,
+} from './utils/interviewLanguageRouting';
 
 import {
   MicIcon,
@@ -86,9 +97,6 @@ import {
   SparklesIcon
 } from './components/Icons';
 
-const inferInterviewTarget = (text: string): 'en' | 'ko' =>
-  /[가-힣]/.test(text) ? 'en' : 'ko';
-
 export default function App() {
   const interviewModeRequested =
     typeof window !== 'undefined' &&
@@ -100,7 +108,13 @@ export default function App() {
 function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   // --- UI Translation State ---
   const [langInput, setLangInput] = useState<Language>(SUPPORTED_LANGUAGES[0]); // Default: Auto
-  const [langOutput, setLangOutput] = useState<Language>(SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1]); // Default: Vietnamese
+  // Interview mode never defaults to Vietnamese: its output is a target set
+  // ({ko, en} by default) and the detected source is excluded from it.
+  const [langOutput, setLangOutput] = useState<Language>(() => (
+    interviewMode
+      ? (SUPPORTED_LANGUAGES.find(l => l.code === 'en') || SUPPORTED_LANGUAGES[1])
+      : (SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1])
+  ));
   const [isAutoPlay, setIsAutoPlay] = useState(false);
   const [isScrollLocked, setIsScrollLocked] = useState(true);
   const [selectedVoice, setSelectedVoice] = useState<VoiceOption>(VOICE_OPTIONS[0]);
@@ -160,7 +174,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '', translationModel: DEFAULT_TRANSLATION_MODEL };
+      if (!raw) return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '', translationModel: DEFAULT_TRANSLATION_MODEL, interviewTargets: [...getDefaultTargets()] };
       const parsed = JSON.parse(raw) as Partial<AppSettings>;
 
       // 마이그레이션: gemini-2.5-flash 사용자는 flash-lite로 강제 이동 (무료 쿼터 소진 방지)
@@ -170,15 +184,28 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         console.log('[Settings Migration] Upgraded translationModel from gemini-2.5-flash to flash-lite');
       }
 
+      const storedTargets = sanitizeTargets(
+        Array.isArray(parsed.interviewTargets)
+          ? parsed.interviewTargets.filter((code): code is string => typeof code === 'string')
+          : []
+      );
       return {
         driveBackupMode: parsed.driveBackupMode === 'auto' ? 'auto' : 'manual',
         audioCacheEnabled: typeof parsed.audioCacheEnabled === 'boolean' ? parsed.audioCacheEnabled : true,
         recordOriginalEnabled: typeof parsed.recordOriginalEnabled === 'boolean' ? parsed.recordOriginalEnabled : true,
         userApiKey: typeof parsed.userApiKey === 'string' ? parsed.userApiKey : '',
         translationModel: migratedModel || DEFAULT_TRANSLATION_MODEL,
+        interviewTargets: storedTargets.length > 0 ? storedTargets : [...getDefaultTargets()],
       };
     } catch {
-      return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '', translationModel: DEFAULT_TRANSLATION_MODEL };
+      return {
+        driveBackupMode: 'manual',
+        audioCacheEnabled: true,
+        recordOriginalEnabled: true,
+        userApiKey: '',
+        translationModel: DEFAULT_TRANSLATION_MODEL,
+        interviewTargets: [...getDefaultTargets()],
+      };
     }
   });
 
@@ -222,6 +249,51 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     }
   }, [interviewGlossaryText]);
 
+  const [interviewPairRulesText, setInterviewPairRulesText] = useState<string>(() => {
+    try {
+      return localStorage.getItem('global-classroom-interview-pair-rules-v1') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('global-classroom-interview-pair-rules-v1', interviewPairRulesText);
+    } catch {
+      // localStorage may be unavailable in privacy modes.
+    }
+  }, [interviewPairRulesText]);
+
+  // --- Interview language policy: one selected target set, source excluded ---
+  const interviewTargets = useMemo<string[]>(() => {
+    const stored = sanitizeTargets(
+      Array.isArray(settings.interviewTargets)
+        ? settings.interviewTargets.filter((code): code is string => typeof code === 'string')
+        : []
+    );
+    return stored.length > 0 ? stored : [...getDefaultTargets()];
+  }, [settings.interviewTargets]);
+
+  const interviewPairRules = useMemo(
+    () => parsePairRules(interviewPairRulesText),
+    [interviewPairRulesText]
+  );
+
+  const interviewPolicy = useMemo<InterviewLanguagePolicy>(
+    () => ({ targets: interviewTargets, pairRules: interviewPairRules }),
+    [interviewTargets, interviewPairRules]
+  );
+
+  const handleInterviewTargetsChange = useCallback((next: string[]) => {
+    const sanitized = sanitizeTargets(next);
+    // An empty set cannot route anything; keep the default pair instead.
+    setSettings((prev) => ({
+      ...prev,
+      interviewTargets: sanitized.length > 0 ? sanitized : [...getDefaultTargets()],
+    }));
+  }, []);
+
   // --- UI Language Sync removed at user request ---
 
   // --- Translation Helpers ---
@@ -230,7 +302,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   // --- Custom Service: Translation & API ---
   const {
     postApi,
-    translateText
+    translateText,
+    translateToTargets
   } = useTranslationService({
     settings,
     setHistory,
@@ -431,13 +504,19 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const langOutputRef = useRef(langOutput);
   const isLangAutoRef = useRef(false);
   const interviewLivePreviewRef = useRef('');
-  const interviewTargetRef = useRef<'en' | 'ko'>('en');
+  // The translation currently displayed for the utterance in progress.
+  const interviewActiveTargetRef = useRef<string>('');
   // Live translation is keyed by the utterance it belongs to, so a delayed
   // completion can only ever land on the row that produced it.
   const interviewUtteranceIdRef = useRef<string | null>(null);
   const interviewRowIdsRef = useRef<Set<string>>(new Set());
-  const interviewPreviewByUtteranceRef = useRef<Map<string, string>>(new Map());
-  const interviewFinalByUtteranceRef = useRef<Map<string, string>>(new Map());
+  const interviewPreviewByUtteranceRef = useRef<Map<string, Map<string, string>>>(new Map());
+  const interviewFinalByUtteranceRef = useRef<Map<string, Map<string, string>>>(new Map());
+  // Per-utterance routing: which selected targets this utterance may produce.
+  // The detected source language is removed from the selected set.
+  const interviewTargetsByUtteranceRef = useRef<Map<string, readonly string[]>>(new Map());
+  const interviewPolicyRef = useRef(interviewPolicy);
+  interviewPolicyRef.current = interviewPolicy;
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -455,35 +534,64 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     interviewRowIdsRef.current = new Set();
     interviewPreviewByUtteranceRef.current = new Map();
     interviewFinalByUtteranceRef.current = new Map();
+    interviewTargetsByUtteranceRef.current = new Map();
+    interviewActiveTargetRef.current = '';
     setInterviewLiveError('');
     setInterviewLiveWarning('');
-  }, [interviewMode]);
+  }, [interviewMode, interviewAuto, interviewEnglish]);
 
   const onInterviewUtteranceStart = useCallback((utteranceId: string) => {
     interviewUtteranceIdRef.current = utteranceId;
+    // The source language is unknown until the first transcript arrives, so
+    // every selected target may produce until then.
+    interviewTargetsByUtteranceRef.current.set(utteranceId, interviewPolicyRef.current.targets);
+    interviewActiveTargetRef.current = pickActiveTarget(interviewPolicyRef.current.targets);
     interviewLivePreviewRef.current = '';
     setInterviewLivePreview('');
   }, []);
 
-  const onInterviewFinalTranscript = useCallback((text: string, utteranceId: string) => {
+  const onInterviewFinalTranscript = useCallback((
+    text: string,
+    utteranceId: string,
+    detectedLanguageCode?: string
+  ) => {
     const normalized = text.trim();
     if (!normalized) return;
 
-    interviewTargetRef.current = inferInterviewTarget(normalized);
-    const settledTranslation = interviewFinalByUtteranceRef.current.get(utteranceId);
+    // Real language identity: the transcriber's language code when it provides
+    // one, the script heuristic otherwise. Region tags are canonicalized to the
+    // base language (ko-KR -> ko) before the policy compares anything.
+    const sourceLanguage = normalizeLanguageCode(
+      detectedLanguageCode && detectedLanguageCode !== 'auto'
+        ? detectedLanguageCode
+        : detectSourceLanguageHeuristic(normalized)
+    );
+    const allowedTargets = getTargetsForSource(sourceLanguage, interviewPolicyRef.current);
+    const activeTarget = pickActiveTarget(allowedTargets);
+
+    const settled = interviewFinalByUtteranceRef.current.get(utteranceId);
     interviewFinalByUtteranceRef.current.delete(utteranceId);
-    const frozenLiveTranslation = settledTranslation
-      || interviewPreviewByUtteranceRef.current.get(utteranceId)
-      || '';
+    const previewed = interviewPreviewByUtteranceRef.current.get(utteranceId);
     interviewPreviewByUtteranceRef.current.delete(utteranceId);
+
+    const translations: Record<string, TranslationVariant> = {};
+    for (const target of allowedTargets) {
+      const liveText = settled?.get(target) || previewed?.get(target) || '';
+      if (liveText) {
+        translations[target] = { text: liveText, kind: 'live', stale: false, updatedAt: Date.now() };
+      }
+    }
 
     const newItem: ConversationItem = {
       id: utteranceId || crypto.randomUUID(),
       original: normalized,
       originalRaw: normalized,
-      translated: frozenLiveTranslation,
+      translated: (activeTarget && translations[activeTarget]?.text) || '',
       isTranslating: false,
       sourceKind: 'voice',
+      sourceLanguage,
+      translations,
+      activeTarget: activeTarget || '',
       translationKind: 'live',
       translationStale: false,
       timestamp: Date.now(),
@@ -491,19 +599,26 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
 
     setHistory((prev) => [...prev, newItem]);
     interviewRowIdsRef.current.add(newItem.id);
+    interviewTargetsByUtteranceRef.current.delete(utteranceId);
     setCurrentTurnText('');
   }, [setHistory]);
 
   const onInterviewInterimTranscript = useCallback((text: string) => {
-    const nextTarget = inferInterviewTarget(text);
-    if (nextTarget !== interviewTargetRef.current) {
+    const sourceLanguage = detectSourceLanguageHeuristic(text);
+    const allowedTargets = getTargetsForSource(sourceLanguage, interviewPolicyRef.current);
+    const nextActiveTarget = pickActiveTarget(allowedTargets);
+    if (nextActiveTarget !== interviewActiveTargetRef.current) {
       // A language switch starts a different translation stream; drop the
-      // preview that belongs to the abandoned target.
+      // previews that belong to the abandoned target.
       interviewLivePreviewRef.current = '';
-      interviewPreviewByUtteranceRef.current.clear();
+      interviewPreviewByUtteranceRef.current = new Map();
       setInterviewLivePreview('');
     }
-    interviewTargetRef.current = nextTarget;
+    interviewActiveTargetRef.current = nextActiveTarget;
+    const utteranceId = interviewUtteranceIdRef.current;
+    if (utteranceId) {
+      interviewTargetsByUtteranceRef.current.set(utteranceId, allowedTargets);
+    }
     setCurrentTurnText(text);
   }, []);
 
@@ -514,20 +629,36 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     // The row already exists: the translation of a frozen utterance may keep
     // streaming in, and it can only ever touch its own row.
     if (interviewRowIdsRef.current.has(utteranceId)) {
-      setHistory((prev) => prev.map((item) =>
-        item.id === utteranceId && item.translationKind === 'live'
-          ? { ...item, translated: trimmed, translationStale: false }
-          : item
-      ));
+      setHistory((prev) => prev.map((item) => {
+        if (item.id !== utteranceId || item.translationKind !== 'live') return item;
+        // The source language never becomes a translation of itself.
+        if (item.sourceLanguage && target === item.sourceLanguage) return item;
+        const translations: Record<string, TranslationVariant> = {
+          ...(item.translations || {}),
+          [target]: { text: trimmed, kind: 'live', stale: false, updatedAt: Date.now() },
+        };
+        const activeTarget = pickActiveTarget(Object.keys(translations), item.activeTarget);
+        return {
+          ...item,
+          translations,
+          activeTarget,
+          translated: (activeTarget && translations[activeTarget]?.text) || item.translated,
+          translationStale: false,
+        };
+      }));
       return;
     }
 
-    if (target !== interviewTargetRef.current) return;
+    // Before the row exists the utterance's routed targets decide what lands.
+    const allowedTargets = interviewTargetsByUtteranceRef.current.get(utteranceId);
+    if (allowedTargets && !allowedTargets.includes(target)) return;
 
     if (isFinal) {
       // The translation may settle before its transcript row is created.
-      interviewFinalByUtteranceRef.current.set(utteranceId, trimmed);
-      if (utteranceId === interviewUtteranceIdRef.current) {
+      const settled = interviewFinalByUtteranceRef.current.get(utteranceId) || new Map<string, string>();
+      settled.set(target, trimmed);
+      interviewFinalByUtteranceRef.current.set(utteranceId, settled);
+      if (utteranceId === interviewUtteranceIdRef.current && target === interviewActiveTargetRef.current) {
         interviewLivePreviewRef.current = '';
         setInterviewLivePreview('');
       }
@@ -535,7 +666,10 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     }
 
     if (utteranceId !== interviewUtteranceIdRef.current) return;
-    interviewPreviewByUtteranceRef.current.set(utteranceId, trimmed);
+    const previews = interviewPreviewByUtteranceRef.current.get(utteranceId) || new Map<string, string>();
+    previews.set(target, trimmed);
+    interviewPreviewByUtteranceRef.current.set(utteranceId, previews);
+    if (target !== interviewActiveTargetRef.current) return;
     interviewLivePreviewRef.current = trimmed;
     setInterviewLivePreview(trimmed);
   }, [setHistory]);
@@ -550,7 +684,19 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     onFinalTranscript: onInterviewFinalTranscript,
     onUtteranceStart: onInterviewUtteranceStart,
     onLiveTranslation: onInterviewLiveTranslation,
+    translationTargets: interviewTargets,
     glossaryTerms: interviewGlossaryTerms,
+    // Fallback transcribers (browser/Groq) report no language code; reuse the
+    // text path's detector so voice routing uses one authoritative source.
+    detectLanguage: async (text: string) => {
+      try {
+        const detected = await postApi<{ code?: string }>('detect-language', { text });
+        return typeof detected?.code === 'string' ? detected.code : undefined;
+      } catch (detectionError) {
+        console.warn('Voice source-language detection failed', detectionError);
+        return undefined;
+      }
+    },
     onWarning: (message) => setInterviewLiveWarning(message),
     onFatalError: (message) => setInterviewLiveError(message),
   });
@@ -573,6 +719,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       interviewRowIdsRef.current = new Set();
       interviewPreviewByUtteranceRef.current = new Map();
       interviewFinalByUtteranceRef.current = new Map();
+      interviewTargetsByUtteranceRef.current = new Map();
+      interviewActiveTargetRef.current = '';
       interviewLivePreviewRef.current = '';
       setCurrentTurnText('');
       setInterviewLivePreview('');
@@ -615,8 +763,10 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       timestamp: Date.now(),
     };
     setHistory((prev) => [...prev, newItem]);
-    void translateText(text, newItem.id, interviewAuto, interviewEnglish, interviewGlossary);
-  }, [interviewAuto, interviewEnglish, interviewGlossary, setHistory, translateText]);
+    // Voice and text share one routing policy: detect the source, then
+    // translate into every selected target except the source language.
+    void translateToTargets(text, newItem.id, interviewAuto, interviewPolicyRef.current, interviewGlossary);
+  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
 
   const handleInterviewRetranslate = useCallback((item: ConversationItem) => {
     setHistory((prev) => prev.map((entry) =>
@@ -624,8 +774,34 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         ? { ...entry, isTranslating: true }
         : entry
     ));
-    void translateText(item.original, item.id, interviewAuto, interviewEnglish, interviewGlossary);
-  }, [interviewAuto, interviewEnglish, interviewGlossary, setHistory, translateText]);
+    const sourceLanguage = item.sourceLanguage
+      ? (SUPPORTED_LANGUAGES.find((language) => language.code === item.sourceLanguage) || interviewAuto)
+      : interviewAuto;
+    void translateToTargets(
+      item.original,
+      item.id,
+      sourceLanguage,
+      interviewPolicyRef.current,
+      interviewGlossary,
+      item.sourceLanguage
+    );
+  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
+
+  const handleInterviewSelectTarget = useCallback((itemId: string, target: string) => {
+    setHistory((prev) => prev.map((item) => {
+      if (item.id !== itemId) return item;
+      const variant = item.translations?.[target];
+      if (!variant) return item;
+      return {
+        ...item,
+        activeTarget: target,
+        translated: variant.text,
+        translationKind: variant.kind || 'manual',
+        translationStale: Boolean(variant.stale),
+        updatedAt: Date.now(),
+      };
+    }));
+  }, [setHistory]);
 
   // --- Editing State ---
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -713,10 +889,14 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       handleNewConversation();
       setCurrentTurnText('');
       setLangInput(SUPPORTED_LANGUAGES[0]); // Reset to Auto
-      setLangOutput(SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1]); // Reset to Vietnamese
+      // Interview mode keeps its automatic selected-target routing, so a new
+      // conversation must never reset the output to one fixed language.
+      setLangOutput(interviewMode
+        ? (SUPPORTED_LANGUAGES.find(l => l.code === 'en') || SUPPORTED_LANGUAGES[1])
+        : (SUPPORTED_LANGUAGES.find(l => l.code === 'vi') || SUPPORTED_LANGUAGES[1]));
       enqueueToast(uiLangCode === 'ko' ? '새 대화가 시작되었습니다.' : 'New conversation started.', 'success');
     }
-  }, [history, handleNewConversation, uiLangCode, enqueueToast]);
+  }, [history, handleNewConversation, interviewMode, uiLangCode, enqueueToast]);
 
   const handleSummarize = async () => {
     if (history.length < 2) {
@@ -856,6 +1036,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         onNewConversation={handleNewConversationAction}
         interviewMode={interviewMode}
         interviewBackend={interviewBackend}
+        interviewTargetBadge={formatTargetBadge(interviewTargets)}
         onToggleInterviewMode={() => {
           const url = new URL(window.location.href);
           if (interviewMode) url.searchParams.delete('mode');
@@ -924,6 +1105,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         uiLangCode={uiLangCode}
         onRetranslate={interviewMode ? handleInterviewRetranslate : undefined}
         onSubmitText={interviewMode ? handleInterviewTextSubmit : undefined}
+        onSelectTranslationTarget={interviewMode ? handleInterviewSelectTarget : undefined}
       />
 
       <BottomControls
@@ -1025,6 +1207,10 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         interviewMode={interviewMode}
         interviewGlossaryText={interviewGlossaryText}
         onInterviewGlossaryChange={setInterviewGlossaryText}
+        interviewTargets={interviewTargets}
+        onInterviewTargetsChange={handleInterviewTargetsChange}
+        interviewPairRulesText={interviewPairRulesText}
+        onInterviewPairRulesChange={setInterviewPairRulesText}
       />
 
       <ClassroomModal

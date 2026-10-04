@@ -1,6 +1,11 @@
 import React, { useCallback, useRef } from 'react';
-import { Language, ConversationItem, AppSettings, GlossaryEntry } from '../types';
+import { Language, ConversationItem, AppSettings, GlossaryEntry, TranslationVariant } from '../types';
 import { SUPPORTED_LANGUAGES } from '../constants';
+import {
+    getTargetsForSource,
+    normalizeLanguageCode,
+    type InterviewLanguagePolicy,
+} from '../utils/interviewLanguageRouting';
 
 interface UseTranslationServiceProps {
     settings: AppSettings;
@@ -130,8 +135,122 @@ export function useTranslationService({
     };
 
 
+    //
+    // Interview mode: one utterance, several target languages. The detected
+    // source language is removed from the requested target set before any
+    // request is made, and every result is stored as its own variant so the
+    // row can switch the displayed language without re-translating.
+    //
+    const translateToTargets = async (
+        text: string,
+        id: string,
+        fromLang: Language,
+        policy: InterviewLanguagePolicy,
+        glossary: GlossaryEntry[] = [],
+        detectedCodeOverride?: string
+    ) => {
+        const uniqueTargets = Array.from(new Set(policy.targets.filter((code) => code && code !== 'auto')));
+        if (uniqueTargets.length === 0) {
+            setHistory(prev => prev.map(item => item.id === id ? { ...item, isTranslating: false } : item));
+            return;
+        }
+        if (pendingIdsRef.current.has(id)) return;
+        pendingIdsRef.current.add(id);
+        try {
+            // Authoritative source identity for text input; a caller that already
+            // knows the language (e.g. retranslation) passes it via override.
+            let detectedCode = normalizeLanguageCode(detectedCodeOverride || fromLang.code);
+            if (fromLang.code === 'auto' && !detectedCodeOverride) {
+                try {
+                    const detectRes = await postApi<{ code: string }>('detect-language', { text });
+                    detectedCode = normalizeLanguageCode(detectRes.code) || detectedCode;
+                } catch (de) {
+                    console.error('Auto detection failed, falling back to the input language', de);
+                }
+            }
+            const sourceLang = SUPPORTED_LANGUAGES.find(l => l.code === detectedCode) || fromLang;
+
+            // Routing policy: explicit pair rules win when they name the source;
+            // otherwise the detected source is excluded from the selected set.
+            const effectiveTargets = getTargetsForSource(detectedCode, {
+                targets: uniqueTargets,
+                pairRules: policy.pairRules,
+            });
+            if (effectiveTargets.length === 0) {
+                setHistory(prev => prev.map(item => item.id === id
+                    ? { ...item, isTranslating: false, sourceLanguage: sourceLang.code }
+                    : item
+                ));
+                return;
+            }
+
+            const results = await Promise.all(effectiveTargets.map(async (targetCode) => {
+                const targetLang = SUPPORTED_LANGUAGES.find(l => l.code === targetCode);
+                if (!targetLang) return null;
+                try {
+                    const data = await postApi<{ translated: string }>('translate', {
+                        text,
+                        from: sourceLang.name,
+                        to: targetLang.name,
+                        model: MODEL_TRANSLATE,
+                        glossary,
+                    });
+                    return { targetCode, translated: data.translated?.trim() || '', error: null as any };
+                } catch (err: any) {
+                    return { targetCode, translated: '', error: err as any };
+                }
+            }));
+
+            let quotaDetail = '';
+            setHistory(prev => prev.map(item => {
+                if (item.id !== id) return item;
+                const translations: Record<string, TranslationVariant> = { ...(item.translations || {}) };
+                for (const result of results) {
+                    if (!result) continue;
+                    if (result.error) {
+                        const msg = typeof result.error?.message === 'string' ? result.error.message : '';
+                        const detail = typeof result.error?.detail === 'string' ? result.error.detail : '';
+                        if (msg.includes('429') || msg.includes('RESOURCE_EXHAUSTED') || detail.includes('429') || detail.includes('RESOURCE_EXHAUSTED')) {
+                            quotaDetail = `${msg} ${detail}`.trim();
+                        }
+                        translations[result.targetCode] = { text: '번역 오류', kind: 'manual', stale: false, updatedAt: Date.now() };
+                        continue;
+                    }
+                    translations[result.targetCode] = { text: result.translated, kind: 'manual', stale: false, updatedAt: Date.now() };
+                }
+                const activeTarget = effectiveTargets.find(code => translations[code]?.text)
+                    || effectiveTargets[0]
+                    || item.activeTarget
+                    || '';
+                return {
+                    ...item,
+                    translations,
+                    sourceLanguage: sourceLang.code,
+                    activeTarget,
+                    translated: (activeTarget && translations[activeTarget]?.text) || item.translated,
+                    isTranslating: false,
+                    translationKind: 'manual',
+                    translationStale: false,
+                };
+            }));
+
+            if (quotaDetail && onQuotaExhausted) {
+                onQuotaExhausted(quotaDetail);
+            }
+            if (isAutoPlay) {
+                const primary = results.find(result => result && !result.error);
+                if (primary?.translated) {
+                    playTTS(primary.translated, id);
+                }
+            }
+        } finally {
+            pendingIdsRef.current.delete(id);
+        }
+    };
+
     return {
         postApi,
-        translateText
+        translateText,
+        translateToTargets
     };
 }
