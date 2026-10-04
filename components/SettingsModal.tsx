@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { AppSettings } from '../types';
 import { TRANSLATION_MODELS, DEFAULT_TRANSLATION_MODEL, SUPPORTED_LANGUAGES } from '../constants';
+import { MIN_INTERVIEW_TARGETS } from '../utils/interviewLanguageRouting';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -90,17 +91,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                             <div className="flex flex-wrap gap-1.5">
                                 {SUPPORTED_LANGUAGES.filter((language) => language.code !== 'auto').map((language) => {
                                     const selected = (interviewTargets || []).includes(language.code);
-                                    const isLastSelected = selected && (interviewTargets || []).length <= 1;
+                                    const isMinimumSelection = selected && (interviewTargets || []).length <= MIN_INTERVIEW_TARGETS;
                                     return (
                                         <button
                                             key={language.code}
                                             type="button"
-                                            disabled={isLastSelected}
+                                            disabled={isMinimumSelection}
                                             aria-pressed={selected}
                                             onClick={() => {
                                                 const current = interviewTargets || [];
                                                 if (selected) {
-                                                    if (isLastSelected) return;
+                                                    if (isMinimumSelection) return;
                                                     onInterviewTargetsChange(current.filter((code) => code !== language.code));
                                                 } else {
                                                     onInterviewTargetsChange([...current, language.code]);
@@ -118,7 +119,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 })}
                             </div>
                             <p className="text-[10px] text-gray-400 leading-relaxed">
-                                입력 언어는 자동 감지되고, 감지된 언어는 번역 대상에서 자동으로 제외됩니다. 기본값은 한국어 + English입니다.
+                                입력 언어는 자동 감지되고, 감지된 언어는 번역 대상에서 자동으로 제외됩니다. 양방향 통역을 위해 최소 2개 언어를 유지하며 기본값은 한국어 + English입니다.
                             </p>
                         </div>
                     )}

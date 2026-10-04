@@ -26,9 +26,22 @@ export interface InterviewLanguagePolicy {
 }
 
 const DEFAULT_INTERVIEW_TARGETS: readonly TranslationTarget[] = ['ko', 'en'];
+export const MIN_INTERVIEW_TARGETS = 2;
 
 export function getDefaultTargets(): readonly TranslationTarget[] {
   return DEFAULT_INTERVIEW_TARGETS;
+}
+
+/**
+ * Interview mode is conversational: fewer than two targets can collapse to
+ * zero outputs when the detected source equals the only selected target.
+ * Recover legacy/invalid one-target state to the default bidirectional pair.
+ */
+export function normalizeInterviewTargets(targets: readonly TranslationTarget[]): TranslationTarget[] {
+  const sanitized = sanitizeTargets(targets);
+  return sanitized.length >= MIN_INTERVIEW_TARGETS
+    ? sanitized
+    : [...DEFAULT_INTERVIEW_TARGETS];
 }
 
 /**
