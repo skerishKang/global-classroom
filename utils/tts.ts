@@ -59,7 +59,12 @@ const splitTextForTts = (input: string): string[] => {
     return chunks;
 };
 
-export const generateTtsBase64 = async (text: string, voiceName: string, model: string): Promise<string | null> => {
+export const generateTtsBase64 = async (
+    text: string,
+    voiceName: string,
+    model: string,
+    userApiKey?: string,
+): Promise<string | null> => {
     try {
         const normalized = String(text || '').replace(/\s+/g, ' ').trim();
         if (!normalized) return null;
@@ -68,9 +73,16 @@ export const generateTtsBase64 = async (text: string, voiceName: string, model: 
         const pcmChunks: Uint8Array[] = [];
 
         for (const chunk of chunks) {
+            // Key policy parity with the in-app TTS path (#32/#35): a personal
+            // key set in the browser travels as x-user-api-key; without one the
+            // server env fallback applies.
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (userApiKey) {
+                headers['x-user-api-key'] = userApiKey;
+            }
             const res = await fetch('/api/tts', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers,
                 body: JSON.stringify({ text: chunk, voiceName, model }),
             });
             const json = await res.json().catch(() => ({}));
