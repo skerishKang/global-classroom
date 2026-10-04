@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { arrayBufferToBase64, float32ToInt16 } from '../utils/audioUtils';
+import { InterviewTranslationLifecycle } from '../utils/interviewTranslationLifecycle';
 
 export type InterviewLiveStatus = 'idle' | 'connecting' | 'live' | 'error';
 
@@ -8,8 +9,8 @@ type LiveTranslationTarget = 'en' | 'ko';
 
 type UseInterviewLiveOptions = {
   onInterimTranscript: (text: string) => void;
-  onFinalTranscript: (text: string) => void;
-  onLiveTranslation: (target: LiveTranslationTarget, text: string, isFinal: boolean) => void;
+  onFinalTranscript: (text: string, translationGeneration?: number) => void;
+  onLiveTranslation: (target: LiveTranslationTarget, text: string, isFinal: boolean, generation: number) => void;
   glossaryTerms?: string[];
   onWarning?: (message: string) => void;
   onFatalError?: (message: string) => void;
@@ -17,6 +18,7 @@ type UseInterviewLiveOptions = {
 
 const TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live';
 const TRANSLATE_MODEL = 'gemini-3.5-live-translate-preview';
+const TRANSLATION_TARGETS: readonly LiveTranslationTarget[] = ['en', 'ko'];
 
 const CUSTOM_VOCABULARY = [
   'Padiem',
@@ -105,10 +107,11 @@ export function useInterviewLive({
   const inputContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const transcribeSessionRef = useRef<any>(null);
-  const translateEnSessionRef = useRef<any>(null);
-  const translateKoSessionRef = useRef<any>(null);
-  const enPreviewRef = useRef('');
-  const koPreviewRef = useRef('');
+  const translationLifecycleRef = useRef(
+    new InterviewTranslationLifecycle<LiveTranslationTarget>(TRANSLATION_TARGETS)
+  );
+  const retiringTranslationTimersRef = useRef<number[]>([]);
+  const retiringTranslationSessionsRef = useRef<Set<any>>(new Set());
 
   const closeSession = useCallback((session: any) => {
     try {
@@ -165,13 +168,17 @@ export function useInterviewLive({
     }
 
     closeSession(transcribeSessionRef.current);
-    closeSession(translateEnSessionRef.current);
-    closeSession(translateKoSessionRef.current);
     transcribeSessionRef.current = null;
-    translateEnSessionRef.current = null;
-    translateKoSessionRef.current = null;
-    enPreviewRef.current = '';
-    koPreviewRef.current = '';
+    translationLifecycleRef.current.closeAll();
+    translationLifecycleRef.current = new InterviewTranslationLifecycle<LiveTranslationTarget>(TRANSLATION_TARGETS);
+    for (const session of retiringTranslationSessionsRef.current) {
+      closeSession(session);
+    }
+    retiringTranslationSessionsRef.current.clear();
+    for (const timer of retiringTranslationTimersRef.current) {
+      window.clearTimeout(timer);
+    }
+    retiringTranslationTimersRef.current = [];
     setTranslatePreviewAvailable(false);
     setBackend('idle');
   }, [closeSession]);
@@ -365,11 +372,13 @@ export function useInterviewLive({
   const connectTranslationSession = useCallback(async (
     token: string,
     targetLanguageCode: LiveTranslationTarget,
+    generation: number,
   ) => {
     const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
-    const ref = targetLanguageCode === 'en' ? enPreviewRef : koPreviewRef;
+    let preview = '';
+    let session: any = null;
 
-    const session = await ai.live.connect({
+    session = await ai.live.connect({
       model: TRANSLATE_MODEL,
       config: {
         responseModalities: ['AUDIO'],
@@ -390,28 +399,143 @@ export function useInterviewLive({
         onmessage: (message: any) => {
           const content = message?.serverContent;
           const translatedChunk = content?.outputTranscription?.text;
+
           if (translatedChunk) {
-            ref.current = mergeStreamText(ref.current, translatedChunk);
-            onLiveTranslation(targetLanguageCode, ref.current, false);
-          }
-          if (content?.turnComplete || content?.generationComplete) {
-            if (ref.current.trim()) {
-              onLiveTranslation(targetLanguageCode, ref.current, true);
+            preview = mergeStreamText(preview, translatedChunk);
+            // A retired generation may still drain its final response, but it
+            // must never replace the live preview for the next utterance.
+            if (translationLifecycleRef.current.isActive(targetLanguageCode, generation)) {
+              onLiveTranslation(targetLanguageCode, preview, false, generation);
             }
-            ref.current = '';
+          }
+
+          if (content?.turnComplete || content?.generationComplete) {
+            if (preview.trim()) {
+              // Final output is generation-tagged so App can map delayed
+              // completions to the exact source row that created them.
+              onLiveTranslation(targetLanguageCode, preview, true, generation);
+            }
+            preview = '';
+
+            if (!translationLifecycleRef.current.isActive(targetLanguageCode, generation)) {
+              closeSession(session);
+            }
           }
         },
         onerror: (error: any) => {
-          onWarning?.(
-            `실시간 ${targetLanguageCode === 'en' ? '영어' : '한국어'} 번역 미리보기 연결 오류: ${error?.message || error}`
-          );
+          if (translationLifecycleRef.current.isActive(targetLanguageCode, generation)) {
+            onWarning?.(
+              `실시간 ${targetLanguageCode === 'en' ? '영어' : '한국어'} 번역 미리보기 연결 오류: ${error?.message || error}`
+            );
+          }
         },
         onclose: () => {},
       },
     } as any);
 
     return session;
-  }, [onLiveTranslation, onWarning]);
+  }, [closeSession, onLiveTranslation, onWarning]);
+
+  const provisionTranslationGeneration = useCallback(async (
+    generation: number,
+    mode: 'active' | 'standby',
+  ) => {
+    const lifecycle = translationLifecycleRef.current;
+    const targets = TRANSLATION_TARGETS.filter((target) =>
+      mode === 'active'
+        ? !lifecycle.hasActive(target, generation)
+        : !lifecycle.hasStandby(target, generation)
+    );
+
+    if (!targets.length) return true;
+
+    const created = await Promise.allSettled(targets.map(async (target) => {
+      const token = await fetchLiveToken(TRANSLATE_MODEL);
+      const session = await connectTranslationSession(token, target, generation);
+      return { target, session };
+    }));
+
+    let allInstalled = true;
+    for (const result of created) {
+      if (result.status === 'rejected') {
+        allInstalled = false;
+        continue;
+      }
+
+      const { target, session } = result.value;
+      if (!desiredRef.current || translationLifecycleRef.current !== lifecycle) {
+        closeSession(session);
+        allInstalled = false;
+        continue;
+      }
+
+      const installed = mode === 'active'
+        ? lifecycle.installActive(target, generation, session)
+        : lifecycle.installStandby(target, generation, session);
+      if (!installed) {
+        closeSession(session);
+        allInstalled = false;
+      }
+    }
+
+    return allInstalled && TRANSLATION_TARGETS.every((target) =>
+      mode === 'active'
+        ? lifecycle.hasActive(target, generation)
+        : lifecycle.hasStandby(target, generation)
+    );
+  }, [closeSession, connectTranslationSession]);
+
+  const rotateTranslationGeneration = useCallback((completedGeneration: number) => {
+    const lifecycle = translationLifecycleRef.current;
+    if (lifecycle.currentGeneration() !== completedGeneration) return;
+
+    // Swap to already-connected standby sessions before draining the old
+    // generation. New microphone frames therefore cannot enter the previous
+    // utterance's translation context.
+    const rotation = lifecycle.rotate();
+
+    for (const slot of rotation.retiring) {
+      retiringTranslationSessionsRef.current.add(slot.session);
+      try {
+        slot.session.sendRealtimeInput?.({ audioStreamEnd: true });
+      } catch {
+        closeSession(slot.session);
+        retiringTranslationSessionsRef.current.delete(slot.session);
+        continue;
+      }
+
+      const timer = window.setTimeout(() => {
+        closeSession(slot.session);
+        retiringTranslationSessionsRef.current.delete(slot.session);
+      }, 2500);
+      retiringTranslationTimersRef.current.push(timer);
+    }
+
+    const prepareNext = async () => {
+      let activeReady = rotation.missingTargets.length === 0;
+      if (!activeReady) {
+        setTranslatePreviewAvailable(false);
+        activeReady = await provisionTranslationGeneration(rotation.activeGeneration, 'active');
+      }
+
+      if (
+        !desiredRef.current ||
+        translationLifecycleRef.current !== lifecycle ||
+        lifecycle.currentGeneration() !== rotation.activeGeneration
+      ) {
+        return;
+      }
+
+      setTranslatePreviewAvailable(activeReady);
+      if (activeReady) {
+        // Keep one fresh, audio-free generation connected so the next
+        // authoritative transcript boundary can swap synchronously.
+        void provisionTranslationGeneration(rotation.activeGeneration + 1, 'standby');
+      }
+    };
+
+    void prepareNext();
+  }, [closeSession, provisionTranslationGeneration]);
 
   const start = useCallback(async () => {
     if (desiredRef.current) return;
@@ -457,17 +581,12 @@ export function useInterviewLive({
             if (finalText) {
               const committedTranscript = String(finalText).trim();
               if (committedTranscript) {
-                // Transcribe Live and Live Translate are independent continuous streams.
-                // Use the authoritative transcript boundary to flush both translation
-                // streams so one finalized source segment maps to one translation segment.
-                onFinalTranscript(committedTranscript);
-                for (const session of [translateEnSessionRef.current, translateKoSessionRef.current]) {
-                  try {
-                    session?.sendRealtimeInput?.({ audioStreamEnd: true });
-                  } catch {
-                    // Translation preview is best effort; the next audio chunk reopens the stream.
-                  }
-                }
+                const completedGeneration = translationLifecycleRef.current.currentGeneration();
+                // The transcript is authoritative for the source-row boundary. Commit the
+                // row with the generation that received this utterance, then synchronously
+                // rotate microphone routing to a fresh translation context.
+                onFinalTranscript(committedTranscript, completedGeneration);
+                rotateTranslationGeneration(completedGeneration);
               }
             }
           },
@@ -484,25 +603,20 @@ export function useInterviewLive({
       } as any);
       transcribeSessionRef.current = transcribeSession;
 
-      // Translation preview is optional. Failure here must never take down authoritative transcription.
+      // Translation preview is optional. Each active generation receives audio for
+      // exactly one authoritative transcript segment. A standby generation is kept
+      // connected but audio-free so the next boundary can switch immediately.
       try {
-        const [enToken, koToken] = await Promise.all([
-          fetchLiveToken(TRANSLATE_MODEL),
-          fetchLiveToken(TRANSLATE_MODEL),
-        ]);
-        if (desiredRef.current) {
-          const [enSession, koSession] = await Promise.all([
-            connectTranslationSession(enToken, 'en'),
-            connectTranslationSession(koToken, 'ko'),
-          ]);
-          translateEnSessionRef.current = enSession;
-          translateKoSessionRef.current = koSession;
-          setTranslatePreviewAvailable(true);
+        const generation = translationLifecycleRef.current.currentGeneration();
+        const activeReady = await provisionTranslationGeneration(generation, 'active');
+        setTranslatePreviewAvailable(activeReady);
+        if (activeReady && desiredRef.current) {
+          void provisionTranslationGeneration(generation + 1, 'standby');
         }
       } catch (error) {
         setTranslatePreviewAvailable(false);
         onWarning?.(
-          `Live Translate 미리보기는 사용할 수 없습니다. 최종 번역은 계속 작동합니다: ${error instanceof Error ? error.message : String(error)}`
+          `Live Translate 미리보기는 사용할 수 없습니다. 전사는 계속 작동합니다: ${error instanceof Error ? error.message : String(error)}`
         );
       }
 
@@ -546,13 +660,7 @@ export function useInterviewLive({
           // onerror/onclose own the fatal path
         }
 
-        for (const session of [translateEnSessionRef.current, translateKoSessionRef.current]) {
-          try {
-            session?.sendRealtimeInput?.({ media });
-          } catch {
-            // Translation preview is best effort.
-          }
-        }
+        translationLifecycleRef.current.sendMedia(media);
       };
 
       source.connect(processor);
@@ -570,11 +678,12 @@ export function useInterviewLive({
   }, [
     beginFallback,
     cleanup,
-    connectTranslationSession,
     glossaryTerms,
     onFinalTranscript,
     onInterimTranscript,
     onWarning,
+    provisionTranslationGeneration,
+    rotateTranslationGeneration,
   ]);
 
   return {

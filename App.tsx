@@ -432,8 +432,10 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const isLangAutoRef = useRef(false);
   const interviewLivePreviewRef = useRef('');
   const interviewPreviewIsFinalRef = useRef(false);
+  const interviewLivePreviewGenerationRef = useRef<number | null>(null);
+  const interviewLastCommittedGenerationRef = useRef(0);
   const interviewTargetRef = useRef<'en' | 'ko'>('en');
-  const pendingInterviewItemsRef = useRef<Array<{ id: string; target: 'en' | 'ko' }>>([]);
+  const pendingInterviewItemsRef = useRef<Array<{ id: string; target: 'en' | 'ko'; generation: number }>>([]);
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -448,18 +450,34 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setInterviewLivePreview('');
     interviewLivePreviewRef.current = '';
     interviewPreviewIsFinalRef.current = false;
+    interviewLivePreviewGenerationRef.current = null;
+    interviewLastCommittedGenerationRef.current = 0;
     pendingInterviewItemsRef.current = [];
     setInterviewLiveError('');
     setInterviewLiveWarning('');
   }, [interviewMode]);
 
-  const onInterviewFinalTranscript = useCallback((text: string) => {
+  const onInterviewFinalTranscript = useCallback((text: string, translationGeneration?: number) => {
     const normalized = text.trim();
     if (!normalized) return;
 
     interviewTargetRef.current = inferInterviewTarget(normalized);
-    const frozenLiveTranslation = interviewLivePreviewRef.current.trim();
-    const liveTranslationWasFinal = interviewPreviewIsFinalRef.current;
+    const previewMatchesGeneration =
+      translationGeneration == null ||
+      interviewLivePreviewGenerationRef.current === translationGeneration;
+    const frozenLiveTranslation = previewMatchesGeneration
+      ? interviewLivePreviewRef.current.trim()
+      : '';
+    const liveTranslationWasFinal =
+      previewMatchesGeneration && interviewPreviewIsFinalRef.current;
+
+    if (translationGeneration != null) {
+      interviewLastCommittedGenerationRef.current = Math.max(
+        interviewLastCommittedGenerationRef.current,
+        translationGeneration
+      );
+    }
+
     const newItem: ConversationItem = {
       id: crypto.randomUUID(),
       original: normalized,
@@ -473,13 +491,19 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     };
 
     setHistory((prev) => [...prev, newItem]);
-    if (!liveTranslationWasFinal) {
-      pendingInterviewItemsRef.current.push({ id: newItem.id, target: interviewTargetRef.current });
+    if (!liveTranslationWasFinal && translationGeneration != null) {
+      pendingInterviewItemsRef.current.push({
+        id: newItem.id,
+        target: interviewTargetRef.current,
+        generation: translationGeneration,
+      });
     }
+
     setCurrentTurnText('');
     setInterviewLivePreview('');
     interviewLivePreviewRef.current = '';
     interviewPreviewIsFinalRef.current = false;
+    interviewLivePreviewGenerationRef.current = null;
   }, [setHistory]);
 
   const onInterviewInterimTranscript = useCallback((text: string) => {
@@ -487,15 +511,23 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     if (nextTarget !== interviewTargetRef.current) {
       interviewLivePreviewRef.current = '';
       interviewPreviewIsFinalRef.current = false;
+      interviewLivePreviewGenerationRef.current = null;
       setInterviewLivePreview('');
     }
     interviewTargetRef.current = nextTarget;
     setCurrentTurnText(text);
   }, []);
 
-  const onInterviewLiveTranslation = useCallback((target: 'en' | 'ko', text: string, isFinal: boolean) => {
+  const onInterviewLiveTranslation = useCallback((
+    target: 'en' | 'ko',
+    text: string,
+    isFinal: boolean,
+    generation: number,
+  ) => {
     if (isFinal) {
-      const pendingIndex = pendingInterviewItemsRef.current.findIndex((entry) => entry.target === target);
+      const pendingIndex = pendingInterviewItemsRef.current.findIndex((entry) =>
+        entry.target === target && entry.generation === generation
+      );
       if (pendingIndex >= 0) {
         const [{ id: pendingItemId }] = pendingInterviewItemsRef.current.splice(pendingIndex, 1);
         setHistory((prev) => prev.map((item) =>
@@ -503,19 +535,26 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
             ? { ...item, translated: text.trim(), translationKind: 'live', translationStale: false }
             : item
         ));
+        return;
       }
 
-      if (target === interviewTargetRef.current) {
-        interviewLivePreviewRef.current = '';
-        interviewPreviewIsFinalRef.current = false;
-        setInterviewLivePreview('');
-      }
+      // A Live Translate final may arrive before Transcribe Live publishes the
+      // authoritative source boundary. Preserve it for that generation; if the
+      // source row already committed, a duplicate/late final is stale.
+      if (generation <= interviewLastCommittedGenerationRef.current) return;
+      if (target !== interviewTargetRef.current) return;
+
+      interviewLivePreviewRef.current = text.trim();
+      interviewPreviewIsFinalRef.current = true;
+      interviewLivePreviewGenerationRef.current = generation;
+      setInterviewLivePreview(text.trim());
       return;
     }
 
     if (target !== interviewTargetRef.current) return;
     interviewLivePreviewRef.current = text;
     interviewPreviewIsFinalRef.current = false;
+    interviewLivePreviewGenerationRef.current = generation;
     setInterviewLivePreview(text);
   }, [setHistory]);
 
@@ -548,11 +587,18 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       pendingInterviewItemsRef.current = [];
       interviewLivePreviewRef.current = '';
       interviewPreviewIsFinalRef.current = false;
+      interviewLivePreviewGenerationRef.current = null;
+      interviewLastCommittedGenerationRef.current = 0;
       setCurrentTurnText('');
       setInterviewLivePreview('');
       return;
     }
 
+    pendingInterviewItemsRef.current = [];
+    interviewLivePreviewRef.current = '';
+    interviewPreviewIsFinalRef.current = false;
+    interviewLivePreviewGenerationRef.current = null;
+    interviewLastCommittedGenerationRef.current = 0;
     setInterviewLiveError('');
     setInterviewLiveWarning('');
     void startInterviewLive().catch((liveError) => {

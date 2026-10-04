@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import { InterviewTranslationLifecycle } from '../../utils/interviewTranslationLifecycle';
 
 test.describe('Interview mode on the existing Global Classroom UI', () => {
   test('normal mode exposes an Interview toggle without replacing the main UI', async ({ page }) => {
@@ -196,4 +197,55 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
 
     await expect(page.getByText(/AUTO · KO ↔ EN · GROQ STT/)).toBeVisible();
   });
+
+  test('translation lifecycle rotates microphone media into a fresh generation', async () => {
+    const events: Array<{ session: string; kind: string }> = [];
+
+    const fakeSession = (name: string) => ({
+      sendRealtimeInput(payload: any) {
+        events.push({
+          session: name,
+          kind: payload?.audioStreamEnd ? 'end' : payload?.media ? 'media' : 'other',
+        });
+      },
+      close() {
+        events.push({ session: name, kind: 'close' });
+      },
+    });
+
+    const lifecycle = new InterviewTranslationLifecycle(['en', 'ko']);
+    const en1 = fakeSession('en-1');
+    const ko1 = fakeSession('ko-1');
+    const en2 = fakeSession('en-2');
+    const ko2 = fakeSession('ko-2');
+
+    lifecycle.installActive('en', 1, en1);
+    lifecycle.installActive('ko', 1, ko1);
+    lifecycle.installStandby('en', 2, en2);
+    lifecycle.installStandby('ko', 2, ko2);
+
+    lifecycle.sendMedia({ data: 'utterance-1' });
+    const rotation = lifecycle.rotate();
+    for (const slot of rotation.retiring) {
+      slot.session.sendRealtimeInput?.({ audioStreamEnd: true });
+    }
+    lifecycle.sendMedia({ data: 'utterance-2' });
+
+    expect(lifecycle.currentGeneration()).toBe(2);
+    expect(rotation.completedGeneration).toBe(1);
+    expect(rotation.activeGeneration).toBe(2);
+    expect(rotation.missingTargets).toEqual([]);
+    expect(lifecycle.isActive('en', 1)).toBe(false);
+    expect(lifecycle.isActive('ko', 1)).toBe(false);
+    expect(lifecycle.isActive('en', 2)).toBe(true);
+    expect(lifecycle.isActive('ko', 2)).toBe(true);
+
+    expect(events.filter((event) => event.session === 'en-1' && event.kind === 'media')).toHaveLength(1);
+    expect(events.filter((event) => event.session === 'ko-1' && event.kind === 'media')).toHaveLength(1);
+    expect(events.filter((event) => event.session === 'en-1' && event.kind === 'end')).toHaveLength(1);
+    expect(events.filter((event) => event.session === 'ko-1' && event.kind === 'end')).toHaveLength(1);
+    expect(events.filter((event) => event.session === 'en-2' && event.kind === 'media')).toHaveLength(1);
+    expect(events.filter((event) => event.session === 'ko-2' && event.kind === 'media')).toHaveLength(1);
+  });
+
 });
