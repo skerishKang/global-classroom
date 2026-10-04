@@ -431,7 +431,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     history,
     selectedVoice,
     t,
-    setIsLoginModalOpen
+    setIsLoginModalOpen,
+    settings
   });
 
   // --- Custom Service: Vision & Storage ---

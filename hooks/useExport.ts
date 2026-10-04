@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react';
 import { backupToDrive, exportToDocs, listCourses, createCourseWork } from '../utils/googleWorkspace';
 import { downloadTranscriptLocally } from '../utils/fileExport';
-import { ConversationItem, TranslationMap, VoiceOption } from '../types';
+import { AppSettings, ConversationItem, TranslationMap, VoiceOption } from '../types';
 import { MODEL_TTS } from '../constants';
 
 interface UseExportProps {
@@ -10,9 +10,11 @@ interface UseExportProps {
     selectedVoice: VoiceOption;
     t: TranslationMap;
     setIsLoginModalOpen: (v: boolean) => void;
+    /** Settings carry the local-only personal key used by the backup TTS path. */
+    settings: AppSettings;
 }
 
-export function useExport({ accessToken, history, selectedVoice, t, setIsLoginModalOpen }: UseExportProps) {
+export function useExport({ accessToken, history, selectedVoice, t, setIsLoginModalOpen, settings }: UseExportProps) {
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
@@ -52,6 +54,7 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
                     generateMissingAudio: true,
                     voiceName: selectedVoice.name,
                     ttsModel: MODEL_TTS,
+                    userApiKey: settings.userApiKey || undefined,
                 });
                 if (result?.folderUrl) window.open(result.folderUrl, '_blank');
                 alert(`Drive: ${t.exportSuccess}`);
@@ -60,6 +63,7 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
                     includeAudio: false,
                     generateMissingAudio: false,
                     notebookLMMode: true,
+                    userApiKey: settings.userApiKey || undefined,
                 });
                 if (result?.folderUrl) window.open(result.folderUrl, '_blank');
                 setIsNotebookLMGuideOpen(true);

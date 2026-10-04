@@ -2,6 +2,8 @@ import { ConversationItem } from '../types';
 import { arrayBufferToBase64, base64ToUint8Array, wavArrayBufferToPcmBase64, pcm16Base64ToWavBlob } from './audioUtils';
 import { getCachedAudioBase64 } from './idbAudioCache';
 import { generateTtsBase64 } from './tts';
+import { requireGoogleJson, requireGoogleOk } from './googleHttp';
+import { normalizeRestoredConversationItem } from './restoreItem';
 
 export type DriveBackupOptions = {
     includeAudio?: boolean;
@@ -9,6 +11,8 @@ export type DriveBackupOptions = {
     ttsModel?: string;
     generateMissingAudio?: boolean;
     notebookLMMode?: boolean;
+    /** Personal API key (#32 contract): sent as x-user-api-key to the TTS function. */
+    userApiKey?: string;
 };
 
 export type DriveBackupResult = {
@@ -31,18 +35,31 @@ export type DriveSessionInfo = {
     folderUrl: string;
 };
 
-export type DriveRestoreResult = {
-    success: boolean;
-    message: string;
-    folderId: string;
-    folderUrl: string;
-    sessionName?: string;
-    voiceName?: string;
-    ttsModel?: string;
-    history: ConversationItem[];
-    audioRestoredCount: number;
-    audioFailedCount: number;
-};
+/**
+ * Restore result contract (#35): success and failure are discriminated so the
+ * caller can never mistake a failed restore (which carries NO history field at
+ * all) for a successful empty session. An empty `history: []` is only ever
+ * returned with `success: true`.
+ */
+export type DriveRestoreResult =
+    | {
+        success: true;
+        message: string;
+        folderId: string;
+        folderUrl: string;
+        sessionName?: string;
+        voiceName?: string;
+        ttsModel?: string;
+        history: ConversationItem[];
+        audioRestoredCount: number;
+        audioFailedCount: number;
+    }
+    | {
+        success: false;
+        message: string;
+        folderId: string;
+        folderUrl: string;
+    };
 
 const getHeaders = (accessToken: string, contentType: string = 'application/json') => {
     return {
@@ -62,7 +79,7 @@ const findOrCreateFolder = async (name: string, accessToken: string, parentId?: 
     const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}`, {
         headers: getHeaders(accessToken)
     });
-    const searchData = await searchRes.json();
+    const searchData = await requireGoogleJson(searchRes, 'Drive 폴더 검색');
 
     if (searchData.files && searchData.files.length > 0) {
         return searchData.files[0].id;
@@ -81,7 +98,7 @@ const findOrCreateFolder = async (name: string, accessToken: string, parentId?: 
         headers: getHeaders(accessToken),
         body: JSON.stringify(metaData)
     });
-    const createData = await createRes.json();
+    const createData = await requireGoogleJson(createRes, 'Drive 폴더 생성');
     return createData.id;
 };
 
@@ -94,7 +111,7 @@ const findFolderId = async (name: string, accessToken: string, parentId?: string
     const searchRes = await fetch(`https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=files(id,name)`, {
         headers: getHeaders(accessToken)
     });
-    const searchData = await searchRes.json();
+    const searchData = await requireGoogleJson(searchRes, 'Drive 폴더 검색');
     if (searchData.files && searchData.files.length > 0) {
         return searchData.files[0].id;
     }
@@ -119,7 +136,9 @@ const uploadFile = async (name: string, mimeType: string, data: Blob, accessToke
         body: form
     });
 
-    return await res.json();
+    // A failed upload used to resolve to `{id: undefined}` and still count as a
+    // successful backup (#35).
+    return await requireGoogleJson(res, 'Drive 파일 업로드');
 };
 
 const listFolderChildren = async (accessToken: string, parentId: string, qExtra?: string, pageSize: number = 50) => {
@@ -132,10 +151,7 @@ const listFolderChildren = async (accessToken: string, parentId: string, qExtra?
         `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&orderBy=createdTime desc&pageSize=${pageSize}&fields=files(id,name,mimeType,createdTime)`,
         { headers: getHeaders(accessToken) }
     );
-    if (!res.ok) {
-        throw new Error('Drive 목록 조회에 실패했습니다.');
-    }
-    const data = await res.json();
+    const data = await requireGoogleJson(res, 'Drive 목록 조회');
     return data.files || [];
 };
 
@@ -143,20 +159,15 @@ const downloadDriveFileJson = async (accessToken: string, fileId: string): Promi
     const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
     });
-    if (!res.ok) {
-        throw new Error('Drive 파일 다운로드에 실패했습니다.');
-    }
-    return await res.json();
+    return await requireGoogleJson(res, 'Drive 파일 다운로드');
 };
 
 const downloadDriveFileArrayBuffer = async (accessToken: string, fileId: string): Promise<ArrayBuffer> => {
     const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
         headers: { 'Authorization': `Bearer ${accessToken}` },
     });
-    if (!res.ok) {
-        throw new Error('Drive 파일 다운로드에 실패했습니다.');
-    }
-    return await res.arrayBuffer();
+    const ok = await requireGoogleOk(res, 'Drive 파일 다운로드');
+    return await ok.arrayBuffer();
 };
 
 // --- Main Drive Functions ---
@@ -199,26 +210,21 @@ export const restoreDriveSession = async (accessToken: string, sessionFolderId: 
     const manifestFile = (files || []).find((f: any) => f.name === 'manifest.json');
 
     if (!transcriptFile) {
+        // Failure carries NO history field at all: the caller must not be able
+        // to confuse this with a successful empty session (#35).
         return {
             success: false,
             message: 'transcript.json을 찾지 못했습니다.',
             folderId: sessionFolderId,
             folderUrl,
-            history: [],
-            audioRestoredCount: 0,
-            audioFailedCount: 0,
         };
     }
 
     const transcriptJson = await downloadDriveFileJson(accessToken, transcriptFile.id);
     const rawHistory = Array.isArray(transcriptJson?.history) ? transcriptJson.history : [];
-    const history: ConversationItem[] = rawHistory.map((x: any) => ({
-        id: String(x.id),
-        original: String(x.original || ''),
-        translated: String(x.translated || ''),
-        isTranslating: false,
-        timestamp: Number(x.timestamp || Date.now()),
-    }));
+    // Field-by-field sanitizer: keeps the Interview metadata (#23/#34) that the
+    // previous restore dropped, and survives legacy/malformed backups.
+    const history: ConversationItem[] = rawHistory.map((x: any) => normalizeRestoredConversationItem(x));
 
     if (!includeAudio) {
         return {
@@ -377,7 +383,9 @@ export const backupToDrive = async (accessToken: string, history: ConversationIt
 
                 let audioBase64 = item.audioBase64;
                 if (!audioBase64 && generateMissingAudio) {
-                    audioBase64 = await generateTtsBase64(item.translated, voiceName, ttsModel);
+                    // Same key policy as the in-app TTS path (#32): the personal
+                    // key rides along as x-user-api-key when the user set one.
+                    audioBase64 = await generateTtsBase64(item.translated, voiceName, ttsModel, options?.userApiKey);
                 }
 
                 if (audioBase64) {

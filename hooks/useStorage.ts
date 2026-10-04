@@ -44,12 +44,15 @@ export function useStorage({ accessToken, setHistory, setCurrentSessionId, enque
         setDriveRestoreMessage('복원 중...');
         try {
             const result = await restoreDriveSession(accessToken, selectedDriveSessionId, includeAudio);
-            if (result && result.history) {
+            // Discriminated contract (#35): the history is only ever replaced
+            // after success. A failed restore must not be able to wipe the
+            // current conversation, even if it returned an empty array.
+            if (result.success) {
                 setHistory(result.history);
-                enqueueToast('성공적으로 복원되었습니다.', 'success');
+                enqueueToast(result.message || '성공적으로 복원되었습니다.', 'success');
                 setIsHistoryModalOpen(false);
             } else {
-                enqueueToast('복원 실패: 데이터가 유효하지 않습니다.', 'error');
+                enqueueToast(`복원 실패: ${result.message}`, 'error');
             }
         } catch (e) {
             console.error(e);
