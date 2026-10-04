@@ -20,6 +20,8 @@ import {
     serverTimestamp
 } from 'firebase/firestore';
 import { ConversationItem, Language } from '../types';
+import { createRoomWithUniqueCode, ListenerTracker } from '../utils/liveSharingRoom';
+
 interface RoomData {
     id: string;
     hostUid: string;
@@ -61,43 +63,52 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
     const [remoteStreams, setRemoteStreams] = useState<Record<string, MediaStream>>({});
     const [isVideoOn, setIsVideoOn] = useState(false);
 
-    const unsubscribeRef = useRef<(() => void) | null>(null);
-    const roomUnsubscribeRef = useRef<(() => void) | null>(null);
-    const handsUnsubscribeRef = useRef<(() => void) | null>(null);
-    const webrtcUnsubscribeRef = useRef<(() => void) | null>(null);
+    const listenerTrackerRef = useRef<ListenerTracker | null>(null);
+    if (!listenerTrackerRef.current) {
+        listenerTrackerRef.current = new ListenerTracker();
+    }
+    const localStreamRef = useRef<MediaStream | null>(null);
     const peerConnectionsRef = useRef<Record<string, RTCPeerConnection>>({});
     const lastMessageTimeRef = useRef<number>(0);
 
-    const cleanup = useCallback(() => {
-        if (unsubscribeRef.current) unsubscribeRef.current();
-        if (roomUnsubscribeRef.current) roomUnsubscribeRef.current();
-        if (handsUnsubscribeRef.current) handsUnsubscribeRef.current();
-        if (webrtcUnsubscribeRef.current) webrtcUnsubscribeRef.current();
+    const stopLocalMedia = useCallback(() => {
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(track => track.stop());
+            localStreamRef.current = null;
+        }
+        setLocalStream(null);
+        setIsVideoOn(false);
+    }, []);
 
-        unsubscribeRef.current = null;
-        roomUnsubscribeRef.current = null;
-        handsUnsubscribeRef.current = null;
-        webrtcUnsubscribeRef.current = null;
+    // Dispose runtime resources only: listeners, media tracks, peer connections.
+    const disposeResources = useCallback(() => {
+        listenerTrackerRef.current?.disposeAll();
 
         // Close peer connections
         Object.values(peerConnectionsRef.current as Record<string, RTCPeerConnection>).forEach(pc => pc.close());
         peerConnectionsRef.current = {};
 
         // Stop local stream
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-        }
+        stopLocalMedia();
+        setRemoteStreams({});
+    }, [stopLocalMedia]);
 
+    // Reset React state for the room session (identity/UI state only).
+    const resetRoomState = useCallback(() => {
         setRoomId(null);
         setIsHost(false);
         setRoomStatus('idle');
         setMicRestricted(false);
         setHandRaiseStatus('idle');
         setPendingHandRaises([]);
-        setLocalStream(null);
-        setRemoteStreams({});
-        setIsVideoOn(false);
-    }, [localStream]);
+    }, []);
+
+    // Stable identity: never depends on media/session state, so a localStream
+    // change cannot re-trigger the unmount effect and reset an active room.
+    const cleanup = useCallback(() => {
+        disposeResources();
+        resetRoomState();
+    }, [disposeResources, resetRoomState]);
 
     // 1. Create a Room (Host)
     const createRoom = useCallback(async () => {
@@ -105,21 +116,19 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         cleanup();
 
         const db = getAppFirestore();
-        const newRoomId = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
-        const roomRef = doc(db, "rooms", newRoomId);
-
-        await setDoc(roomRef, {
-            id: newRoomId,
+        // Atomically claim a free 6-digit code; an existing room document is never overwritten.
+        const newRoomId = await createRoomWithUniqueCode(db, (code) => ({
+            id: code,
             hostUid: user.uid,
             createdAt: Timestamp.now(),
             status: 'active',
             micRestricted: false
-        });
+        }));
 
         // Listen for hand raises (Host side)
         const handsRef = collection(db, "rooms", newRoomId, "handRaises");
         const qHands = query(handsRef, orderBy("timestamp", "asc"));
-        handsUnsubscribeRef.current = onSnapshot(qHands, (snapshot) => {
+        listenerTrackerRef.current?.trackRoom(onSnapshot(qHands, (snapshot) => {
             const list: HandRaiseData[] = [];
             snapshot.forEach(doc => {
                 const data = doc.data() as HandRaiseData;
@@ -128,7 +137,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                 }
             });
             setPendingHandRaises(list);
-        });
+        }));
 
         setRoomId(newRoomId);
         setIsHost(true);
@@ -152,30 +161,30 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         setRoomStatus('joined');
 
         // Listen for room changes (especially micRestricted status)
-        roomUnsubscribeRef.current = onSnapshot(roomRef, (doc) => {
+        listenerTrackerRef.current?.trackRoom(onSnapshot(roomRef, (doc) => {
             if (doc.exists()) {
                 const data = doc.data() as RoomData;
                 setMicRestricted(!!data.micRestricted);
             }
-        });
+        }));
 
-        // Listen for own hand raise status
+        // Listen for own hand raise status (disposed on leave like every other listener)
         if (user?.uid) {
             const handRef = doc(db, "rooms", targetRoomId, "handRaises", user.uid);
-            onSnapshot(handRef, (doc) => {
+            listenerTrackerRef.current?.trackRoom(onSnapshot(handRef, (doc) => {
                 if (doc.exists()) {
                     setHandRaiseStatus(doc.data().status);
                 } else {
                     setHandRaiseStatus('idle');
                 }
-            });
+            }));
         }
 
         // Listen for new messages
         const msgsRef = collection(db, "rooms", targetRoomId, "messages");
         const q = query(msgsRef, orderBy("timestamp", "asc"));
 
-        unsubscribeRef.current = onSnapshot(q, (snapshot) => {
+        listenerTrackerRef.current?.trackRoom(onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach((change) => {
                 if (change.type === "added") {
                     const data = change.doc.data();
@@ -187,7 +196,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                     }
                 }
             });
-        });
+        }));
 
         lastMessageTimeRef.current = Date.now();
     }, [cleanup, onMessageReceived, user]);
@@ -233,14 +242,35 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         await updateDoc(handRef, { status: 'denied' });
     }, [isHost, roomId]);
 
+    // Dispose a single peer's resources: its connection, listeners and remote stream.
+    const removePeer = useCallback((peerId: string) => {
+        listenerTrackerRef.current?.disposePeer(peerId);
+        const pc = peerConnectionsRef.current[peerId];
+        if (pc) {
+            pc.close();
+            delete peerConnectionsRef.current[peerId];
+        }
+        setRemoteStreams(prev => {
+            if (!prev[peerId]) return prev;
+            const next = { ...prev };
+            delete next[peerId];
+            return next;
+        });
+    }, []);
+
     // 5. WebRTC Stream & Signaling
     const startWebRTC = useCallback(async () => {
         if (!roomId || !user) return;
         try {
+            // Dispose any previous WebRTC runtime first so start → stop → start
+            // (or a double start) can never leave stale listeners/streams behind.
+            stopWebRTC();
+
             const stream = await navigator.mediaDevices.getUserMedia({
                 video: true,
                 audio: true
             });
+            localStreamRef.current = stream;
             setLocalStream(stream);
             setIsVideoOn(true);
 
@@ -248,7 +278,7 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                 // Host setup: signaling for EACH student
                 const db = getAppFirestore();
                 const webrtcRef = collection(db, "rooms", roomId, "webRTC");
-                webrtcUnsubscribeRef.current = onSnapshot(webrtcRef, (snapshot) => {
+                listenerTrackerRef.current?.trackWebRtc(onSnapshot(webrtcRef, (snapshot) => {
                     snapshot.docChanges().forEach(async (change) => {
                         const studentUid = change.doc.id;
                         if (studentUid === user.uid) return;
@@ -257,19 +287,11 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                             // New student joined, create connection
                             setupHostPeer(studentUid, stream);
                         } else if (change.type === "removed") {
-                            // Student left
-                            if (peerConnectionsRef.current[studentUid]) {
-                                peerConnectionsRef.current[studentUid].close();
-                                delete peerConnectionsRef.current[studentUid];
-                                setRemoteStreams(prev => {
-                                    const next = { ...prev };
-                                    delete next[studentUid];
-                                    return next;
-                                });
-                            }
+                            // Student left: close only that peer's connection + listeners
+                            removePeer(studentUid);
                         }
                     });
-                });
+                }));
             } else {
                 // Student setup: signaling for THE host
                 // Register ourselves in webRTC collection
@@ -287,19 +309,19 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
             console.error("Failed to get media devices:", err);
             throw err;
         }
-    }, [roomId, user, isHost]);
+    }, [roomId, user, isHost, removePeer]);
 
     const stopWebRTC = useCallback(() => {
-        if (localStream) {
-            localStream.getTracks().forEach(track => track.stop());
-            setLocalStream(null);
-        }
-        setIsVideoOn(false);
+        stopLocalMedia();
 
         Object.values(peerConnectionsRef.current as Record<string, RTCPeerConnection>).forEach(pc => pc.close());
         peerConnectionsRef.current = {};
+
+        // Dispose WebRTC-owned listeners only; room listeners stay until leave/cleanup.
+        listenerTrackerRef.current?.disposeWebRtc();
+        listenerTrackerRef.current?.disposePeers();
         setRemoteStreams({});
-    }, [localStream]);
+    }, [stopLocalMedia]);
 
     const setupHostPeer = useCallback(async (studentUid: string, stream: MediaStream) => {
         if (!roomId || !user) return;
@@ -326,24 +348,27 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
         const signalRef = doc(db, "rooms", roomId, "webRTC", studentUid);
         await updateDoc(signalRef, { offer: { sdp: offer.sdp, type: offer.type } });
 
-        // Listen for answer
-        onSnapshot(signalRef, async (snapshot) => {
+        // The peer may have been removed while the offer was being written.
+        if (peerConnectionsRef.current[studentUid] !== pc) return;
+
+        // Listen for answer (owned per-peer, disposed with the peer)
+        listenerTrackerRef.current?.trackPeer(studentUid, onSnapshot(signalRef, async (snapshot) => {
             const data = snapshot.data();
             if (data?.answer && !pc.currentRemoteDescription) {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
             }
-        });
+        }));
 
         // Listen for student candidates
         const candidatesRef = collection(db, "rooms", roomId, "webRTC", studentUid, "candidates");
         const q = query(candidatesRef, where("sender", "==", "client"));
-        onSnapshot(q, (snapshot) => {
+        listenerTrackerRef.current?.trackPeer(studentUid, onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach(async (change) => {
                 if (change.type === "added") {
                     await pc.addIceCandidate(new RTCIceCandidate(change.doc.data() as any));
                 }
             });
-        });
+        }));
     }, [roomId, user]);
 
     const setupStudentPeer = useCallback(async (signalRef: any, stream: MediaStream) => {
@@ -365,8 +390,8 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
             setRemoteStreams(prev => ({ ...prev, [hostUid]: event.streams[0] }));
         };
 
-        // Listen for offer
-        onSnapshot(signalRef, async (snapshot) => {
+        // Listen for offer (owned per-peer, disposed with the peer)
+        listenerTrackerRef.current?.trackPeer(hostUid, onSnapshot(signalRef, async (snapshot) => {
             const data = snapshot.data();
             if (data?.offer && !pc.currentRemoteDescription) {
                 await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -374,18 +399,18 @@ export function useLiveSharing({ user, onMessageReceived }: UseLiveSharingProps)
                 await pc.setLocalDescription(answer);
                 await updateDoc(signalRef, { answer: { sdp: answer.sdp, type: answer.type } });
             }
-        });
+        }));
 
         // Listen for host candidates
         const candidatesRef = collection(signalRef, "candidates");
         const q = query(candidatesRef, where("sender", "==", "host"));
-        onSnapshot(q, (snapshot) => {
+        listenerTrackerRef.current?.trackPeer(hostUid, onSnapshot(q, (snapshot) => {
             snapshot.docChanges().forEach(async (change) => {
                 if (change.type === "added") {
                     await pc.addIceCandidate(new RTCIceCandidate(change.doc.data() as any));
                 }
             });
-        });
+        }));
     }, []);
 
     // 6. Broadcast Message
