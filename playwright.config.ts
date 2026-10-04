@@ -22,6 +22,10 @@ export default defineConfig({
     baseURL,
     headless: true,
     trace: 'on-first-retry',
+    // Ordinary E2E uses page.route/fetch mocks. A registered application SW
+    // can intercept before Playwright routing, so keep it isolated to the
+    // dedicated service-worker spec below.
+    serviceWorkers: 'block',
   },
   projects: [
     {

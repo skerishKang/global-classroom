@@ -7,53 +7,47 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/', { waitUntil: 'domcontentloaded' });
 });
 
-test('헤더 아이콘 순서(새 대화/이전 히스토리/내보내기/로그인) 및 새창 제거', async ({ page }) => {
-  const topRow = page.locator('header > div').first();
+test('헤더는 현재 모드별 액션을 노출하고 새창 액션은 제거된 상태다', async ({ page }) => {
+  const header = page.locator('header');
 
-  const newChatButton = topRow.getByRole('button', { name: '새 대화' });
-  const historyButton = topRow.getByRole('button', { name: '이전 히스토리' });
-  const exportButton = topRow.getByRole('button', { name: '내보내기' });
-  const loginButton = topRow.getByRole('button', { name: /로그인|Login|Google로 로그인/ });
+  await expect(header.getByRole('button', { name: /새 대화/ }).first()).toBeVisible();
+  await expect(header.getByRole('button', { name: /내보내기/ })).toBeVisible();
+  await expect(header.getByRole('button', { name: /로그인|Login|Google로 로그인/ })).toBeVisible({ timeout: 10000 });
+  await expect(header.getByRole('button', { name: '대화 기록' })).toHaveCount(0);
+  await expect(header.getByRole('button', { name: '새창' })).toHaveCount(0);
 
-  await expect(newChatButton).toBeVisible();
-  await expect(historyButton).toBeVisible();
-  await expect(exportButton).toBeVisible();
-  await expect(loginButton).toBeVisible({ timeout: 10000 });
-
-  await expect(topRow.getByRole('button', { name: '새창' })).toHaveCount(0);
-
-  const newBox = await newChatButton.boundingBox();
-  const historyBox = await historyButton.boundingBox();
-  const exportBox = await exportButton.boundingBox();
-  const loginBox = await loginButton.boundingBox();
-
-  expect(newBox).not.toBeNull();
-  expect(historyBox).not.toBeNull();
-  expect(exportBox).not.toBeNull();
-  expect(loginBox).not.toBeNull();
-
-  expect(newBox!.x).toBeLessThan(historyBox!.x);
-  expect(historyBox!.x).toBeLessThan(exportBox!.x);
-  expect(exportBox!.x).toBeLessThan(loginBox!.x);
+  await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+  const interviewHeader = page.locator('header');
+  await expect(interviewHeader.getByRole('button', { name: '대화 기록' })).toBeVisible();
+  await expect(interviewHeader.getByRole('button', { name: '인터뷰 설정' })).toBeVisible();
+  await expect(interviewHeader.getByRole('button', { name: /로그인|Login|Google로 로그인/ })).toHaveCount(0);
 });
 
-test('새 대화 생성 시 로컬 세션이 증가하고, 히스토리 모달에서 불러오기 동작', async ({ page }) => {
-  const topRow = page.locator('header > div').first();
+test('새 대화 생성 시 로컬 세션이 증가하고, 대화 기록에서 선택한 세션을 불러온다', async ({ page }) => {
+  await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+  const header = page.locator('header');
 
-  await expect(topRow.getByRole('button', { name: '새 대화' })).toBeVisible();
+  const newChatButton = header.getByRole('button', { name: /새 대화/ }).first();
+  await expect(newChatButton).toBeVisible();
+  await newChatButton.click();
 
-  await topRow.getByRole('button', { name: '새 대화' }).click();
+  const sessions = await page.evaluate(() => JSON.parse(localStorage.getItem('global_classroom_sessions') || '[]'));
+  expect(sessions.length).toBeGreaterThanOrEqual(2);
 
-  await topRow.getByRole('button', { name: '이전 히스토리' }).click();
+  await header.getByRole('button', { name: '대화 기록' }).click();
   await expect(page.getByRole('heading', { name: '이전 히스토리' })).toBeVisible();
 
-  const localHeader = page.locator('div', { hasText: '로컬 세션:' }).first();
-  const headerText = (await localHeader.innerText()).replace(/\s+/g, ' ');
-  const match = headerText.match(/로컬 세션:\s*(\d+)/);
+  const localCount = page.getByText(/이 브라우저에 자동 저장된 대화:/).first();
+  const countText = (await localCount.innerText()).replace(/\s+/g, ' ');
+  const match = countText.match(/자동 저장된 대화:\s*(\d+)/);
   expect(match).not.toBeNull();
   expect(Number(match![1])).toBeGreaterThanOrEqual(2);
 
-  const loadButton = page.getByRole('button', { name: '불러오기' });
+  const targetTitle = String(sessions[0]?.title || '대화');
+  const historyModal = page.getByRole('heading', { name: '이전 히스토리' }).locator('..').locator('..');
+  await historyModal.getByRole('button').filter({ hasText: targetTitle }).first().click();
+
+  const loadButton = historyModal.getByRole('button', { name: '불러오기' });
   await expect(loadButton).toBeEnabled();
   await loadButton.click();
 
