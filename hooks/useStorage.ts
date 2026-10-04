@@ -1,6 +1,27 @@
 import React, { useState, useCallback } from 'react';
 import { listDriveSessions, restoreDriveSession } from '../utils/googleWorkspace';
+import { DriveRestoreResult } from '../utils/googleWorkspace';
 import { ConversationItem } from '../types';
+
+/**
+ * The restore branch extracted so the caller contract is unit-testable (#35):
+ * history is replaced and the success toast shown ONLY when the result
+ * discriminant says success. A failed restore — including a malformed
+ * transcript.json — can never wipe the current conversation.
+ */
+export function applyRestoreResult(
+    result: DriveRestoreResult,
+    setHistory: React.Dispatch<React.SetStateAction<ConversationItem[]>>,
+    enqueueToast: (message: string, type?: 'success' | 'error' | 'info' | 'warning') => void,
+): boolean {
+    if (result.success) {
+        setHistory(result.history);
+        enqueueToast(result.message || '성공적으로 복원되었습니다.', 'success');
+        return true;
+    }
+    enqueueToast(`복원 실패: ${result.message}`, 'error');
+    return false;
+}
 
 interface UseStorageProps {
     accessToken: string | null;
@@ -44,15 +65,10 @@ export function useStorage({ accessToken, setHistory, setCurrentSessionId, enque
         setDriveRestoreMessage('복원 중...');
         try {
             const result = await restoreDriveSession(accessToken, selectedDriveSessionId, includeAudio);
-            // Discriminated contract (#35): the history is only ever replaced
-            // after success. A failed restore must not be able to wipe the
-            // current conversation, even if it returned an empty array.
-            if (result.success) {
-                setHistory(result.history);
-                enqueueToast(result.message || '성공적으로 복원되었습니다.', 'success');
+            // Discriminated contract (#35): applyRestoreResult only replaces
+            // history after success; a failure keeps the current conversation.
+            if (applyRestoreResult(result, setHistory, enqueueToast)) {
                 setIsHistoryModalOpen(false);
-            } else {
-                enqueueToast(`복원 실패: ${result.message}`, 'error');
             }
         } catch (e) {
             console.error(e);

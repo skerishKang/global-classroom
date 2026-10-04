@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test, vi } from 'vitest';
-import { backupToDrive, restoreDriveSession } from '../../utils/googleDrive';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { backupToDrive, restoreDriveSession, type DriveRestoreResult } from '../../utils/googleDrive';
+import { applyRestoreResult } from '../../hooks/useStorage';
 import { exportToDocs } from '../../utils/googleDocs';
 import { normalizeRestoredConversationItem } from '../../utils/restoreItem';
 import { GoogleHttpError } from '../../utils/googleHttp';
@@ -81,6 +84,73 @@ describe('drive restore contract (#35)', () => {
         expect(result.history).toEqual([]);
         expect(result.message).toContain('복원');
     }
+  });
+
+  // A present transcript.json is not enough: damaged payloads (missing/null/
+  // non-array history) are failures, never a legitimate empty session.
+  const malformedTranscript = (transcriptBody: unknown) =>
+    installFetch(async (url) => {
+        if (isChildListing(url)) {
+            return jsonResponse({ files: [{ id: 't1', name: 'transcript.json', mimeType: 'application/json' }] });
+        }
+        if (url.includes('alt=media')) {
+            return new Response(JSON.stringify(transcriptBody), { status: 200, headers: { 'Content-Type': 'application/json' } });
+        }
+        return jsonResponse({}, 404);
+    });
+
+  test('transcript without a history field fails instead of reporting an empty session', async () => {
+    await malformedTranscript({ app: 'Global Classroom' });
+
+    const result = await restoreDriveSession('token', 'folder-1', false);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+        expect(result.message).toContain('형식');
+    }
+    expect('history' in result).toBe(false);
+  });
+
+  test('transcript with history=null fails', async () => {
+    await malformedTranscript({ history: null });
+
+    const result = await restoreDriveSession('token', 'folder-1', false);
+    expect(result.success).toBe(false);
+    expect('history' in result).toBe(false);
+  });
+
+  test('transcript with a non-array history (string/object) fails', async () => {
+    await malformedTranscript({ history: 'broken' });
+    const stringHistory = await restoreDriveSession('token', 'folder-1', false);
+    expect(stringHistory.success).toBe(false);
+    expect('history' in stringHistory).toBe(false);
+
+    await malformedTranscript({ history: { 0: 'row' } });
+    const objectHistory = await restoreDriveSession('token', 'folder-1', false);
+    expect(objectHistory.success).toBe(false);
+    expect('history' in objectHistory).toBe(false);
+  });
+
+  test('the four transcript contracts are distinguishable end to end', async () => {
+    // VALID_EMPTY -> success with history=[]
+    await malformedTranscript({ history: [] });
+    const validEmpty = await restoreDriveSession('token', 'folder-1', false);
+    expect(validEmpty.success).toBe(true);
+    if (validEmpty.success) expect(validEmpty.history).toEqual([]);
+
+    // MISSING -> failure
+    await malformedTranscript({});
+    const missing = await restoreDriveSession('token', 'folder-1', false);
+    expect(missing.success).toBe(false);
+
+    // NULL -> failure
+    await malformedTranscript({ history: null });
+    const nulled = await restoreDriveSession('token', 'folder-1', false);
+    expect(nulled.success).toBe(false);
+
+    // NON_ARRAY -> failure
+    await malformedTranscript({ history: 'broken' });
+    const broken = await restoreDriveSession('token', 'folder-1', false);
+    expect(broken.success).toBe(false);
   });
 
   test('multilingual interview metadata survives a backup roundtrip', async () => {
@@ -290,6 +360,52 @@ describe('backup tts key policy parity (#35/#32)', () => {
     expect(result.success).toBe(true);
     expect(result.audioUploadedCount).toBe(0);
     expect(result.audioFailedCount).toBe(1);
+  });
+});
+
+describe('restore caller contract (#35): failures never touch the conversation', () => {
+  const collect = (result: DriveRestoreResult) => {
+    let historyReplacements = 0;
+    let successToasts = 0;
+    let errorToasts = 0;
+    const handled = applyRestoreResult(
+        result,
+        () => { historyReplacements += 1; },
+        (_message, type) => {
+            if (type === 'error') errorToasts += 1;
+            else successToasts += 1;
+        },
+    );
+    return { handled, historyReplacements, successToasts, errorToasts };
+  };
+
+  test('a malformed-transcript failure replaces nothing and shows exactly one error', () => {
+    const outcome = collect({
+        success: false,
+        message: 'transcript.json 형식이 올바르지 않습니다.',
+        folderId: 'folder-1',
+        folderUrl: 'https://drive.google.com/drive/folders/folder-1',
+    });
+    expect(outcome.handled).toBe(false);
+    expect(outcome.historyReplacements).toBe(0);
+    expect(outcome.successToasts).toBe(0);
+    expect(outcome.errorToasts).toBe(1);
+  });
+
+  test('a successful restore replaces history once and shows exactly one success', () => {
+    const outcome = collect({
+        success: true,
+        message: '대화 복원을 완료했습니다.',
+        folderId: 'folder-1',
+        folderUrl: 'https://drive.google.com/drive/folders/folder-1',
+        history: [],
+        audioRestoredCount: 0,
+        audioFailedCount: 0,
+    });
+    expect(outcome.handled).toBe(true);
+    expect(outcome.historyReplacements).toBe(1);
+    expect(outcome.successToasts).toBe(1);
+    expect(outcome.errorToasts).toBe(0);
   });
 });
 

@@ -221,7 +221,22 @@ export const restoreDriveSession = async (accessToken: string, sessionFolderId: 
     }
 
     const transcriptJson = await downloadDriveFileJson(accessToken, transcriptFile.id);
-    const rawHistory = Array.isArray(transcriptJson?.history) ? transcriptJson.history : [];
+    // Minimal transcript schema check (#35): a present transcript.json is not
+    // enough. Missing/null/non-array history is a damaged backup, not an
+    // empty session, and must never replace the current conversation.
+    if (
+        !transcriptJson ||
+        typeof transcriptJson !== 'object' ||
+        !Array.isArray(transcriptJson.history)
+    ) {
+        return {
+            success: false,
+            message: 'transcript.json 형식이 올바르지 않습니다.',
+            folderId: sessionFolderId,
+            folderUrl,
+        };
+    }
+    const rawHistory = transcriptJson.history;
     // Field-by-field sanitizer: keeps the Interview metadata (#23/#34) that the
     // previous restore dropped, and survives legacy/malformed backups.
     const history: ConversationItem[] = rawHistory.map((x: any) => normalizeRestoredConversationItem(x));
