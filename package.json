@@ -20,6 +20,10 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
+  "overrides": {
+    "undici": "^6.28.1",
+    "@grpc/grpc-js": "^1.13.6"
+  },
   "devDependencies": {
     "@playwright/test": "^1.57.0",
     "@tailwindcss/postcss": "^4.1.18",
