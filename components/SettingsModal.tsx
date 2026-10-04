@@ -8,9 +8,21 @@ interface SettingsModalProps {
     settings: AppSettings;
     setSettings: React.Dispatch<React.SetStateAction<AppSettings>>;
     t: any;
+    interviewMode?: boolean;
+    interviewGlossaryText?: string;
+    onInterviewGlossaryChange?: (value: string) => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings, setSettings, t }) => {
+const SettingsModal: React.FC<SettingsModalProps> = ({
+    isOpen,
+    onClose,
+    settings,
+    setSettings,
+    t,
+    interviewMode = false,
+    interviewGlossaryText = '',
+    onInterviewGlossaryChange,
+}) => {
     if (!isOpen) return null;
 
     const currentModel = settings.translationModel || DEFAULT_TRANSLATION_MODEL;
@@ -48,6 +60,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, settings
                 </div>
 
                 <div className="p-6 space-y-6 overflow-y-auto">
+                    {interviewMode && onInterviewGlossaryChange && (
+                        <div className="space-y-2">
+                            <div className="text-sm font-bold text-gray-800">인터뷰 통역 · 용어집</div>
+                            <textarea
+                                value={interviewGlossaryText}
+                                onChange={(event) => onInterviewGlossaryChange(event.target.value)}
+                                rows={5}
+                                placeholder={"파디엠 = Padiem\n컨트롤 플레인 = Control Plane"}
+                                className="w-full resize-y rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm leading-relaxed outline-none transition-all focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                            />
+                            <p className="text-[10px] text-gray-400 leading-relaxed">
+                                한 줄에 하나씩 “원문 = 원하는 번역”으로 입력합니다. 텍스트 번역/다시 번역에 적용되고, 다음 Live 전사 세션의 맞춤 어휘에도 반영됩니다.
+                            </p>
+                        </div>
+                    )}
+
                     {/* 번역 모델 선택 */}
                     <div className="space-y-2">
                         <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
