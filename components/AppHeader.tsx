@@ -29,6 +29,8 @@ interface AppHeaderProps {
     onNewConversation?: () => void;
     interviewMode?: boolean;
     interviewBackend?: 'idle' | 'gemini' | 'browser' | 'groq';
+    /** e.g. "KO ↔ EN" for the default pair, "KO · EN · VI" for three targets. */
+    interviewTargetBadge?: string;
     onToggleInterviewMode?: () => void;
 }
 
@@ -57,6 +59,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
     onNewConversation,
     interviewMode = false,
     interviewBackend = 'idle',
+    interviewTargetBadge = 'KO ↔ EN',
     onToggleInterviewMode,
 }) => {
     return (
@@ -141,7 +144,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
 
                     {interviewMode ? (
                         <div className="hidden sm:flex items-center rounded-full bg-emerald-50 px-3 py-2 text-[10px] font-black text-emerald-700 border border-emerald-100">
-                            AUTO · KO ↔ EN · {interviewBackend === 'gemini' ? 'GEMINI LIVE' : interviewBackend === 'browser' ? 'BROWSER STT' : interviewBackend === 'groq' ? 'GROQ STT' : 'READY'}
+                            AUTO · {interviewTargetBadge} · {interviewBackend === 'gemini' ? 'GEMINI LIVE' : interviewBackend === 'browser' ? 'BROWSER STT' : interviewBackend === 'groq' ? 'GROQ STT' : 'READY'}
                         </div>
                     ) : user && !user.isAnonymous && user.providerId !== 'anonymous' ? (
                         <div className="relative">

@@ -433,4 +433,100 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(firstRow).toContainText('Apple is red.');
     await expect(secondRow).toContainText('Kubernetes runs containers.');
   });
+
+  test('text input routes to the selected targets with the detected source excluded', async ({ page }) => {
+    await page.addInitScript(() => {
+      const realFetch = window.fetch.bind(window);
+      (window as any).__translateBodies = [];
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          return new Response(JSON.stringify({ code: 'ko' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          (window as any).__translateBodies.push(body);
+          return new Response(JSON.stringify({ translated: 'Apple is red.', provider: 'groq' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+
+    // Default target set is {ko, en}; the detected Korean source is excluded,
+    // so the row translates into English only.
+    await expect(page.getByText(/AUTO · KO ↔ EN/)).toHaveCount(1);
+
+    const textarea = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+    await textarea.fill('사과는 빨갛습니다.');
+    await textarea.press('Enter');
+
+    await expect(page.getByText('Apple is red.')).toBeVisible();
+    const translateBodies = await page.evaluate(() => (window as any).__translateBodies);
+    expect(translateBodies).toHaveLength(1);
+    expect(translateBodies[0].to).toBe('English');
+
+    // No per-row direction label is rendered by default.
+    await expect(page.getByText('KO → EN')).toHaveCount(0);
+    await expect(page.getByText('EN → KO')).toHaveCount(0);
+  });
+
+  test('three or more selected targets render one card with compact language tabs', async ({ page }) => {
+    await page.addInitScript(() => {
+      const realFetch = window.fetch.bind(window);
+      (window as any).__translateBodies = [];
+      const translations: Record<string, string> = {
+        'English': 'Apple is red.',
+        'Tiếng Việt': 'Quả táo màu đỏ.',
+      };
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          return new Response(JSON.stringify({ code: 'ko' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          (window as any).__translateBodies.push(body);
+          return new Response(JSON.stringify({ translated: translations[body.to] || '' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+
+    // Select Vietnamese on top of the default {ko, en} target set.
+    await page.getByRole('button', { name: '인터뷰 설정' }).click();
+    await page.getByRole('button', { name: /Tiếng Việt/ }).click();
+    // The header badge reflects the new three-target set immediately (hidden on
+    // narrow viewports, so assert on the element rather than its visibility).
+    await expect(page.getByText(/AUTO · KO · EN · VI/)).toHaveCount(1);
+    await page.locator('div.fixed.inset-0').getByRole('button').first().click();
+
+    const textarea = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+    await textarea.fill('사과는 빨갛습니다.');
+    await textarea.press('Enter');
+
+    // One translation card, two routed targets (Korean source excluded).
+    await expect(page.getByText('Apple is red.')).toBeVisible();
+    const translateBodies = await page.evaluate(() => (window as any).__translateBodies);
+    expect(translateBodies.map((body: any) => body.to).sort()).toEqual(['English', 'Tiếng Việt']);
+
+    // Compact language tabs switch the displayed translation inside the card.
+    await page.getByRole('button', { name: 'vi', exact: true }).click();
+    await expect(page.getByText('Quả táo màu đỏ.')).toBeVisible();
+  });
 });

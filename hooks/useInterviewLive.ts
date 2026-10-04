@@ -20,7 +20,7 @@ export type LiveTranslationUpdate = {
 type UseInterviewLiveOptions = {
   onInterimTranscript: (text: string) => void;
   /** `utteranceId` identifies the finalized source segment this text belongs to. */
-  onFinalTranscript: (text: string, utteranceId: string) => void;
+  onFinalTranscript: (text: string, utteranceId: string, languageCode?: string) => void;
   /** Fired when a new utterance opens, so live preview can reset for it. */
   onUtteranceStart: (utteranceId: string) => void;
   onLiveTranslation: (update: LiveTranslationUpdate) => void;
@@ -453,6 +453,8 @@ export function useInterviewLive({
             const content = message?.serverContent;
             const interim = content?.interimInputTranscription?.text;
             const finalText = content?.inputTranscription?.text;
+            // Authoritative source-language identity when the transcriber emits it.
+            const finalLanguageCode = content?.inputTranscription?.languageCode;
 
             if (interim) {
               onInterimTranscript(String(interim).trim());
@@ -464,7 +466,7 @@ export function useInterviewLive({
                 // context boundary: the finished utterance keeps its own session
                 // so its translation can never carry an earlier one.
                 const utteranceId = translationRef.current?.activeUtteranceId || '';
-                handlersRef.current.onFinalTranscript(committedTranscript, utteranceId);
+                handlersRef.current.onFinalTranscript(committedTranscript, utteranceId, finalLanguageCode);
                 translationRef.current?.rotate();
               }
             }

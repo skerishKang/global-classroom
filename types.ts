@@ -26,6 +26,14 @@ export interface GlossaryEntry {
   target: string;
 }
 
+// One translation produced for a specific target language.
+export interface TranslationVariant {
+  text: string;
+  kind?: 'live' | 'manual';
+  stale?: boolean;
+  updatedAt?: number;
+}
+
 export interface ConversationItem {
   id: string;
   original: string;
@@ -36,6 +44,12 @@ export interface ConversationItem {
   originalRaw?: string;
   translationKind?: 'live' | 'manual';
   translationStale?: boolean;
+  /** Authoritative detected source language (BCP-47), when known. */
+  sourceLanguage?: string;
+  /** Per-target translations keyed by target language code. */
+  translations?: Record<string, TranslationVariant>;
+  /** Which translation key to display when several targets exist. */
+  activeTarget?: string;
   audioBase64?: string; // Cache for TTS audio (in-memory)
   audioUrl?: string; // Firebase Storage URL
   updatedAt?: number;
@@ -138,4 +152,6 @@ export interface AppSettings {
   userApiKey?: string;
   translationModel?: string;
   savedApiKeys?: string[]; // 로컬에만 저장하는 즐겨찾기 키 슬롯
+  /** Interview mode: selected output target language set. */
+  interviewTargets?: string[];
 }

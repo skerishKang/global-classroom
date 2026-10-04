@@ -198,10 +198,29 @@ export function useConversationHistory() {
             if (item.id !== id) return item;
             const sourceChanged = original !== item.original;
             const translationChanged = translated !== item.translated;
+            // Keep the displayed variant of a multi-target row in sync with the
+            // active translation the user just edited.
+            const variantTarget = item.activeTarget;
+            const activeVariant = item.translations && variantTarget
+                ? item.translations[variantTarget]
+                : undefined;
+            const translations = activeVariant
+                ? {
+                    ...item.translations,
+                    [variantTarget as string]: {
+                        ...activeVariant,
+                        text: translated,
+                        kind: translationChanged ? 'manual' : activeVariant.kind,
+                        stale: translationChanged ? false : (sourceChanged ? true : activeVariant.stale),
+                        updatedAt: Date.now(),
+                    },
+                }
+                : item.translations;
             return {
                 ...item,
                 original,
                 translated,
+                translations,
                 translationStale: translationChanged ? false : (sourceChanged ? true : item.translationStale),
                 translationKind: translationChanged ? 'manual' : item.translationKind,
                 updatedAt: Date.now(),
