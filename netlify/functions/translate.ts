@@ -1,5 +1,17 @@
 import { GoogleGenAI } from '@google/genai';
 import Groq from 'groq-sdk';
+import {
+  enforceBodySize,
+  enforceTextLimit,
+  errorResponse,
+  readJsonBody,
+  safeErrorDetail,
+  MAX_GLOSSARY_ENTRIES,
+  MAX_GLOSSARY_TERM_CHARS,
+  MAX_LANGUAGE_LABEL_CHARS,
+  MAX_TRANSLATE_BODY_BYTES,
+  MAX_TRANSLATE_TEXT_CHARS,
+} from './_aiGuards';
 
 type GroqRoute = {
   id: string;
@@ -67,17 +79,16 @@ export const handler = async (event: any) => {
     };
   }
 
-  let body: any = {};
-  try {
-    const raw = event.isBase64Encoded
-      ? Buffer.from(event.body || '', 'base64').toString('utf-8')
-      : event.body || '';
-    body = raw ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error('translate: failed to parse body', err);
-    body = {};
-  }
+  const tooLarge = enforceBodySize(event, MAX_TRANSLATE_BODY_BYTES);
+  if (tooLarge) return tooLarge;
 
+  // Malformed JSON is an explicit 400 instead of being silently treated as {} (#36).
+  const parsedBody = readJsonBody(event);
+  if (parsedBody.ok === false) return parsedBody.response;
+  const body = parsedBody.body;
+
+  // NOTE (#36): a caller-provided "model" field is intentionally ignored.
+  // Models are selected server-side from the allowlists below.
   const text = typeof body.text === 'string' ? body.text : '';
   const from = typeof body.from === 'string' ? body.from : '';
   const to = typeof body.to === 'string' ? body.to : '';
@@ -86,7 +97,7 @@ export const handler = async (event: any) => {
         .filter((entry: any) => entry && typeof entry.source === 'string' && typeof entry.target === 'string')
         .map((entry: any) => ({ source: entry.source.trim(), target: entry.target.trim() }))
         .filter((entry: any) => entry.source && entry.target)
-        .slice(0, 100)
+        .slice(0, MAX_GLOSSARY_ENTRIES)
     : [];
 
   if (!text.trim() || !from || !to) {
@@ -96,6 +107,20 @@ export const handler = async (event: any) => {
       body: JSON.stringify({ error: '필수 값(text/from/to)이 누락되었습니다.' }),
     };
   }
+
+  const langOversize = enforceTextLimit(from, MAX_LANGUAGE_LABEL_CHARS, 'from')
+    || enforceTextLimit(to, MAX_LANGUAGE_LABEL_CHARS, 'to');
+  if (langOversize) return langOversize;
+
+  const oversizedGlossaryTerm = glossary.find(
+    (entry) => entry.source.length > MAX_GLOSSARY_TERM_CHARS || entry.target.length > MAX_GLOSSARY_TERM_CHARS
+  );
+  if (oversizedGlossaryTerm) {
+    return errorResponse(413, `glossary source/target 값이 너무 깁니다. 최대 ${MAX_GLOSSARY_TERM_CHARS}자까지 허용됩니다.`);
+  }
+
+  const oversize = enforceTextLimit(text, MAX_TRANSLATE_TEXT_CHARS, 'text');
+  if (oversize) return oversize;
 
   const prompt = translationPrompt(text, from, to, glossary);
   let lastError: any = null;
@@ -137,8 +162,8 @@ export const handler = async (event: any) => {
         };
       } catch (error: any) {
         lastError = error;
-        lastErrorDetail = error?.message || String(error);
-        console.error(`translate: Groq ${route.id} failed:`, error?.message);
+        lastErrorDetail = safeErrorDetail(error);
+        console.error(`translate: Groq ${route.id} failed:`, lastErrorDetail);
         continue;
       }
     }
@@ -174,8 +199,8 @@ export const handler = async (event: any) => {
         };
       } catch (error: any) {
         lastError = error;
-        lastErrorDetail = error?.message || String(error);
-        console.error(`translate: Google ${model} failed:`, error?.message);
+        lastErrorDetail = safeErrorDetail(error);
+        console.error(`translate: Google ${model} failed:`, lastErrorDetail);
         continue;
       }
     }
