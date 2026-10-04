@@ -4,7 +4,7 @@
 
 # Global Classroom
 
-실시간 음성 인식과 번역, 그리고 Google Workspace(Drive/Docs/Classroom) 내보내기까지 결합한 **AI 기반 다국어 교실 보조 앱**입니다.
+실시간 음성 인식·번역, AI 인터뷰 통역, 그리고 Google Workspace(Drive/Docs/Classroom) 연동을 결합한 **AI 기반 다국어 커뮤니케이션 앱**입니다. 기존 Global Classroom 화면과 별도로 앱을 하나 더 만드는 방식이 아니라, 같은 UI 안에서 Classroom과 Interview 동작을 전환합니다.
 
 교사/학생/강연자/통역 상황에서
 
@@ -18,7 +18,8 @@
 
 ## 링크
 
-- 배포(예시): https://7-global-classroom.netlify.app
+- Production: https://7-global-classroom.netlify.app
+- AI Interview Interpreter: https://7-global-classroom.netlify.app/?mode=interview
 
 ## 운영 권한
 
@@ -83,6 +84,23 @@
   - 자동 스크롤(옵션)
   - 프로필 메뉴(설정/로그아웃)
 
+## AI Interview Interpreter
+
+Interview 모드는 `?mode=interview`로 진입하며, 기존 Global Classroom UI를 재사용합니다.
+
+현재 Interview 경로의 핵심 동작:
+
+- **음성 원문**: Gemini `gemini-3.5-transcribe-live`를 authoritative transcript로 사용
+- **실시간 번역 미리보기**: Gemini `gemini-3.5-live-translate-preview`
+- **fallback STT**: Browser SpeechRecognition → Groq Whisper 순으로 전환
+- **텍스트 번역/다시 번역**: Groq 우선, Google 계열 모델 fallback
+- **키보드 입력**: 왼쪽 고정 composer에서 Enter로 번역, Shift+Enter로 줄바꿈
+- **원문/번역 독립 수정**: 원문 수정은 번역을 자동 재작성하지 않으며, 다시 번역은 명시적 사용자 동작
+- **대화 기록**: 비로그인 상태에서도 브라우저 localStorage에 텍스트 세션 저장
+- **용어집**: 메인 대화 화면이 아니라 Interview 설정에서 관리
+
+현재 Interview의 Live Translate 런타임은 한국어/영어 세션을 사용합니다. 입력 자동 감지 + 복수 번역 언어 선택 UX는 [Issue #23](../../issues/23)에서 추적 중이며, 이전 발화 번역이 다음 행으로 이어지는 문제는 [Issue #22](../../issues/22)에서 별도 수정합니다.
+
 ## 사용 시나리오(수업 1시간)
 
 1. 수업 시작 전에 로그인(선택)
@@ -103,10 +121,11 @@
 - 각 문장은 원문/번역으로 카드 형태로 누적됩니다.
 - 번역은 Netlify Functions(`/api/translate`)를 통해 처리됩니다.
 
-### 자동 언어 감지 + 입력/출력 자동 스왑
+### 자동 언어 감지 / 번역 언어
 
-- 발화 텍스트를 기반으로 언어를 감지(`/api/detect-language`)하여 입력 언어를 자동으로 맞춥니다.
-- 출력 언어는 “직전 입력 언어”로 자동 스왑됩니다(사용자가 수동 변경하기 전까지).
+일반 Classroom 모드는 발화 텍스트를 기반으로 `/api/detect-language`를 사용해 입력 언어를 감지하고 기존 입력/출력 언어 UX를 유지합니다.
+
+Interview 모드는 Gemini Transcribe Live의 자동 감지를 사용하며, 현재 Live Translate는 한국어/영어 대상으로 동작합니다. Interview 전용 복수 번역 언어 선택과 고급 언어쌍 정책은 Issue #23에서 진행 중입니다.
 
 ### TTS(문장 재생/전체 듣기) + 음성 캐시(IndexedDB)
 
@@ -136,7 +155,7 @@ TTS 생성은 Netlify Functions(`/api/tts`)를 사용합니다.
 
 ### Google Workspace 연동(Drive/Docs/Classroom)
 
-Google 로그인(GIS OAuth) 후 아래 기능을 사용할 수 있습니다.
+현재 구현은 Google 로그인(GIS OAuth) 후 아래 기능을 사용할 수 있습니다. 장기적으로는 Padiem 공용 Google connector authority를 재사용하는 방향이며, 전환 작업은 [Issue #20](../../issues/20)에서 관리합니다.
 
 - **Google Drive 백업**: 세션 폴더에 transcript/manifest/오디오를 저장
 - **Google Docs 저장**: 번역 노트를 문서로 정리하여 저장
@@ -255,15 +274,21 @@ sequenceDiagram
 
 - Netlify Functions(`/api/*`)
   - `/api/live-token`: Gemini Live 임시 토큰 발급
-  - `/api/translate`: 번역
+  - `/api/transcribe`: Groq Whisper STT fallback
+  - `/api/translate`: Groq-first 텍스트 번역 + Google fallback
   - `/api/tts`: TTS 음성 생성
   - `/api/vision`: 이미지 텍스트 감지/번역
-  - `/api/detect-language`: 언어 감지
+  - `/api/detect-language`: Classroom 언어 감지
 
 ### 외부 연동
 
+- Google Gemini Live / Gemini API
+- Groq API (Whisper STT, text translation route)
+- Firebase Authentication / Firestore (현재 계정·프로필 경로)
 - Google OAuth(GIS)
 - Google Drive/Docs/Classroom API
+
+현재 Firebase 회원가입/로그인은 그대로 유지합니다. Padiem 공용 계정/SSO로의 단계적 전환은 [Issue #20](../../issues/20)에서 별도로 진행하며, 이메일 일치만으로 기존 계정을 자동 병합하지 않습니다.
 
 ## 설정(프로필 메뉴)
 
@@ -330,11 +355,12 @@ npm run build
 ### Netlify(서버 함수)
 
 - `GEMINI_API_KEY`
+- `GROQ_API_KEY`
 
 ### 테스트(Playwright)
 
 - `PLAYWRIGHT_BASE_URL` (선택)
-  - 미설정 시 기본값: `http://127.0.0.1:3000` (Playwright가 `npm run dev`를 자동 실행)
+  - 미설정 시 기본값: `http://127.0.0.1:5180` (Playwright가 `npm run dev`를 자동 실행)
   - 배포 환경을 대상으로 테스트하려면 예: `PLAYWRIGHT_BASE_URL=https://7-global-classroom.netlify.app`
 - `ADMIN_EMAIL`, `ADMIN_PASSWORD` (선택)
   - 관리자 E2E 테스트를 실행할 때 필요합니다.
@@ -360,6 +386,7 @@ Netlify 빌드 설정은 `netlify.toml`을 기준으로 합니다.
 Netlify 환경변수에 아래 값을 설정합니다.
 
 - `GEMINI_API_KEY`
+- `GROQ_API_KEY`
 - `VITE_GOOGLE_CLIENT_ID`
 - `VITE_SENTRY_DSN` (선택)
 
@@ -442,10 +469,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-screenshots.
 - “음성 캐시(IndexedDB)”를 켜면 재생이 더 안정적일 수 있습니다.
 - 네트워크 상황에 따라 Drive에서 wav를 내려받는 시간이 길어질 수 있습니다.
 
-## 로드맵
+## 현재 작업 / 로드맵
 
+- [#22](../../issues/22) — Live Translate 발화별 context isolation / 이전 번역 누적 제거
+- [#23](../../issues/23) — 입력 자동 감지 + 복수 번역 언어 선택 + 고급 언어쌍
+- [#24](../../issues/24) — 수정/재생/다시 번역 action을 compact icon으로 정리
+- [#20](../../issues/20) — Padiem 공용 계정/Portal/SSO 및 shared Google connector 전환
 - 내보내기 UX 개선: alert → 결과 모달(바로가기 링크 포함)
 - Docs/Drive 내보내기에서 결과 URL을 UI로 반환/표시
-- Drive 자동 백업 모드 동작 정의 및 안정화
 
 
