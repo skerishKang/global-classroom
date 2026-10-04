@@ -113,6 +113,21 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     const translateBodies = await page.evaluate(() => (window as any).__translateBodies);
     expect(translateBodies[0]?.glossary).toEqual([{ source: '파디엠', target: 'Padiem' }]);
 
+    // #24: translation actions are compact icon-only controls in the card corner.
+    const actionGroup = page.getByTestId('translation-row-actions').first();
+    await expect(actionGroup).toBeVisible();
+    await expect(actionGroup).toHaveText('');
+    const editAction = actionGroup.getByRole('button', { name: '번역 수정' });
+    const playAction = actionGroup.getByRole('button', { name: '재생' });
+    const retranslateAction = actionGroup.getByRole('button', { name: '다시 번역' });
+    await expect(editAction).toHaveAttribute('title', '번역 수정');
+    await expect(playAction).toHaveAttribute('title', '재생');
+    await expect(retranslateAction).toHaveAttribute('title', '다시 번역');
+    await expect(editAction).toHaveClass(/h-10/);
+    await expect(playAction).toHaveClass(/h-10/);
+    await expect(retranslateAction).toHaveClass(/h-10/);
+    await expect(page.getByText('다시 번역', { exact: true })).toHaveCount(0);
+
     // Interview editing stays in the same left/right columns. Merge arrows are intentionally hidden.
     await expect(page.getByTitle('위 항목과 병합')).toHaveCount(0);
     await expect(page.getByTitle('아래 항목과 병합')).toHaveCount(0);
@@ -134,6 +149,40 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await translationEditor.fill('I built Padiem myself.');
     await page.getByRole('button', { name: '저장' }).click();
     await expect(page.getByText('I built Padiem myself.')).toBeVisible();
+  });
+
+  test('playing translation exposes a stop icon control instead of a text action row', async ({ page }) => {
+    await page.addInitScript(() => {
+      const now = Date.now();
+      localStorage.setItem('global_classroom_sessions', JSON.stringify([{
+        id: 'compact-actions',
+        createdAt: now,
+        updatedAt: now,
+        title: 'Compact actions',
+        items: [{
+          id: 'playing-row',
+          original: '안녕하세요.',
+          translated: 'Hello.',
+          sourceKind: 'text',
+          sourceLanguage: 'ko',
+          translations: {
+            en: { text: 'Hello.', kind: 'manual', stale: false, updatedAt: now },
+          },
+          activeTarget: 'en',
+          translationKind: 'manual',
+          translationStale: false,
+          ttsStatus: 'playing',
+          timestamp: now,
+        }],
+      }]));
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    const actions = page.getByTestId('translation-row-actions').first();
+    await expect(actions).toBeVisible();
+    await expect(actions.getByRole('button', { name: '정지' })).toHaveAttribute('title', '정지');
+    await expect(actions.getByRole('button', { name: '재생' })).toHaveCount(0);
+    await expect(actions).toHaveText('');
   });
 
   test('falls back to Groq STT inside the same UI when Gemini Live and browser STT are unavailable', async ({ page }) => {    await page.addInitScript(() => {
@@ -528,6 +577,14 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     // Compact language tabs switch the displayed translation inside the card.
     await page.getByRole('button', { name: 'vi', exact: true }).click();
     await expect(page.getByText('Quả táo màu đỏ.')).toBeVisible();
+
+    // #24: row actions apply to the currently selected target tab. Retranslating
+    // VI must not silently re-run the EN variant.
+    await page.evaluate(() => { (window as any).__translateBodies = []; });
+    await page.getByRole('button', { name: '다시 번역' }).click();
+    await expect.poll(async () => page.evaluate(() => (window as any).__translateBodies.length)).toBe(1);
+    const retranslateBodies = await page.evaluate(() => (window as any).__translateBodies);
+    expect(retranslateBodies[0].to).toBe('Tiếng Việt');
   });
 
   test('browser STT fallback detects the source language before routing and never auto-translates', async ({ page }) => {
