@@ -777,11 +777,17 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     const sourceLanguage = item.sourceLanguage
       ? (SUPPORTED_LANGUAGES.find((language) => language.code === item.sourceLanguage) || interviewAuto)
       : interviewAuto;
+    const activeTarget = item.activeTarget && item.translations?.[item.activeTarget]
+      ? item.activeTarget
+      : '';
+    const retranslatePolicy = activeTarget
+      ? { ...interviewPolicyRef.current, targets: [activeTarget] }
+      : interviewPolicyRef.current;
     void translateToTargets(
       item.original,
       item.id,
       sourceLanguage,
-      interviewPolicyRef.current,
+      retranslatePolicy,
       interviewGlossary,
       item.sourceLanguage
     );
