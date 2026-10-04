@@ -6,6 +6,7 @@ import {
   formatTargetBadge,
   getDefaultTargets,
   getTargetsForSource,
+  normalizeLanguageCode,
   parsePairRules,
   pickActiveTarget,
   sanitizeTargets,
@@ -101,5 +102,43 @@ describe('interviewLanguageRouting', () => {
   test('formatPairRules renders rules back into the textarea format', () => {
     expect(formatPairRules([{ source: 'ko', target: 'en' }, { source: 'vi', target: 'ko' }]))
       .toBe('KO → EN\nVI → KO');
+  });
+
+  test('BCP-47 tags normalize to the canonical base language', () => {
+    expect(normalizeLanguageCode('ko-KR')).toBe('ko');
+    expect(normalizeLanguageCode('en-US')).toBe('en');
+    expect(normalizeLanguageCode('vi-VN')).toBe('vi');
+    expect(normalizeLanguageCode('ja-JP')).toBe('ja');
+    // case, whitespace and underscores are normalized too
+    expect(normalizeLanguageCode(' EN_us ')).toBe('en');
+    // script/region subtags are ignored per the base-language contract
+    expect(normalizeLanguageCode('zh-Hant-TW')).toBe('zh');
+    expect(normalizeLanguageCode('')).toBe('');
+  });
+
+  test('region-tagged sources are excluded exactly like their base language', () => {
+    const pair: InterviewLanguagePolicy = { targets: ['ko', 'en'] };
+    expect(getTargetsForSource('ko-KR', pair)).toEqual(['en']);
+    expect(getTargetsForSource('en-US', pair)).toEqual(['ko']);
+
+    const withVi: InterviewLanguagePolicy = { targets: ['ko', 'en', 'vi'] };
+    expect(getTargetsForSource('vi-VN', withVi)).toEqual(['ko', 'en']);
+
+    const withJa: InterviewLanguagePolicy = { targets: ['ko', 'en', 'ja'] };
+    expect(getTargetsForSource('ja-JP', withJa)).toEqual(['ko', 'en']);
+  });
+
+  test('pair rules apply to the canonicalized source', () => {
+    const policy: InterviewLanguagePolicy = {
+      targets: ['ko', 'en', 'ja'],
+      pairRules: [{ source: 'ja', target: 'en' }],
+    };
+    expect(getTargetsForSource('ja-JP', policy)).toEqual(['en']);
+    // Rule text itself is parsed into canonical form.
+    expect(parsePairRules('JA-JP -> EN-US')).toEqual([{ source: 'ja', target: 'en' }]);
+  });
+
+  test('sanitizeTargets canonicalizes stored codes', () => {
+    expect(sanitizeTargets(['KO ', 'en-US', 'ko', 'auto'])).toEqual(['ko', 'en']);
   });
 });

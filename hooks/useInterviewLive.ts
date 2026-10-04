@@ -27,6 +27,13 @@ type UseInterviewLiveOptions = {
   /** Target languages kept in live rotation. Extensible for multi-language routing. */
   translationTargets?: readonly TranslationTarget[];
   glossaryTerms?: string[];
+  /**
+   * Authoritative source-language detection for the fallback transcribers
+   * (browser SpeechRecognition / Groq Whisper), which report no language code.
+   * Reuses the same `/api/detect-language` authority as the text path so voice
+   * routing shares one source of truth.
+   */
+  detectLanguage?: (text: string) => Promise<string | undefined>;
   onWarning?: (message: string) => void;
   onFatalError?: (message: string) => void;
 };
@@ -85,6 +92,7 @@ export function useInterviewLive({
   onLiveTranslation,
   translationTargets = DEFAULT_TRANSLATION_TARGETS,
   glossaryTerms = [],
+  detectLanguage,
   onWarning,
   onFatalError,
 }: UseInterviewLiveOptions) {
@@ -112,6 +120,29 @@ export function useInterviewLive({
   // once per start() without being rebuilt when a caller re-renders.
   const handlersRef = useRef({ onFinalTranscript, onUtteranceStart, onLiveTranslation, onWarning });
   handlersRef.current = { onFinalTranscript, onUtteranceStart, onLiveTranslation, onWarning };
+
+  const detectLanguageRef = useRef(detectLanguage);
+  detectLanguageRef.current = detectLanguage;
+
+  /**
+   * Fallback transcribers deliver no language identity, so the finalized
+   * transcript goes through the same detector the text path uses. The resolved
+   * code feeds `onFinalTranscript`'s languageCode; a failure defers to the
+   * caller's heuristic.
+   */
+  const resolveLanguageCode = useCallback(async (text: string): Promise<string | undefined> => {
+    const detector = detectLanguageRef.current;
+    if (!detector) return undefined;
+    try {
+      const code = await detector(text);
+      return code || undefined;
+    } catch (error) {
+      handlersRef.current.onWarning?.(
+        `음성 원문 언어 감지에 실패했습니다: ${error instanceof Error ? error.message : String(error)}`
+      );
+      return undefined;
+    }
+  }, []);
 
   const cleanup = useCallback(() => {
     if (browserRestartTimerRef.current) {
@@ -252,7 +283,11 @@ export function useInterviewLive({
 
         try {
           const transcript = await postGroqTranscribe(blob);
-          if (transcript) onFinalTranscript(transcript, `groq-${Date.now()}`);
+          if (transcript) {
+            // Same authoritative detection as the browser/browser-free fallbacks.
+            const languageCode = await resolveLanguageCode(transcript);
+            handlersRef.current.onFinalTranscript(transcript, `groq-${Date.now()}`, languageCode);
+          }
         } catch (error) {
           onWarning?.(`Groq Whisper 전사 오류: ${error instanceof Error ? error.message : String(error)}`);
         }
@@ -276,7 +311,7 @@ export function useInterviewLive({
       const message = error instanceof Error ? error.message : String(error);
       onFatalError?.(`마이크 fallback을 시작하지 못했습니다: ${message}`);
     }
-  }, [onFatalError, onFinalTranscript, onWarning, postGroqTranscribe]);
+  }, [onFatalError, onWarning, postGroqTranscribe, resolveLanguageCode]);
 
   const startBrowserFallback = useCallback(() => {
     if (!desiredRef.current) return;
@@ -312,7 +347,14 @@ export function useInterviewLive({
             finalized += text;
             const committed = finalized.trim();
             finalized = '';
-            if (committed) onFinalTranscript(committed, `browser-${Date.now()}`);
+            if (committed) {
+              // The browser transcriber has no language identity; resolve it
+              // authoritatively before the row's routing is decided.
+              const utteranceId = `browser-${Date.now()}`;
+              void resolveLanguageCode(committed).then((languageCode) =>
+                handlersRef.current.onFinalTranscript(committed, utteranceId, languageCode)
+              );
+            }
           } else {
             interim += text;
           }
@@ -349,7 +391,7 @@ export function useInterviewLive({
     };
 
     runRecognition();
-  }, [onFinalTranscript, onInterimTranscript, onWarning, startGroqFallback]);
+  }, [onInterimTranscript, onWarning, resolveLanguageCode, startGroqFallback]);
 
   const beginFallback = useCallback((reason: string) => {
     if (!desiredRef.current || fallbackStartedRef.current) return;

@@ -529,4 +529,202 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await page.getByRole('button', { name: 'vi', exact: true }).click();
     await expect(page.getByText('Quả táo màu đỏ.')).toBeVisible();
   });
+
+  test('browser STT fallback detects the source language before routing and never auto-translates', async ({ page }) => {
+    await page.addInitScript(() => {
+      // Preselect {ko, en, vi} so the detected Vietnamese source must be excluded.
+      localStorage.setItem('global_class_settings', JSON.stringify({
+        driveBackupMode: 'manual',
+        audioCacheEnabled: true,
+        recordOriginalEnabled: true,
+        interviewTargets: ['ko', 'en', 'vi'],
+      }));
+
+      const realFetch = window.fetch.bind(window);
+      (window as any).__translateBodies = [];
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          // The detector reports a full BCP-47 tag, like production does.
+          return new Response(JSON.stringify({ code: 'vi-VN' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          (window as any).__translateBodies.push(body);
+          return new Response(JSON.stringify({ translated: `translated:${body.to}` }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+
+      class FakeSpeechRecognition {
+        continuous = false;
+        interimResults = false;
+        lang = '';
+        onstart: (() => void) | null = null;
+        onresult: ((event: any) => void) | null = null;
+        onerror: ((event: any) => void) | null = null;
+        onend: (() => void) | null = null;
+        start() {
+          (window as any).__recognition = this;
+          window.setTimeout(() => this.onstart?.(), 0);
+        }
+        stop() {}
+      }
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: FakeSpeechRecognition });
+      Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, value: FakeSpeechRecognition });
+    });
+    const failLiveToken = async (route: any) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'test live unavailable' }),
+      });
+    };
+    await page.route('**/api/live-token', failLiveToken);
+    await page.route('**/live-token', failLiveToken);
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    await page.getByTitle(/마이크 켜기/).click();
+    await expect(page.getByText(/BROWSER STT/)).toHaveCount(1);
+
+    // Deliver one finalized Vietnamese utterance through the fake recognizer.
+    await page.evaluate(() => {
+      const recognition = (window as any).__recognition;
+      const alternative = [{ transcript: 'Tôi đã xây dựng Padiem.' }];
+      const result = Object.assign(alternative, { isFinal: true });
+      recognition.onresult({ resultIndex: 0, results: [result] });
+    });
+
+    await expect(page.getByText('Tôi đã xây dựng Padiem.')).toBeVisible();
+    // The fallback row waits for the user: no automatic translation request.
+    expect(await page.evaluate(() => (window as any).__translateBodies.length)).toBe(0);
+
+    // Manual retranslation routes with the authoritative source (vi-VN -> vi):
+    // Vietnamese is excluded from the selected set, so ko + en are translated.
+    await page.getByRole('button', { name: '다시 번역' }).click();
+    // Both routed targets land as variants of the same row; the first routed
+    // target (ko) is displayed and the compact tabs switch between them.
+    await expect(page.getByText('translated:한국어 (Korean)')).toBeVisible();
+    await page.getByRole('button', { name: 'en', exact: true }).click();
+    await expect(page.getByText('translated:English')).toBeVisible();
+    const bodies = await page.evaluate(() => (window as any).__translateBodies);
+    expect(bodies.map((body: any) => body.to).sort()).toEqual(['English', '한국어 (Korean)'].sort());
+    expect(bodies.every((body: any) => body.from === 'Tiếng Việt')).toBe(true);
+  });
+
+  test('Groq STT fallback applies pair rules to the authoritative source and never auto-translates', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('global_class_settings', JSON.stringify({
+        driveBackupMode: 'manual',
+        audioCacheEnabled: true,
+        recordOriginalEnabled: true,
+        interviewTargets: ['ko', 'en', 'ja'],
+      }));
+      localStorage.setItem('global-classroom-interview-pair-rules-v1', 'JA -> EN');
+
+      const realFetch = window.fetch.bind(window);
+      (window as any).__translateBodies = [];
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          return new Response(JSON.stringify({ code: 'ja-JP' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('transcribe')) {
+          return new Response(JSON.stringify({ text: '私はパディエムを作りました。' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          (window as any).__translateBodies.push(body);
+          return new Response(JSON.stringify({ translated: `translated:${body.to}` }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+
+      Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: undefined });
+      Object.defineProperty(window, 'webkitSpeechRecognition', { configurable: true, value: undefined });
+
+      const fakeTrack = { stop: () => {} } as unknown as MediaStreamTrack;
+      const fakeStream = { getTracks: () => [fakeTrack] } as unknown as MediaStream;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => fakeStream },
+      });
+
+      let recorderStarts = 0;
+      class FakeMediaRecorder {
+        static isTypeSupported() {
+          return true;
+        }
+
+        state: RecordingState = 'inactive';
+        mimeType = 'audio/webm';
+        ondataavailable: ((event: BlobEvent) => void) | null = null;
+        onstop: (() => void) | null = null;
+
+        constructor(_stream: MediaStream, options?: MediaRecorderOptions) {
+          if (options?.mimeType) this.mimeType = options.mimeType;
+        }
+
+        start() {
+          this.state = 'recording';
+          // Stop exactly once so a single finalized utterance is produced.
+          recorderStarts += 1;
+          if (recorderStarts === 1) {
+            window.setTimeout(() => {
+              if (this.state === 'recording') this.stop();
+            }, 600);
+          }
+        }
+
+        stop() {
+          this.state = 'inactive';
+          const blob = new Blob(['fake-audio'], { type: this.mimeType });
+          this.ondataavailable?.({ data: blob } as BlobEvent);
+          this.onstop?.();
+        }
+      }
+      Object.defineProperty(window, 'MediaRecorder', { configurable: true, value: FakeMediaRecorder });
+    });
+    const failLiveToken = async (route: any) => {
+      await route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'test live unavailable' }),
+      });
+    };
+    await page.route('**/api/live-token', failLiveToken);
+    await page.route('**/live-token', failLiveToken);
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    await page.getByTitle(/마이크 켜기/).click();
+    await expect(page.getByText(/GROQ STT/)).toHaveCount(1);
+
+    await expect(page.getByText('私はパディエムを作りました。')).toBeVisible({ timeout: 10000 });
+    // No automatic translation request for the fallback transcript.
+    expect(await page.evaluate(() => (window as any).__translateBodies.length)).toBe(0);
+
+    // The pair rule (JA -> EN) matches the canonicalized source: ja-JP -> ja,
+    // so manual retranslation produces exactly one English translation.
+    await page.getByRole('button', { name: '다시 번역' }).click();
+    await expect(page.getByText('translated:English')).toBeVisible();
+    const bodies = await page.evaluate(() => (window as any).__translateBodies);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].from).toBe('日本語 (Japanese)');
+    expect(bodies[0].to).toBe('English');
+  });
 });

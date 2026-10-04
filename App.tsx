@@ -71,6 +71,7 @@ import {
   formatTargetBadge,
   getDefaultTargets,
   getTargetsForSource,
+  normalizeLanguageCode,
   parsePairRules,
   pickActiveTarget,
   sanitizeTargets,
@@ -558,11 +559,13 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     if (!normalized) return;
 
     // Real language identity: the transcriber's language code when it provides
-    // one, the script heuristic otherwise. Either way it is a code that can be
-    // removed from the selected target set.
-    const sourceLanguage = detectedLanguageCode && detectedLanguageCode !== 'auto'
-      ? detectedLanguageCode
-      : detectSourceLanguageHeuristic(normalized);
+    // one, the script heuristic otherwise. Region tags are canonicalized to the
+    // base language (ko-KR -> ko) before the policy compares anything.
+    const sourceLanguage = normalizeLanguageCode(
+      detectedLanguageCode && detectedLanguageCode !== 'auto'
+        ? detectedLanguageCode
+        : detectSourceLanguageHeuristic(normalized)
+    );
     const allowedTargets = getTargetsForSource(sourceLanguage, interviewPolicyRef.current);
     const activeTarget = pickActiveTarget(allowedTargets);
 
@@ -683,6 +686,17 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     onLiveTranslation: onInterviewLiveTranslation,
     translationTargets: interviewTargets,
     glossaryTerms: interviewGlossaryTerms,
+    // Fallback transcribers (browser/Groq) report no language code; reuse the
+    // text path's detector so voice routing uses one authoritative source.
+    detectLanguage: async (text: string) => {
+      try {
+        const detected = await postApi<{ code?: string }>('detect-language', { text });
+        return typeof detected?.code === 'string' ? detected.code : undefined;
+      } catch (detectionError) {
+        console.warn('Voice source-language detection failed', detectionError);
+        return undefined;
+      }
+    },
     onWarning: (message) => setInterviewLiveWarning(message),
     onFatalError: (message) => setInterviewLiveError(message),
   });

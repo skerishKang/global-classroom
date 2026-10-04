@@ -3,6 +3,7 @@ import { Language, ConversationItem, AppSettings, GlossaryEntry, TranslationVari
 import { SUPPORTED_LANGUAGES } from '../constants';
 import {
     getTargetsForSource,
+    normalizeLanguageCode,
     type InterviewLanguagePolicy,
 } from '../utils/interviewLanguageRouting';
 
@@ -158,11 +159,11 @@ export function useTranslationService({
         try {
             // Authoritative source identity for text input; a caller that already
             // knows the language (e.g. retranslation) passes it via override.
-            let detectedCode = detectedCodeOverride || fromLang.code;
+            let detectedCode = normalizeLanguageCode(detectedCodeOverride || fromLang.code);
             if (fromLang.code === 'auto' && !detectedCodeOverride) {
                 try {
                     const detectRes = await postApi<{ code: string }>('detect-language', { text });
-                    detectedCode = detectRes.code;
+                    detectedCode = normalizeLanguageCode(detectRes.code) || detectedCode;
                 } catch (de) {
                     console.error('Auto detection failed, falling back to the input language', de);
                 }
