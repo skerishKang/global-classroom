@@ -1,4 +1,5 @@
 import { ConversationItem } from '../types';
+import { requireGoogleJson, requireGoogleOk } from './googleHttp';
 
 const getHeaders = (accessToken: string, contentType: string = 'application/json') => {
     return {
@@ -12,13 +13,19 @@ export const exportToDocs = async (accessToken: string, history: ConversationIte
         const today = new Date().toISOString().split('T')[0];
         const title = `Global Classroom Notes - ${today}`;
 
+        // Both steps must succeed for the export to be reported as success:
+        // a created-but-empty document must never be sold as a completed
+        // export (#35). If the create fails, batchUpdate is never attempted.
         const createRes = await fetch('https://docs.googleapis.com/v1/documents', {
             method: 'POST',
             headers: getHeaders(accessToken),
             body: JSON.stringify({ title: title })
         });
-        const docData = await createRes.json();
+        const docData = await requireGoogleJson<{ documentId?: string }>(createRes, 'Docs 문서 생성');
         const docId = docData.documentId;
+        if (!docId) {
+            throw new Error('Docs 문서 생성 응답에 documentId가 없습니다.');
+        }
 
         let contentString = "";
         history.forEach(item => {
@@ -30,7 +37,7 @@ export const exportToDocs = async (accessToken: string, history: ConversationIte
 
         const finalBody = `Translation Notes - ${today}\n\n${contentString}`;
 
-        await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
+        const batchRes = await fetch(`https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`, {
             method: 'POST',
             headers: getHeaders(accessToken),
             body: JSON.stringify({
@@ -44,6 +51,7 @@ export const exportToDocs = async (accessToken: string, history: ConversationIte
                 ]
             })
         });
+        await requireGoogleOk(batchRes, 'Docs 내용 쓰기');
 
         return { success: true, docId: docId, message: "Document created successfully." };
 

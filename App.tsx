@@ -1,11 +1,8 @@
 ﻿import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
-import {
-  logOut,
-  getUserProfile,
-  saveUserProfile
-} from './utils/firebase';
+import { logOut } from './utils/firebase';
 import { clearSessions } from './utils/localStorage';
+import { loadSettings, persistSettings } from './utils/settingsStorage';
 import { getCachedAudioBase64, setCachedAudioBase64, clearCachedAudio } from './utils/idbAudioCache';
 import {
   backupToDrive,
@@ -28,7 +25,6 @@ import {
   VOICE_OPTIONS,
   GOOGLE_CLIENT_ID,
   GOOGLE_SCOPES,
-  SETTINGS_KEY,
   UI_LANG_KEY,
   HISTORY_RENDER_STEP
 } from './constants';
@@ -168,46 +164,25 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     loadSession,
     deleteSession,
     handleNewConversation
-  } = useConversationHistory();
+  } = useConversationHistory({
+    // Surface local-history write failures as an error toast (#39).
+    // The callback only runs after a failed save, by which point `uiLangCode`
+    // (declared below) is initialized.
+    onSaveFailure: (reason) => {
+      const isKo = uiLangCode === 'ko';
+      const message = reason === 'quota'
+        ? (isKo
+            ? '브라우저 저장 공간이 부족해 일부 대화 기록을 저장하지 못했습니다.'
+            : 'Not enough browser storage space — some conversation history was not saved.')
+        : (isKo
+            ? '일부 대화 기록을 저장하지 못했습니다. 브라우저 저장 설정을 확인해 주세요.'
+            : 'Some conversation history could not be saved. Check your browser storage settings.');
+      enqueueToast(message, 'error');
+    },
+  });
 
   // --- UI Settings ---
-  const [settings, setSettings] = useState<AppSettings>(() => {
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return { driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true, userApiKey: '', translationModel: DEFAULT_TRANSLATION_MODEL, interviewTargets: [...getDefaultTargets()] };
-      const parsed = JSON.parse(raw) as Partial<AppSettings>;
-
-      // 마이그레이션: gemini-2.5-flash 사용자는 flash-lite로 강제 이동 (무료 쿼터 소진 방지)
-      let migratedModel = parsed.translationModel;
-      if (migratedModel === 'gemini-2.5-flash') {
-        migratedModel = DEFAULT_TRANSLATION_MODEL; // gemini-2.5-flash-lite
-        console.log('[Settings Migration] Upgraded translationModel from gemini-2.5-flash to flash-lite');
-      }
-
-      const storedTargets = sanitizeTargets(
-        Array.isArray(parsed.interviewTargets)
-          ? parsed.interviewTargets.filter((code): code is string => typeof code === 'string')
-          : []
-      );
-      return {
-        driveBackupMode: parsed.driveBackupMode === 'auto' ? 'auto' : 'manual',
-        audioCacheEnabled: typeof parsed.audioCacheEnabled === 'boolean' ? parsed.audioCacheEnabled : true,
-        recordOriginalEnabled: typeof parsed.recordOriginalEnabled === 'boolean' ? parsed.recordOriginalEnabled : true,
-        userApiKey: typeof parsed.userApiKey === 'string' ? parsed.userApiKey : '',
-        translationModel: migratedModel || DEFAULT_TRANSLATION_MODEL,
-        interviewTargets: storedTargets.length > 0 ? storedTargets : [...getDefaultTargets()],
-      };
-    } catch {
-      return {
-        driveBackupMode: 'manual',
-        audioCacheEnabled: true,
-        recordOriginalEnabled: true,
-        userApiKey: '',
-        translationModel: DEFAULT_TRANSLATION_MODEL,
-        interviewTargets: [...getDefaultTargets()],
-      };
-    }
-  });
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
 
   const [uiLangCode, setUiLangCode] = useState<string>(() => {
     const saved = localStorage.getItem(UI_LANG_KEY);
@@ -456,7 +431,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     history,
     selectedVoice,
     t,
-    setIsLoginModalOpen
+    setIsLoginModalOpen,
+    settings
   });
 
   // --- Custom Service: Vision & Storage ---
@@ -970,26 +946,13 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [setIsProfileMenuOpen, setIsExportMenuOpen, setIsNotificationMenuOpen, exportMenuRef, profileMenuRef, notificationMenuRef]);
 
+  // Personal API keys are credentials: persist to this browser's localStorage
+  // only. Never write or read them via the Firestore user profile (#32).
   useEffect(() => {
     try {
-      localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-      // Also save to Cloud if logged in
-      if (user?.uid && !user.isAnonymous) {
-        saveUserProfile(user.uid, { userApiKey: settings.userApiKey });
-      }
+      persistSettings(settings);
     } catch { }
-  }, [settings, user]);
-
-  // Load Cloud Settings on Login
-  useEffect(() => {
-    if (user?.uid && !user.isAnonymous) {
-      getUserProfile(user.uid).then(profile => {
-        if (profile?.userApiKey && profile.userApiKey !== settings.userApiKey) {
-          setSettings(prev => ({ ...prev, userApiKey: profile.userApiKey }));
-        }
-      });
-    }
-  }, [user]);
+  }, [settings]);
 
   useEffect(() => {
     if (!isAdmin) {

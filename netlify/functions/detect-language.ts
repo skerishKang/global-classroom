@@ -1,5 +1,11 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import Groq from 'groq-sdk';
+import {
+  enforceTextLimit,
+  readJsonBody,
+  safeErrorDetail,
+  MAX_DETECT_TEXT_CHARS,
+} from './_aiGuards';
 
 const SUPPORTED_CODES = ['ko', 'en', 'ja', 'zh', 'vi', 'es', 'fr', 'de', 'ru', 'th', 'id', 'ar', 'hi', 'tl', 'mn', 'uz'] as const;
 type SupportedCode = (typeof SUPPORTED_CODES)[number];
@@ -38,16 +44,10 @@ export const handler = async (event: any) => {
   }
 
   // 요청 본문 파싱
-  let body: any = {};
-  try {
-    const raw = event.isBase64Encoded
-      ? Buffer.from(event.body || '', 'base64').toString('utf-8')
-      : event.body || '';
-    body = raw ? JSON.parse(raw) : {};
-  } catch (err) {
-    console.error('detect-language: failed to parse body', err);
-    body = {};
-  }
+  // Malformed JSON is an explicit 400 before any provider call (#36).
+  const parsedBody = readJsonBody(event);
+  if (parsedBody.ok === false) return parsedBody.response;
+  const body = parsedBody.body;
 
   const text = typeof body.text === 'string' ? body.text : '';
   if (!text.trim()) {
@@ -57,6 +57,9 @@ export const handler = async (event: any) => {
       body: JSON.stringify({ error: '필수 값(text)이 누락되었습니다.' }),
     };
   }
+
+  const oversize = enforceTextLimit(text, MAX_DETECT_TEXT_CHARS, 'text');
+  if (oversize) return oversize;
 
   let lastError: any = null;
   let lastErrorDetail: any = null;
@@ -104,8 +107,8 @@ Text: ${JSON.stringify(text)}`;
         };
       } catch (error: any) {
         lastError = error;
-        lastErrorDetail = error?.message || String(error);
-        console.error(`detect-language: Gemini ${model} failed:`, error?.message);
+        lastErrorDetail = safeErrorDetail(error);
+        console.error(`detect-language: Gemini ${model} failed:`, lastErrorDetail);
 
         const isRateLimit = error?.message?.includes('429') ||
           error?.message?.includes('RESOURCE_EXHAUSTED') ||
@@ -152,8 +155,8 @@ Text: ${JSON.stringify(text)}`;
         };
       } catch (error: any) {
         lastError = error;
-        lastErrorDetail = error?.message || String(error);
-        console.error(`detect-language: Groq ${model} failed:`, error?.message);
+        lastErrorDetail = safeErrorDetail(error);
+        console.error(`detect-language: Groq ${model} failed:`, lastErrorDetail);
 
         const isRateLimit = error?.message?.includes('429') ||
           error?.message?.includes('rate_limit') ||

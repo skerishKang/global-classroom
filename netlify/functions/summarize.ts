@@ -1,45 +1,43 @@
 import { GoogleGenAI } from '@google/genai';
+import {
+    errorResponse,
+    enforceTextLimit,
+    jsonResponse,
+    readJsonBody,
+    safeErrorDetail,
+    MAX_SUMMARY_TEXT_CHARS,
+} from './_aiGuards';
+
+// Text models already in production use elsewhere in this repo
+// (detect-language.ts / MODEL_TRANSLATE). Tried in order.
+const SUMMARY_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash'];
 
 export const handler = async (event: any) => {
     if (event.httpMethod !== 'POST') {
-        return {
-            statusCode: 405,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'Method not allowed' }),
-        };
+        return errorResponse(405, '허용되지 않은 메서드입니다.');
     }
 
     const userApiKey = event.headers['x-user-api-key'];
     const apiKey = userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
     if (!apiKey) {
-        return {
-            statusCode: 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'API 키가 설정되지 않았습니다.' }),
-        };
+        return errorResponse(500, 'API 키가 설정되지 않았습니다.');
     }
 
-    let body: any = {};
-    try {
-        body = event.body ? JSON.parse(event.body) : {};
-    } catch {
-        body = {};
-    }
+    const parsedBody = readJsonBody(event);
+    if (parsedBody.ok === false) return parsedBody.response;
+    const body = parsedBody.body;
 
-    const historyText = body.history || '';
-    const lang = body.lang || 'ko';
+    const historyText = typeof body.history === 'string' ? body.history : '';
+    const lang = typeof body.lang === 'string' ? body.lang : 'ko';
 
     if (!historyText) {
-        return {
-            statusCode: 400,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ error: 'History text is required' }),
-        };
+        return errorResponse(400, 'History text is required');
     }
 
-    try {
-        const ai = new GoogleGenAI({ apiKey });
-        const prompt = `
+    const oversize = enforceTextLimit(historyText, MAX_SUMMARY_TEXT_CHARS, 'history');
+    if (oversize) return oversize;
+
+    const prompt = `
       Please analyze and summarize the following conversation.
       Provide the result in the language: ${lang === 'ko' ? 'Korean' : 'English'}.
       
@@ -54,22 +52,30 @@ export const handler = async (event: any) => {
       ${historyText}
     `;
 
-        const response = await (ai as any).getGenerativeModel({ model: "gemini-1.5-flash" }).generateContent(prompt);
-        const resultText = response.response.text() || '';
+    const ai = new GoogleGenAI({ apiKey });
+    let lastDetail = '';
 
-        return {
-            statusCode: 200,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ summary: resultText }),
-        };
-    } catch (error: any) {
-        return {
-            statusCode: 500,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                error: 'Summarization failed',
-                detail: error?.message || String(error),
-            }),
-        };
+    for (const model of SUMMARY_MODELS) {
+        try {
+            // Current SDK API (@google/genai 2.x). The legacy Gemini 1.x
+            // model-factory call shape is intentionally gone (#36).
+            const response = await ai.models.generateContent({
+                model,
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            });
+
+            const resultText = response.text?.trim() || '';
+            if (!resultText) {
+                throw new Error(`${model} returned an empty summary`);
+            }
+
+            return jsonResponse(200, { summary: resultText });
+        } catch (error) {
+            lastDetail = safeErrorDetail(error);
+            console.error(`summarize: ${model} failed:`, lastDetail);
+        }
     }
+
+    return errorResponse(502, '요약에 실패했습니다.', lastDetail ? { detail: lastDetail } : undefined);
 };
+
