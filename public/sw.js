@@ -1,4 +1,6 @@
-const CACHE_NAME = 'global-classroom-v4'; // 캐시 버전 업데이트로 기존 오래된 리소스 무효화
+importScripts('./swCachePolicy.js');
+
+const CACHE_NAME = 'global-classroom-v5'; // #31: 정책 위반 응답이 섞인 v4 캐시 무효화
 const ASSETS = ['/', '/manifest.json']; // HTML은 네트워크 우선으로 처리
 
 // 정적 자산 사전 캐싱
@@ -7,24 +9,29 @@ self.addEventListener('install', (event) => {
   self.skipWaiting();
 });
 
-// HTML은 네트워크 우선, 정적 자산은 캐시 우선
+// 캐시 정책(#31): same-origin 검토된 정적 자산만 캐시 우선,
+// 문서는 네트워크 우선, 그 외(API/외부/인증 요청)는 네트워크 전용.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
+  const strategy = self.SWCachePolicy.resolveRequestStrategy(request, self.location);
 
-  // GET 이외 메서드는 캐시하지 않고 바로 네트워크로 보냄 (POST put 오류 방지)
-  if (request.method !== 'GET') {
+  // GET 이외 메서드, /api/*, cross-origin, Authorization/Range 요청은
+  // 캐시와 무관하게 네트워크로만 보낸다.
+  if (strategy === 'network-only') {
     event.respondWith(fetch(request));
     return;
   }
 
   // 내비게이션 요청 또는 HTML 요청은 네트워크 우선
-  if (request.mode === 'navigate' || request.destination === 'document') {
+  if (strategy === 'network-first-document') {
     event.respondWith(
       fetch(request)
         .then((response) => {
-          // 최신 HTML을 캐시에 갱신
-          const copy = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          // 성공한 문서만 캐시를 갱신 (실패/opaque 응답은 캐시 금지)
+          if (self.SWCachePolicy.isCacheableResponse(response)) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+          }
           return response;
         })
         .catch(() => caches.match(request))
@@ -32,13 +39,15 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // 기타 정적 파일은 캐시 우선
+  // 검토된 same-origin 정적 자산만 캐시 우선
   event.respondWith(
     caches.match(request).then((cached) => {
       if (cached) return cached;
       return fetch(request).then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        if (self.SWCachePolicy.isCacheableResponse(response)) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
+        }
         return response;
       });
     })
