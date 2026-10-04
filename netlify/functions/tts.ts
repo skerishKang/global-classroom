@@ -1,4 +1,15 @@
 import { GoogleGenAI, Modality } from '@google/genai';
+import {
+    enforceTextLimit,
+    errorResponse,
+    isAllowedModel,
+    readJsonBody,
+    safeErrorDetail,
+    ALLOWED_TTS_MODELS,
+    MAX_TTS_TEXT_CHARS,
+} from './_aiGuards';
+
+const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
@@ -19,24 +30,23 @@ export const handler = async (event: any) => {
     };
   }
 
-  let body: any = {};
-  try {
-    body = event.body ? JSON.parse(event.body) : {};
-  } catch (err) {
-    console.error('tts: failed to parse body', err);
-    body = {};
-  }
+  const parsedBody = readJsonBody(event);
+  if (parsedBody.ok === false) return parsedBody.response;
+  const body = parsedBody.body;
 
   const text = typeof body.text === 'string' ? body.text : '';
   const voiceName = typeof body.voiceName === 'string' ? body.voiceName : 'Kore';
-  const model = typeof body.model === 'string' ? body.model : 'gemini-2.5-flash-preview-tts';
+  const model = body.model === undefined ? DEFAULT_TTS_MODEL : body.model;
 
   if (!text.trim()) {
-    return {
-      statusCode: 400,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: '필수 값(text)이 누락되었습니다.' }),
-    };
+    return errorResponse(400, '필수 값(text)이 누락되었습니다.');
+  }
+
+  const oversize = enforceTextLimit(text, MAX_TTS_TEXT_CHARS, 'text');
+  if (oversize) return oversize;
+
+  if (!isAllowedModel(model, ALLOWED_TTS_MODELS)) {
+    return errorResponse(400, '지원하지 않는 모델입니다.');
   }
 
   try {
@@ -55,11 +65,7 @@ export const handler = async (event: any) => {
     const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
     if (!base64Audio) {
-      return {
-        statusCode: 500,
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ error: 'TTS 오디오 생성 결과가 비어있습니다.' }),
-      };
+      return errorResponse(500, 'TTS 오디오 생성 결과가 비어있습니다.');
     }
 
     return {
@@ -67,15 +73,9 @@ export const handler = async (event: any) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ audioBase64: base64Audio }),
     };
-  } catch (error: any) {
-    console.error('tts: generation failed', error);
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: 'TTS 생성에 실패했습니다.',
-        detail: error?.message || String(error),
-      }),
-    };
+  } catch (error) {
+    const detail = safeErrorDetail(error);
+    console.error('tts: generation failed', detail);
+    return errorResponse(500, 'TTS 생성에 실패했습니다.', { detail });
   }
 };

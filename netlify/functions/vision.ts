@@ -1,4 +1,15 @@
 import { GoogleGenAI, Type } from '@google/genai';
+import {
+    decodedBase64Bytes,
+    errorResponse,
+    isAllowedModel,
+    readJsonBody,
+    safeErrorDetail,
+    ALLOWED_VISION_MODELS,
+    MAX_VISION_IMAGE_BYTES,
+} from './_aiGuards';
+
+const DEFAULT_VISION_MODEL = 'gemini-2.0-flash';
 
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
@@ -19,24 +30,27 @@ export const handler = async (event: any) => {
     };
   }
 
-  let body: any = {};
-  try {
-    body = event.body ? JSON.parse(event.body) : {};
-  } catch {
-    body = {};
-  }
+  const parsedBody = readJsonBody(event);
+  if (parsedBody.ok === false) return parsedBody.response;
+  const body = parsedBody.body;
 
   const base64Image = typeof body.base64Image === 'string' ? body.base64Image : '';
   const langA = typeof body.langA === 'string' ? body.langA : '';
   const langB = typeof body.langB === 'string' ? body.langB : '';
-  const model = typeof body.model === 'string' ? body.model : 'gemini-2.0-flash';
+  const model = body.model === undefined ? DEFAULT_VISION_MODEL : body.model;
 
   if (!base64Image || !langA || !langB) {
-    return {
-      statusCode: 400,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: '필수 값(base64Image/langA/langB)이 누락되었습니다.' }),
-    };
+    return errorResponse(400, '필수 값(base64Image/langA/langB)이 누락되었습니다.');
+  }
+
+  if (!isAllowedModel(model, ALLOWED_VISION_MODELS)) {
+    return errorResponse(400, '지원하지 않는 모델입니다.');
+  }
+
+  // Bound on decoded bytes, not on the encoded string length (#36).
+  if (decodedBase64Bytes(base64Image) > MAX_VISION_IMAGE_BYTES) {
+    const maxMb = MAX_VISION_IMAGE_BYTES / (1024 * 1024);
+    return errorResponse(413, `이미지가 너무 큽니다. 최대 ${maxMb}MB까지 허용됩니다.`);
   }
 
   try {
@@ -82,14 +96,9 @@ Return the result in JSON format.
         translatedText: json.translatedText || '',
       }),
     };
-  } catch (error: any) {
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        error: '비전 분석에 실패했습니다.',
-        detail: error?.message || String(error),
-      }),
-    };
+  } catch (error) {
+    const detail = safeErrorDetail(error);
+    console.error('vision: analysis failed', detail);
+    return errorResponse(500, '비전 분석에 실패했습니다.', { detail });
   }
 };

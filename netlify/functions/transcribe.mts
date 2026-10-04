@@ -1,3 +1,5 @@
+import { redactSecrets } from './_aiGuards';
+
 const STT_MODELS = ['whisper-large-v3-turbo', 'whisper-large-v3'];
 const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
 
@@ -118,7 +120,7 @@ export default async (req: Request) => {
 
   return json(502, {
     error: '음성 전사에 실패했습니다.',
-    detail: lastError,
+    detail: redactSecrets(lastError),
   });
 };
 
