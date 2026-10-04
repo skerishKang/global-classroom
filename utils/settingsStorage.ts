@@ -1,6 +1,6 @@
 import { DEFAULT_TRANSLATION_MODEL, SETTINGS_KEY } from '../constants';
 import { AppSettings } from '../types';
-import { getDefaultTargets, sanitizeTargets } from './interviewLanguageRouting';
+import { getDefaultTargets, normalizeInterviewTargets } from './interviewLanguageRouting';
 
 /**
  * Settings storage helpers (#32).
@@ -54,7 +54,7 @@ export function parseStoredSettings(raw: string | null): AppSettings {
       console.log('[Settings Migration] Upgraded translationModel from gemini-2.5-flash to flash-lite');
     }
 
-    const storedTargets = sanitizeTargets(
+    const storedTargets = normalizeInterviewTargets(
       Array.isArray(parsed.interviewTargets)
         ? parsed.interviewTargets.filter((code): code is string => typeof code === 'string')
         : []
@@ -67,7 +67,7 @@ export function parseStoredSettings(raw: string | null): AppSettings {
       // 로컬에 입력된 개인 키만 사용한다. cloud profile 값은 여기로 유입될 수 없다 (#32).
       userApiKey: typeof parsed.userApiKey === 'string' ? parsed.userApiKey : '',
       translationModel: migratedModel || DEFAULT_TRANSLATION_MODEL,
-      interviewTargets: storedTargets.length > 0 ? storedTargets : [...getDefaultTargets()],
+      interviewTargets: storedTargets,
       // 즐겨찾기 키 슬롯도 저장소에서 복원하되 신뢰하지 않고 sanitize 한다 (#32).
       savedApiKeys: sanitizeApiKeySlots(parsed.savedApiKeys),
     };

@@ -802,4 +802,107 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     expect(bodies[0].from).toBe('日本語 (Japanese)');
     expect(bodies[0].to).toBe('English');
   });
+
+  test('legacy one-target settings recover to KO ↔ EN and English routes to Korean', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('global_class_settings', JSON.stringify({
+        driveBackupMode: 'manual',
+        audioCacheEnabled: true,
+        recordOriginalEnabled: true,
+        translationModel: 'gemini-2.5-flash-lite',
+        interviewTargets: ['en'],
+        savedApiKeys: [],
+      }));
+
+      const realFetch = window.fetch.bind(window);
+      (window as any).__translateBodies = [];
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          return new Response(JSON.stringify({ code: 'en' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          (window as any).__translateBodies.push(body);
+          return new Response(JSON.stringify({ translated: '안녕하세요.', provider: 'test' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+
+    // #50: a legacy/single-target browser state cannot collapse Interview into one-way routing.
+    await expect(page.getByText(/AUTO · KO ↔ EN/)).toHaveCount(1);
+    await expect.poll(async () => page.evaluate(() =>
+      JSON.parse(localStorage.getItem('global_class_settings') || '{}').interviewTargets
+    )).toEqual(['ko', 'en']);
+
+    await page.getByRole('button', { name: '인터뷰 설정' }).click();
+    await expect(page.getByRole('button', { name: /한국어 \(Korean\)/ })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /English/ })).toBeDisabled();
+    await page.locator('div.fixed.inset-0').getByRole('button').first().click();
+
+    const textarea = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+    await textarea.fill('Hello world.');
+    await textarea.press('Enter');
+
+    await expect(page.getByText('안녕하세요.')).toBeVisible();
+    const bodies = await page.evaluate(() => (window as any).__translateBodies);
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0].from).toBe('English');
+    expect(bodies[0].to).toBe('한국어 (Korean)');
+  });
+
+  test('conversation text can be selected with a mouse drag', async ({ page }) => {
+    await page.addInitScript(() => {
+      const now = Date.now();
+      localStorage.setItem('global_classroom_sessions', JSON.stringify([{
+        id: 'selectable-session',
+        createdAt: now,
+        updatedAt: now,
+        title: 'Selectable session',
+        items: [{
+          id: 'selectable-row',
+          original: 'Selectable transcript sentence for drag.',
+          translated: '드래그로 선택할 수 있는 번역입니다.',
+          sourceKind: 'text',
+          sourceLanguage: 'en',
+          translations: {
+            ko: { text: '드래그로 선택할 수 있는 번역입니다.', kind: 'manual', stale: false, updatedAt: now },
+          },
+          activeTarget: 'ko',
+          translationKind: 'manual',
+          translationStale: false,
+          timestamp: now,
+        }],
+      }]));
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    const transcript = page.getByText('Selectable transcript sentence for drag.', { exact: true });
+    await expect(transcript).toBeVisible();
+
+    const userSelect = await transcript.evaluate((element) => getComputedStyle(element).userSelect);
+    expect(userSelect).not.toBe('none');
+    expect(await page.evaluate(() => getComputedStyle(document.body).userSelect)).not.toBe('none');
+
+    const box = await transcript.boundingBox();
+    expect(box).not.toBeNull();
+    const y = box!.y + box!.height / 2;
+    await page.mouse.move(box!.x + 4, y);
+    await page.mouse.down();
+    await page.mouse.move(box!.x + box!.width - 4, y, { steps: 12 });
+    await page.mouse.up();
+
+    const selected = (await page.evaluate(() => window.getSelection()?.toString() || '')).trim();
+    expect(selected.length).toBeGreaterThan(5);
+    expect('Selectable transcript sentence for drag.').toContain(selected);
+  });
 });

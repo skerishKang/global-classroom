@@ -65,12 +65,11 @@ import { AppSettings, VisionNotification, TranslationVariant } from './types';
 import {
   detectSourceLanguageHeuristic,
   formatTargetBadge,
-  getDefaultTargets,
   getTargetsForSource,
+  normalizeInterviewTargets,
   normalizeLanguageCode,
   parsePairRules,
   pickActiveTarget,
-  sanitizeTargets,
   type InterviewLanguagePolicy,
 } from './utils/interviewLanguageRouting';
 
@@ -241,14 +240,11 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   }, [interviewPairRulesText]);
 
   // --- Interview language policy: one selected target set, source excluded ---
-  const interviewTargets = useMemo<string[]>(() => {
-    const stored = sanitizeTargets(
-      Array.isArray(settings.interviewTargets)
-        ? settings.interviewTargets.filter((code): code is string => typeof code === 'string')
-        : []
-    );
-    return stored.length > 0 ? stored : [...getDefaultTargets()];
-  }, [settings.interviewTargets]);
+  const interviewTargets = useMemo<string[]>(() => normalizeInterviewTargets(
+    Array.isArray(settings.interviewTargets)
+      ? settings.interviewTargets.filter((code): code is string => typeof code === 'string')
+      : []
+  ), [settings.interviewTargets]);
 
   const interviewPairRules = useMemo(
     () => parsePairRules(interviewPairRulesText),
@@ -261,11 +257,11 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   );
 
   const handleInterviewTargetsChange = useCallback((next: string[]) => {
-    const sanitized = sanitizeTargets(next);
-    // An empty set cannot route anything; keep the default pair instead.
+    // Interview mode needs at least two targets so either side of a detected
+    // conversation still has somewhere to translate.
     setSettings((prev) => ({
       ...prev,
-      interviewTargets: sanitized.length > 0 ? sanitized : [...getDefaultTargets()],
+      interviewTargets: normalizeInterviewTargets(next),
     }));
   }, []);
 
@@ -980,7 +976,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   }, [historyRenderLimit]);
 
   return (
-    <div className="flex flex-col h-screen h-[100dvh] bg-slate-50 font-sans text-gray-900 overflow-hidden select-none">
+    <div className="flex flex-col h-screen h-[100dvh] bg-slate-50 font-sans text-gray-900 overflow-hidden">
       <AppHeader
         user={user}
         accessToken={accessToken}
