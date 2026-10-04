@@ -20,6 +20,14 @@
 
 - 배포(예시): https://7-global-classroom.netlify.app
 
+## 운영 권한
+
+- 제품 코드·UI/UX·Interview runtime·제품 이슈의 canonical source는 이 저장소입니다.
+- Global Classroom 관련 이슈는 이 저장소의 GitHub Issues에서 관리합니다.
+- `skerishKang/ai-revenue-lab`에는 Padiem 공용 플랫폼 연계 이슈만 cross-reference하며 제품 이슈를 중복 생성하지 않습니다.
+- 현재 source migration 및 BI 번호 확정은 하지 않습니다.
+- 자세한 운영 규칙: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+
 ## 스크린샷
 
 ### 데스크톱
