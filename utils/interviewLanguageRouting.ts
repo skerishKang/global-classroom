@@ -127,6 +127,32 @@ export function pickActiveTarget(
   return available[0] || '';
 }
 
+/**
+ * Initial visible translation target for a NEW utterance (#63).
+ *
+ * Contract: the user must see the opposite side of the conversation without an
+ * extra click, so the source language can never become the initial active
+ * target. When the user has manually selected a target on an earlier row
+ * (`preferred`), that choice carries over as long as it is still a selected
+ * target and is not the source; otherwise the first selected non-source target
+ * is chosen deterministically. Voice and text input share this helper so both
+ * inputs pick the same default.
+ */
+export function pickInitialActiveTarget(
+  sourceLanguage: string,
+  selectedTargets: readonly TranslationTarget[],
+  preferred?: string | null,
+): TranslationTarget {
+  const source = normalizeLanguageCode(sourceLanguage);
+  if (preferred) {
+    const wanted = selectedTargets.find(
+      (target) => normalizeLanguageCode(target) === normalizeLanguageCode(preferred),
+    );
+    if (wanted && normalizeLanguageCode(wanted) !== source) return wanted;
+  }
+  return selectedTargets.find((target) => normalizeLanguageCode(target) !== source) || '';
+}
+
 /** Compact header badge, e.g. `KO ↔ EN` for the default pair, `KO · EN · VI` beyond two. */
 export function formatTargetBadge(targets: readonly TranslationTarget[]): string {
   const codes = sanitizeTargets(targets).map((target) => target.toUpperCase());

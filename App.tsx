@@ -70,6 +70,7 @@ import {
   normalizeLanguageCode,
   parsePairRules,
   pickActiveTarget,
+  pickInitialActiveTarget,
   type InterviewLanguagePolicy,
 } from './utils/interviewLanguageRouting';
 
@@ -494,6 +495,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const interviewTargetsByUtteranceRef = useRef<Map<string, readonly string[]>>(new Map());
   const interviewPolicyRef = useRef(interviewPolicy);
   interviewPolicyRef.current = interviewPolicy;
+  // The target the user last picked manually (#63): new utterances default to
+  // it while it is still a selected target and not the source language.
+  const preferredInterviewTargetRef = useRef<string>('');
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -522,7 +526,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     // The source language is unknown until the first transcript arrives, so
     // every selected target may produce until then.
     interviewTargetsByUtteranceRef.current.set(utteranceId, interviewPolicyRef.current.targets);
-    interviewActiveTargetRef.current = pickActiveTarget(interviewPolicyRef.current.targets);
+    interviewActiveTargetRef.current = pickInitialActiveTarget('', interviewPolicyRef.current.targets, preferredInterviewTargetRef.current);
     interviewLivePreviewRef.current = '';
     setInterviewLivePreview('');
   }, []);
@@ -544,7 +548,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         : detectSourceLanguageHeuristic(normalized)
     );
     const allowedTargets = getTargetsForSource(sourceLanguage, interviewPolicyRef.current);
-    const activeTarget = pickActiveTarget(allowedTargets);
+    const activeTarget = pickInitialActiveTarget(sourceLanguage, allowedTargets, preferredInterviewTargetRef.current);
 
     const settled = interviewFinalByUtteranceRef.current.get(utteranceId);
     const previewed = interviewPreviewByUtteranceRef.current.get(utteranceId);
@@ -619,6 +623,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
           finalPolicy,
           interviewGlossary,
           sourceLanguage,
+          preferredInterviewTargetRef.current,
         );
       }, INTERVIEW_FINAL_TRANSLATION_GRACE_MS);
     } else {
@@ -631,7 +636,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const onInterviewInterimTranscript = useCallback((text: string) => {
     const sourceLanguage = detectSourceLanguageHeuristic(text);
     const allowedTargets = getTargetsForSource(sourceLanguage, interviewPolicyRef.current);
-    const nextActiveTarget = pickActiveTarget(allowedTargets);
+    const nextActiveTarget = pickInitialActiveTarget(sourceLanguage, allowedTargets, preferredInterviewTargetRef.current);
     if (nextActiveTarget !== interviewActiveTargetRef.current) {
       // A language switch starts a different translation stream; drop the
       // previews that belong to the abandoned target.
@@ -797,7 +802,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setHistory((prev) => [...prev, newItem]);
     // Voice and text share one routing policy: detect the source, then
     // translate into every selected target except the source language.
-    void translateToTargets(text, newItem.id, interviewAuto, interviewPolicyRef.current, interviewGlossary);
+    void translateToTargets(text, newItem.id, interviewAuto, interviewPolicyRef.current, interviewGlossary, undefined, preferredInterviewTargetRef.current);
   }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
 
   const handleInterviewRetranslate = useCallback((item: ConversationItem) => {
@@ -821,11 +826,14 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       sourceLanguage,
       retranslatePolicy,
       interviewGlossary,
-      item.sourceLanguage
+      item.sourceLanguage,
+      preferredInterviewTargetRef.current
     );
   }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
 
   const handleInterviewSelectTarget = useCallback((itemId: string, target: string) => {
+    // A manual tab selection becomes the preferred default for future rows (#63).
+    preferredInterviewTargetRef.current = target;
     setHistory((prev) => prev.map((item) => {
       if (item.id !== itemId) return item;
       const variant = item.translations?.[target];
