@@ -124,17 +124,51 @@ const ConversationList: React.FC<ConversationListProps> = ({
 
                         {!(isMicOn || status === ConnectionStatus.CONNECTED) ? (
                             interviewMode ? (
-                                <div className="mt-12 md:mt-16 w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/90 border border-indigo-100 rounded-2xl p-4 shadow-sm">
-                                    <div className="font-bold text-indigo-700 text-sm">
-                                        {uiLangCode === 'ko' ? '인터뷰 모드' : 'Interview mode'}
+                                <>
+                                    <div
+                                        data-testid="interview-empty-visual"
+                                        aria-hidden="true"
+                                        className="pointer-events-none select-none mt-10 md:mt-14 mb-5 flex flex-col items-center"
+                                    >
+                                        <div className="relative flex items-center gap-5 md:gap-7 rounded-[28px] border border-indigo-100 bg-gradient-to-br from-indigo-50 via-white to-violet-50 px-7 py-5 shadow-sm">
+                                            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-indigo-500 shadow-sm ring-1 ring-indigo-100">
+                                                <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                                    <circle cx="12" cy="8" r="3.2" />
+                                                    <path d="M5.5 19c.8-4 3-6 6.5-6s5.7 2 6.5 6" strokeLinecap="round" />
+                                                </svg>
+                                            </div>
+                                            <div className="flex items-end gap-1 text-indigo-500">
+                                                {[10, 18, 28, 20, 34, 24, 14].map((height, index) => (
+                                                    <span
+                                                        key={index}
+                                                        className="w-1.5 rounded-full bg-current opacity-80"
+                                                        style={{ height }}
+                                                    />
+                                                ))}
+                                            </div>
+                                            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-white text-violet-500 shadow-sm ring-1 ring-violet-100">
+                                                <svg viewBox="0 0 24 24" className="h-8 w-8" fill="none" stroke="currentColor" strokeWidth="1.8">
+                                                    <circle cx="12" cy="8" r="3.2" />
+                                                    <path d="M5.5 19c.8-4 3-6 6.5-6s5.7 2 6.5 6" strokeLinecap="round" />
+                                                </svg>
+                                            </div>
+                                        </div>
+                                        <p className="mt-3 text-xs font-bold tracking-wide text-indigo-600">
+                                            {uiLangCode === 'ko' ? '면접자와 지원자의 말을 실시간으로 통역합니다' : 'Live interpretation between interviewer and candidate'}
+                                        </p>
                                     </div>
-                                    <ul className="list-disc list-inside space-y-1 leading-snug">
-                                        <li>{uiLangCode === 'ko' ? '입력 언어는 자동 감지합니다.' : 'Input language is detected automatically.'}</li>
-                                        <li>{uiLangCode === 'ko' ? '한국어와 영어가 섞여도 원문 자막은 그대로 표시합니다.' : 'Mixed Korean and English remain visible in the source transcript.'}</li>
-                                        <li>{uiLangCode === 'ko' ? '말하는 동안 실시간 자막과 번역을 나란히 표시합니다.' : 'Live transcript and translation appear side-by-side while you speak.'}</li>
-                                        <li>{uiLangCode === 'ko' ? '발화가 끝나면 실시간 번역을 그대로 보존하고, 필요할 때만 다시 번역합니다.' : 'When an utterance ends, the live translation is preserved and retranslation runs only on request.'}</li>
-                                    </ul>
-                                </div>
+                                    <div className="w-full max-w-xl text-left space-y-2 text-[12px] text-gray-500 bg-white/90 border border-indigo-100 rounded-2xl p-4 shadow-sm">
+                                        <div className="font-bold text-indigo-700 text-sm">
+                                            {uiLangCode === 'ko' ? '인터뷰 모드' : 'Interview mode'}
+                                        </div>
+                                        <ul className="list-disc list-inside space-y-1 leading-snug">
+                                            <li>{uiLangCode === 'ko' ? '입력 언어는 자동 감지합니다.' : 'Input language is detected automatically.'}</li>
+                                            <li>{uiLangCode === 'ko' ? '한국어와 영어가 섞여도 원문 자막은 그대로 표시합니다.' : 'Mixed Korean and English remain visible in the source transcript.'}</li>
+                                            <li>{uiLangCode === 'ko' ? '말하는 동안 실시간 자막과 번역을 나란히 표시합니다.' : 'Live transcript and translation appear side-by-side while you speak.'}</li>
+                                            <li>{uiLangCode === 'ko' ? '발화가 끝나면 실시간 번역을 그대로 보존하고, 필요할 때만 다시 번역합니다.' : 'When an utterance ends, the live translation is preserved and retranslation runs only on request.'}</li>
+                                        </ul>
+                                    </div>
+                                </>
                             ) : (
                                 <>
                                     <p className="mb-2 whitespace-pre-wrap text-[10px] font-semibold leading-relaxed max-w-[280px] text-gray-400">{t.emptyHint}</p>

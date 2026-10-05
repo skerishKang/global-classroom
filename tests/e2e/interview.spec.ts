@@ -32,7 +32,11 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('인터뷰 모드 · 자동 언어 감지')).toHaveCount(0);
     await expect(page.getByText('인터뷰 모드', { exact: true })).toBeVisible();
     await expect(page.getByText('AI 인터뷰 통역')).toBeVisible();
-    // Interview mode uses the persistent bottom mic only; the old empty-state mic overlapped the tools bar.
+    const interviewVisual = page.getByTestId('interview-empty-visual');
+    await expect(interviewVisual).toBeVisible();
+    await expect(interviewVisual).toHaveAttribute('aria-hidden', 'true');
+    // The centered illustration is decorative; Interview mode still has exactly
+    // one functional microphone in the persistent bottom controls.
     await expect(page.getByTitle(/마이크 켜기/)).toHaveCount(1);
     const composer = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
     await expect(composer).toBeVisible();
