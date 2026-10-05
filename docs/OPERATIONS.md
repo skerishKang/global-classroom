@@ -17,36 +17,30 @@ Global Classroom의 코드, UI/UX, Interview runtime, Netlify Functions, 제품�
 
 `skerishKang/ai-revenue-lab`에는 Global Classroom 제품 이슈를 중복 생성하지 않습니다. Padiem 공용 플랫폼과 연결되는 작업은 해당 중앙 이슈를 cross-reference할 수 있지만, Global Classroom 제품 구현 이슈의 원본은 이 저장소에 둡니다.
 
-## 현재 주요 이슈
-
-- #20 — Padiem 공용 계정/Portal/SSO + Firebase 단계적 퇴역 + 공용 Google connector 연계
-- #21 — Interview UX/runtime tracker
-- #22 — Live Translate 발화별 context isolation
-- #23 — 자동 입력 감지 + 복수 번역 언어 정책
-- #24 — 번역 행 액션 compact icon UX
-
-Interview surface 작업 순서는 특별한 blocker가 없으면 다음을 우선합니다.
+## 현재 이슈 상태
 
 ```text
-#22 runtime correctness
- -> #23 multilingual routing/state model
- -> #24 compact UX polish
+ACTIVE_PRODUCT_ISSUES=#66
+OPEN_DEFERRED_ISSUE=#20
 ```
 
-#20은 공용 identity/connector 프로그램이며 Interview UI/runtime 수정과 독립적으로 진행할 수 있습니다.
+- #20 — **DEFERRED / FUTURE**. 현재 Firebase Auth, Firestore live sharing, Google OAuth/Drive/Docs/Classroom 경로를 유지합니다. 실제 cross-product account/SSO 필요가 생길 때만 재검토합니다.
+- #21~#24 — Interview 초기 UX/runtime tracker와 child issues 완료.
+- #53 — final voice translation guarantee 완료.
+- #58/#59 — normal voice resilience와 Interview empty-state visual 완료.
+- #62 — technical interview answer assist + on-demand answer translation 완료.
+- #63 — 새 utterance의 opposite translation 자동 선택 완료.
+- #66 — 현재 active. Drive/Docs/Classroom export의 blocking alert를 actionable result surface로 교체하고 destination link를 노출하는 후속 UX 작업.
+
+새 제품 작업은 stale tracker 순서가 아니라 **현재 Production 증거, 사용자 문제 또는 owner의 명시적 제품 요구**에서 focused issue를 새로 만든 뒤 진행합니다. 완료된 이슈를 진행 중인 roadmap처럼 재사용하지 않습니다.
 
 ## Padiem shared-platform boundary
 
-Global Classroom은 저장소를 유지하면서 Padiem 공용 기능을 소비할 수 있습니다.
+Global Classroom은 저장소와 제품 authority를 유지합니다. Padiem 공용 identity/Control Plane/Google connector 연계는 기술적으로 가능한 미래 선택지이지만 **현재 migration 대상이 아닙니다**. 단순한 아키텍처 통일을 위해 작동 중인 Firebase/Google Workspace 경로를 교체하지 않습니다.
 
-```text
-Global Classroom
-  -> Padiem shared identity / Control Plane
-  -> shared Google connector authority
-  -> shared AI platform where explicitly integrated
-```
+구체적인 cross-product 로그인, 반복 OAuth, entitlement 또는 유지비 문제가 실제로 발생하면 #20을 fresh-read하고 그 시점의 Padiem 공용 기능을 다시 검증한 뒤 가장 작은 연계 범위를 결정합니다.
 
-하지만 다음은 금지합니다.
+다음은 계속 금지합니다.
 
 ```text
 SECOND_PADIEM_IDENTITY_AUTHORITY=NO
@@ -61,9 +55,9 @@ Padiem Chat/Claw의 공용 계정·connector 구현과 Global Classroom 제품 �
 
 ## Google Workspace
 
-현재 제품의 기존 Google Drive/Docs/Classroom integration은 동작 중인 제품 기능입니다. 장기적으로는 Padiem의 shared Google connector authority를 사용하도록 전환하는 것이 목표입니다.
+현재 제품의 기존 Google OAuth 및 Drive/Docs/Classroom integration은 동작 중인 제품 기능이며 그대로 유지합니다. Padiem shared Google connector로의 전환은 현재 목표나 일정이 아니라 #20에 보류된 미래 선택지입니다.
 
-전환 시 원칙:
+향후 실제 전환 필요가 생길 경우 원칙:
 
 - Padiem account identity와 Google Workspace grant를 구분합니다.
 - Drive/Docs/Classroom 권한은 connector capability입니다.
