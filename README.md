@@ -478,7 +478,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-screenshots.
 
 최근 Interview 핵심 작업인 [#22](../../issues/22), [#23](../../issues/23), [#24](../../issues/24), [#53](../../issues/53), [#62](../../issues/62), [#63](../../issues/63)은 완료되었습니다.
 
-- [#66](../../issues/66) — **ACTIVE**. 내보내기 `alert`를 actionable result surface로 교체하고 Drive/Docs destination link를 명확히 노출
+- [#66](../../issues/66) — **COMPLETED**. 내보내기 `alert`를 actionable result surface로 교체하고 Drive/Docs destination link를 명확히 노출
 - [#20](../../issues/20) — **DEFERRED / FUTURE**. Padiem 공용 계정/Portal/SSO 및 shared Google connector 연계는 현재 구현 대상이 아닙니다.
 
 새 작업은 Production 증거나 owner 요구를 확인한 뒤 focused issue로 만든 다음 구현합니다.

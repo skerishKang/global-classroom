@@ -20,7 +20,7 @@ Global Classroom의 코드, UI/UX, Interview runtime, Netlify Functions, 제품�
 ## 현재 이슈 상태
 
 ```text
-ACTIVE_PRODUCT_ISSUES=#66
+ACTIVE_PRODUCT_ISSUES=0
 OPEN_DEFERRED_ISSUE=#20
 ```
 
@@ -30,7 +30,7 @@ OPEN_DEFERRED_ISSUE=#20
 - #58/#59 — normal voice resilience와 Interview empty-state visual 완료.
 - #62 — technical interview answer assist + on-demand answer translation 완료.
 - #63 — 새 utterance의 opposite translation 자동 선택 완료.
-- #66 — 현재 active. Drive/Docs/Classroom export의 blocking alert를 actionable result surface로 교체하고 destination link를 노출하는 후속 UX 작업.
+- #66 — 완료. Drive/Docs/Classroom export의 blocking alert를 actionable result surface로 교체하고 Drive/Docs destination link를 명확히 노출.
 
 새 제품 작업은 stale tracker 순서가 아니라 **현재 Production 증거, 사용자 문제 또는 owner의 명시적 제품 요구**에서 focused issue를 새로 만든 뒤 진행합니다. 완료된 이슈를 진행 중인 roadmap처럼 재사용하지 않습니다.
 
