@@ -1,8 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
-import { ConnectionStatus, Language, ConversationItem } from '../types';
-import { MODEL_LIVE } from '../constants';
-import { createPcmBlob, float32ToInt16, arrayBufferToBase64, base64ToUint8Array, decodeAudioData } from '../utils/audioUtils';
+import { ConnectionStatus, Language } from '../types';
+import { float32ToInt16, arrayBufferToBase64, base64ToUint8Array, decodeAudioData, pcm16Base64ToWavBlob } from '../utils/audioUtils';
 
 interface UseGeminiLiveProps {
     langInput: Language;
@@ -10,6 +9,43 @@ interface UseGeminiLiveProps {
     onAudioReceived: (base64: string) => void;
     postApi: <T>(endpoint: string, body: any) => Promise<T>;
     settings: { recordOriginalEnabled: boolean };
+}
+
+export const GLOBAL_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live';
+export const MAX_FALLBACK_PCM_BYTES = 2_500_000;
+
+export function mergeLiveTranscriptChunk(previous: string, incoming: string) {
+    if (!incoming) return previous;
+    if (!previous) return incoming;
+    // Some Live backends emit cumulative hypotheses while others emit deltas.
+    // Accept both without duplicating an already-seen prefix/suffix.
+    if (incoming.startsWith(previous)) return incoming;
+    if (previous.endsWith(incoming)) return previous;
+    return previous + incoming;
+}
+
+export function buildGlobalTranscribeConfig(languageCode: string) {
+    return {
+        responseModalities: [Modality.TEXT],
+        realtimeInputConfig: {
+            automaticActivityDetection: {
+                silenceDurationMs: 650,
+            },
+        },
+        inputAudioTranscription: {
+            languageCodes: languageCode === 'auto' ? [] : [languageCode],
+            mode: 'VERBATIM',
+        },
+    };
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('오디오를 읽지 못했습니다.'));
+        reader.readAsDataURL(blob);
+    });
 }
 
 export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived, postApi, settings }: UseGeminiLiveProps) {
@@ -38,10 +74,60 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
     const originalMediaRecorderRef = useRef<MediaRecorder | null>(null);
     const originalAudioChunksRef = useRef<Blob[]>([]);
 
-    // Transcription accumulation ref
+    // Transcription + fallback refs
     const currentTurnTranscriptRef = useRef<string>('');
+    const currentTurnPcmChunksRef = useRef<Uint8Array[]>([]);
+    const currentTurnPcmBytesRef = useRef(0);
+    const currentTurnCommittedRef = useRef(false);
+    const browserRecognitionRef = useRef<any>(null);
+    const browserRestartTimerRef = useRef<number | null>(null);
+    const fallbackStreamRef = useRef<MediaStream | null>(null);
+    const fallbackRecorderRef = useRef<MediaRecorder | null>(null);
+    const fallbackChunksRef = useRef<Blob[]>([]);
+    const fallbackCycleTimerRef = useRef<number | null>(null);
+    const fallbackActiveRef = useRef(false);
 
     const cleanupAudio = useCallback(() => {
+        if (browserRestartTimerRef.current) {
+            window.clearTimeout(browserRestartTimerRef.current);
+            browserRestartTimerRef.current = null;
+        }
+        try {
+            browserRecognitionRef.current?.stop?.();
+        } catch {
+            // no-op
+        }
+        browserRecognitionRef.current = null;
+
+        if (fallbackCycleTimerRef.current) {
+            window.clearTimeout(fallbackCycleTimerRef.current);
+            fallbackCycleTimerRef.current = null;
+        }
+        try {
+            if (fallbackRecorderRef.current?.state === 'recording') {
+                fallbackRecorderRef.current.stop();
+            }
+        } catch {
+            // no-op
+        }
+        fallbackRecorderRef.current = null;
+        fallbackStreamRef.current?.getTracks().forEach(track => track.stop());
+        fallbackStreamRef.current = null;
+        fallbackChunksRef.current = [];
+        fallbackActiveRef.current = false;
+        currentTurnPcmChunksRef.current = [];
+        currentTurnPcmBytesRef.current = 0;
+        currentTurnTranscriptRef.current = '';
+        currentTurnCommittedRef.current = false;
+
+        const pendingSession = sessionPromiseRef.current;
+        sessionPromiseRef.current = null;
+        if (pendingSession) {
+            void pendingSession
+                .then((session) => session?.close?.())
+                .catch(() => { });
+        }
+
         if (currentSourceRef.current) {
             currentSourceRef.current.stop();
             currentSourceRef.current = null;
@@ -113,6 +199,228 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
         }
     }, [settings.recordOriginalEnabled]);
 
+    const resetTurnBuffers = useCallback(() => {
+        currentTurnTranscriptRef.current = '';
+        currentTurnPcmChunksRef.current = [];
+        currentTurnPcmBytesRef.current = 0;
+        currentTurnCommittedRef.current = false;
+    }, []);
+
+    const postGroqTranscribe = useCallback(async (blob: Blob) => {
+        const audioDataUrl = await blobToDataUrl(blob);
+        const data = await postApi<{ text?: string }>('transcribe', {
+            audioDataUrl,
+            language: langInput.code === 'auto' ? 'auto' : langInput.code,
+        });
+        if (typeof data?.text !== 'string') {
+            throw new Error('Groq STT가 전사 텍스트를 반환하지 않았습니다.');
+        }
+        return data.text.trim();
+    }, [langInput.code, postApi]);
+
+    const startGroqFallback = useCallback(async () => {
+        if (!geminiMicDesiredRef.current || fallbackActiveRef.current) return;
+        fallbackActiveRef.current = true;
+
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                },
+            });
+            if (!geminiMicDesiredRef.current) {
+                stream.getTracks().forEach(track => track.stop());
+                fallbackActiveRef.current = false;
+                return;
+            }
+
+            fallbackStreamRef.current = stream;
+            startOriginalRecording(stream);
+            const mimeType = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/mp4',
+            ].find(type => MediaRecorder.isTypeSupported?.(type));
+            const recorder = new MediaRecorder(
+                stream,
+                mimeType ? { mimeType, audioBitsPerSecond: 32_000 } : { audioBitsPerSecond: 32_000 }
+            );
+            fallbackRecorderRef.current = recorder;
+            fallbackChunksRef.current = [];
+            setStatus(ConnectionStatus.CONNECTED);
+            setIsMicOn(true);
+            setErrorMessage('Gemini 실시간 전사를 사용할 수 없어 Groq STT로 자동 전환했습니다.');
+
+            recorder.ondataavailable = (event) => {
+                if (event.data.size > 0) fallbackChunksRef.current.push(event.data);
+            };
+
+            recorder.onstop = async () => {
+                if (fallbackCycleTimerRef.current) {
+                    window.clearTimeout(fallbackCycleTimerRef.current);
+                    fallbackCycleTimerRef.current = null;
+                }
+
+                const blob = new Blob(fallbackChunksRef.current, {
+                    type: recorder.mimeType || mimeType || 'audio/webm',
+                });
+                fallbackChunksRef.current = [];
+                fallbackRecorderRef.current = null;
+                fallbackStreamRef.current?.getTracks().forEach(track => track.stop());
+                fallbackStreamRef.current = null;
+                fallbackActiveRef.current = false;
+
+                if (!geminiMicDesiredRef.current || !blob.size) return;
+
+                try {
+                    const transcript = await postGroqTranscribe(blob);
+                    if (transcript) onTranscriptReceived(transcript, true);
+                } catch (error) {
+                    setErrorMessage(`Groq STT 오류: ${error instanceof Error ? error.message : String(error)}`);
+                }
+
+                if (geminiMicDesiredRef.current) {
+                    window.setTimeout(() => void startGroqFallback(), 100);
+                }
+            };
+
+            recorder.start(250);
+            fallbackCycleTimerRef.current = window.setTimeout(() => {
+                if (fallbackRecorderRef.current?.state === 'recording') {
+                    fallbackRecorderRef.current.stop();
+                }
+            }, 5500);
+        } catch (error) {
+            fallbackStreamRef.current?.getTracks().forEach(track => track.stop());
+            fallbackStreamRef.current = null;
+            fallbackActiveRef.current = false;
+            setStatus(ConnectionStatus.ERROR);
+            setIsMicOn(false);
+            setErrorMessage(`마이크 fallback을 시작하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }, [onTranscriptReceived, postGroqTranscribe, startOriginalRecording]);
+
+    const startBrowserFallback = useCallback(() => {
+        if (!geminiMicDesiredRef.current || fallbackActiveRef.current) return;
+
+        const SpeechRecognition =
+            (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            void startGroqFallback();
+            return;
+        }
+
+        fallbackActiveRef.current = true;
+        const runRecognition = () => {
+            if (!geminiMicDesiredRef.current) return;
+
+            const recognition = new SpeechRecognition();
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.lang = langInput.code === 'auto' ? (navigator.language || 'ko-KR') : langInput.code;
+            browserRecognitionRef.current = recognition;
+
+            recognition.onstart = () => {
+                setStatus(ConnectionStatus.CONNECTED);
+                setIsMicOn(true);
+                setErrorMessage('Gemini 실시간 전사를 사용할 수 없어 브라우저 STT로 자동 전환했습니다.');
+            };
+
+            recognition.onresult = (event: any) => {
+                let interim = '';
+                for (let index = event.resultIndex; index < event.results.length; index += 1) {
+                    const text = event.results[index][0]?.transcript || '';
+                    if (event.results[index].isFinal) {
+                        const committed = String(text).trim();
+                        if (committed) onTranscriptReceived(committed, true);
+                    } else {
+                        interim += text;
+                    }
+                }
+                if (interim.trim()) onTranscriptReceived(interim.trim(), false);
+            };
+
+            recognition.onerror = (event: any) => {
+                const code = event?.error || 'unknown';
+                browserRecognitionRef.current = null;
+                if (!geminiMicDesiredRef.current) return;
+                if (['network', 'service-not-allowed', 'language-not-supported'].includes(code)) {
+                    recognition.onend = null;
+                    try {
+                        recognition.stop();
+                    } catch {
+                        // no-op
+                    }
+                    fallbackActiveRef.current = false;
+                    void startGroqFallback();
+                } else {
+                    setErrorMessage(`브라우저 음성 인식 오류: ${code}`);
+                }
+            };
+
+            recognition.onend = () => {
+                browserRecognitionRef.current = null;
+                if (!geminiMicDesiredRef.current || !fallbackActiveRef.current) return;
+                browserRestartTimerRef.current = window.setTimeout(runRecognition, 150);
+            };
+
+            try {
+                recognition.start();
+            } catch {
+                browserRecognitionRef.current = null;
+                fallbackActiveRef.current = false;
+                void startGroqFallback();
+            }
+        };
+
+        runRecognition();
+    }, [langInput.code, onTranscriptReceived, startGroqFallback]);
+
+    const beginFallback = useCallback((reason: string) => {
+        if (!geminiMicDesiredRef.current || fallbackActiveRef.current) return;
+        // Suppress the Live onclose callback while we deliberately tear down
+        // this session, then restore the user's mic intent for the fallback.
+        geminiMicDesiredRef.current = false;
+        stopOriginalRecording();
+        cleanupAudio();
+        isGeminiConnectingRef.current = false;
+        geminiMicDesiredRef.current = true;
+        setErrorMessage(reason);
+        startBrowserFallback();
+    }, [cleanupAudio, startBrowserFallback, stopOriginalRecording]);
+
+    const recoverTurnWithGroq = useCallback(async () => {
+        if (currentTurnPcmBytesRef.current <= 0) {
+            beginFallback('Gemini가 받아쓰기 결과를 반환하지 않아 fallback으로 전환합니다.');
+            return;
+        }
+
+        const total = currentTurnPcmBytesRef.current;
+        const merged = new Uint8Array(total);
+        let offset = 0;
+        for (const chunk of currentTurnPcmChunksRef.current) {
+            merged.set(chunk, offset);
+            offset += chunk.byteLength;
+        }
+        resetTurnBuffers();
+
+        try {
+            const base64 = arrayBufferToBase64(merged.buffer);
+            const wav = pcm16Base64ToWavBlob(base64, 16000, 1);
+            const transcript = await postGroqTranscribe(wav);
+            if (transcript) {
+                onTranscriptReceived(transcript, true);
+                return;
+            }
+        } catch (error) {
+            console.warn('Global voice recovery transcription failed', error);
+        }
+
+        beginFallback('Gemini 전사가 비어 있어 브라우저/Groq STT로 자동 전환합니다.');
+    }, [beginFallback, onTranscriptReceived, postGroqTranscribe, resetTurnBuffers]);
+
     const connectToGemini = useCallback(async (opts?: { isRetry?: boolean }) => {
         let connectId = 0;
         const isCurrentAttempt = () => geminiConnectIdRef.current === connectId;
@@ -139,7 +447,7 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             cleanupAudio();
             setStatus(ConnectionStatus.CONNECTING);
 
-            const tokenData = await postApi<{ token: string }>('live-token', { model: MODEL_LIVE });
+            const tokenData = await postApi<{ token: string }>('live-token', { model: GLOBAL_TRANSCRIBE_MODEL });
             if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
                 if (isCurrentAttempt()) {
                     cleanupAudio();
@@ -159,11 +467,8 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
 
             const ai = (window as any).ai_client || new GoogleGenAI({ apiKey: tokenData.token, apiVersion: 'v1alpha' });
             const inputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
             inputAudioContextRef.current = inputCtx;
-            audioContextRef.current = audioCtx;
             await inputCtx.resume();
-            await audioCtx.resume();
 
             if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
                 cleanupAudio();
@@ -171,26 +476,13 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                 return;
             }
 
-            const analyserNode = audioCtx.createAnalyser();
+            const analyserNode = inputCtx.createAnalyser();
             analyserNode.fftSize = 256;
             setAnalyser(analyserNode);
 
-            const instruction = langInput.code === 'auto'
-                ? `You are a highly capable AI assistant specializing in real-time transcription and translation. 
-                   Listen to the user's voice, detect the language, and provide an accurate transcription of what is said. 
-                   Do not provide commentary, only the transcription.`
-                : `You are a helpful assistant acting as a transcriber. Your task is to listen to the user speaking in ${langInput.name}.`;
-
             const sessionPromise = (ai as any).live.connect({
-                model: MODEL_LIVE,
-                config: {
-                    responseModalities: [Modality.AUDIO],
-                    speechConfig: {
-                        voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Puck' } },
-                    },
-                    systemInstruction: instruction,
-                    inputAudioTranscription: {},
-                },
+                model: GLOBAL_TRANSCRIBE_MODEL,
+                config: buildGlobalTranscribeConfig(langInput.code),
                 callbacks: {
                     onopen: async () => {
                         if (!geminiMicDesiredRef.current || !isCurrentAttempt()) {
@@ -245,6 +537,11 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                                 try {
                                     const inputData = e.inputBuffer.getChannelData(0);
                                     const pcm16 = float32ToInt16(inputData);
+                                    const pcmBytes = new Uint8Array(pcm16.buffer.slice(0));
+                                    if (currentTurnPcmBytesRef.current + pcmBytes.byteLength <= MAX_FALLBACK_PCM_BYTES) {
+                                        currentTurnPcmChunksRef.current.push(pcmBytes);
+                                        currentTurnPcmBytesRef.current += pcmBytes.byteLength;
+                                    }
                                     session.sendRealtimeInput({
                                         media: {
                                             data: arrayBufferToBase64(pcm16.buffer),
@@ -262,66 +559,72 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                             }
                         };
 
-                        source.connect(processor);
+                        source.connect(analyserNode);
+                        analyserNode.connect(processor);
                         processor.connect(inputCtx.destination);
                     },
                     onmessage: async (msg: any) => {
-                        console.log('[DEBUG] Gemini onmessage received:', JSON.stringify(msg).slice(0, 500));
+                        console.log('[DEBUG] Gemini transcription message:', JSON.stringify(msg).slice(0, 500));
                         if (!isCurrentAttempt()) return;
 
-                        // inputTranscription 처리 (실시간 전사) - 조각을 누적
-                        if (msg.serverContent?.inputTranscription?.text) {
-                            const chunk = msg.serverContent.inputTranscription.text;
-                            currentTurnTranscriptRef.current += chunk;
-                            // 실시간으로 누적된 텍스트 표시
-                            onTranscriptReceived(currentTurnTranscriptRef.current, false);
+                        const content = msg.serverContent;
+                        const interim = content?.interimInputTranscription?.text;
+                        const final = content?.inputTranscription;
+
+                        if (interim) {
+                            onTranscriptReceived(String(interim).trim(), false);
                         }
 
-                        if (msg.serverContent?.modelTurn?.parts) {
-                            // Gemini Live의 음성 응답은 재생하지 않음
-                            // (이 앱은 전사만 필요하고, 번역 TTS는 별도로 처리)
-                            // for (const part of msg.serverContent.modelTurn.parts) {
-                            //     if (part.inlineData) {
-                            //         onAudioReceived(part.inlineData.data);
-                            //         await playPCM(part.inlineData.data);
-                            //     }
-                            // }
+                        if (final?.text) {
+                            currentTurnTranscriptRef.current = mergeLiveTranscriptChunk(
+                                currentTurnTranscriptRef.current,
+                                String(final.text),
+                            );
+                            const transcript = currentTurnTranscriptRef.current.trim();
+                            if (transcript) {
+                                onTranscriptReceived(transcript, false);
+                            }
                         }
-                        if (msg.serverContent?.interruption) {
-                            // Handle interruption if needed
+
+                        if (final?.finished && currentTurnTranscriptRef.current.trim() && !currentTurnCommittedRef.current) {
+                            currentTurnCommittedRef.current = true;
+                            onTranscriptReceived(currentTurnTranscriptRef.current.trim(), true);
+                            currentTurnTranscriptRef.current = '';
+                            currentTurnPcmChunksRef.current = [];
+                            currentTurnPcmBytesRef.current = 0;
                         }
-                        if (msg.serverContent?.turnComplete) {
-                            // 턴이 완료되면 누적된 전사를 최종 확정
+
+                        if (content?.turnComplete) {
+                            if (currentTurnCommittedRef.current) {
+                                resetTurnBuffers();
+                                return;
+                            }
                             if (currentTurnTranscriptRef.current.trim()) {
                                 onTranscriptReceived(currentTurnTranscriptRef.current.trim(), true);
+                                resetTurnBuffers();
+                                return;
                             }
-                            // 다음 턴을 위해 초기화
-                            currentTurnTranscriptRef.current = '';
+
+                            // The dedicated transcriber should emit inputTranscription.
+                            // If it does not, recover the just-finished utterance from
+                            // the bounded PCM buffer instead of silently dropping it.
+                            await recoverTurnWithGroq();
                         }
                     },
-                    ontranscript: (t: any) => {
-                        console.log('[DEBUG] ontranscript received:', t);
-                        if (!isCurrentAttempt()) return;
-                        onTranscriptReceived(t.text, t.isFinal);
-                    },
                     onerror: (err: any) => {
-                        console.error('Gemini Session Error:', err);
-                        if (isCurrentAttempt()) {
-                            setStatus(ConnectionStatus.ERROR);
-                            setIsMicOn(false);
-                            cleanupAudio();
+                        console.error('Gemini transcription session error:', err);
+                        if (isCurrentAttempt() && geminiMicDesiredRef.current) {
+                            beginFallback(
+                                `Gemini 실시간 전사 오류로 fallback을 사용합니다: ${err?.message || String(err)}`
+                            );
                         }
                     },
                     onclose: (reason: any) => {
-                        console.log('Gemini Session Closed:', reason);
+                        console.log('Gemini transcription session closed:', reason);
                         if (isCurrentAttempt() && geminiMicDesiredRef.current) {
-                            // Schedule reconnect
-                            const attempt = geminiReconnectAttemptRef.current;
-                            if (attempt < 3) {
-                                const delay = Math.min(1000 * Math.pow(2, attempt), 8000);
-                                geminiReconnectAttemptRef.current++;
-                                setTimeout(() => connectToGemini({ isRetry: true }), delay);
-                            }
+                            beginFallback(
+                                `Gemini 실시간 전사 연결이 종료되어 fallback을 사용합니다: ${reason?.reason || 'connection closed'}`
+                            );
                         }
                     }
                 },
@@ -330,19 +633,27 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             sessionPromiseRef.current = sessionPromise;
 
         } catch (err) {
-            console.error('Gemini connection failed:', err);
-            if (isCurrentAttempt()) {
-                setStatus(ConnectionStatus.ERROR);
-                setIsMicOn(false);
-                setErrorMessage(err instanceof Error ? err.message : String(err));
+            console.error('Gemini transcription connection failed:', err);
+            if (isCurrentAttempt() && geminiMicDesiredRef.current) {
                 isGeminiConnectingRef.current = false;
-                cleanupAudio();
+                beginFallback(
+                    `Gemini 실시간 전사를 시작하지 못해 fallback을 사용합니다: ${err instanceof Error ? err.message : String(err)}`
+                );
             }
         }
-    }, [langInput, onTranscriptReceived, onAudioReceived, postApi, cleanupAudio, startOriginalRecording]);
+    }, [
+        beginFallback,
+        cleanupAudio,
+        langInput.code,
+        onTranscriptReceived,
+        postApi,
+        recoverTurnWithGroq,
+        resetTurnBuffers,
+        startOriginalRecording,
+    ]);
 
     const toggleMic = useCallback(() => {
-        if (status === ConnectionStatus.CONNECTED) {
+        if (status === ConnectionStatus.CONNECTED || status === ConnectionStatus.CONNECTING) {
             geminiMicDesiredRef.current = false;
             setIsMicOn(false);
             setStatus(ConnectionStatus.DISCONNECTED);
