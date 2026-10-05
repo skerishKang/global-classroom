@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Interview mode on the existing Global Classroom UI', () => {
-  test('normal mode exposes an Interview toggle without replacing the main UI', async ({ page }) => {
+  test('normal mode exposes an explicit open-Interview action without replacing the main UI', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: 'INTERVIEW' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '인터뷰 통역 열기' })).toBeVisible();
     await expect(page.getByTitle('입력 언어 선택 (내가 말하는 언어)')).toBeVisible();
     await expect(page.getByTitle('번역 언어 선택 (듣고 싶은 언어)')).toBeVisible();
     await expect(page.getByText('AI 면접 실시간 통역')).toHaveCount(0);
@@ -13,7 +13,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
   test('interview mode shows the authoritative Auto → bidirectional target policy', async ({ page }) => {
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: 'GLOBAL CLASSROOM' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '← GLOBAL CLASSROOM' })).toBeVisible();
     const readyBadge = page.getByText(/AUTO · KO ↔ EN/);
     await expect(readyBadge).toHaveCount(1);
     if ((page.viewportSize()?.width ?? 1280) < 640) {
@@ -70,13 +70,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
 
   test('the same header toggle enters and exits interview mode', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: 'INTERVIEW' }).click();
+    await page.getByRole('button', { name: '인터뷰 통역 열기' }).click();
     await expect(page).toHaveURL(/mode=interview/);
-    await expect(page.getByRole('button', { name: 'GLOBAL CLASSROOM' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '← GLOBAL CLASSROOM' })).toBeVisible();
 
-    await page.getByRole('button', { name: 'GLOBAL CLASSROOM' }).click();
+    await page.getByRole('button', { name: '← GLOBAL CLASSROOM' }).click();
     await expect(page).not.toHaveURL(/mode=interview/);
-    await expect(page.getByRole('button', { name: 'INTERVIEW' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '인터뷰 통역 열기' })).toBeVisible();
   });
 
   test('left text composer waits for Enter, applies glossary, and retranslates only on request', async ({ page }) => {
