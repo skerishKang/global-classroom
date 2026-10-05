@@ -94,12 +94,17 @@ Interview 모드는 `?mode=interview`로 진입하며, 기존 Global Classroom U
 - **실시간 번역 미리보기**: Gemini `gemini-3.5-live-translate-preview`
 - **fallback STT**: Browser SpeechRecognition → Groq Whisper 순으로 전환
 - **텍스트 번역/다시 번역**: Groq 우선, Google 계열 모델 fallback
+- **입력 자동 감지 + 복수 번역 대상**: 기본 KO ↔ EN이며, 감지된 source 언어는 target에서 제외
+- **새 행 기본 표시**: source=ko이면 EN, source=en이면 KO를 즉시 표시하고 기존 행의 수동 탭 선택은 유지
+- **최종 번역 보장**: Live Translate는 저지연 preview로 사용하고, final translation이 비어 있으면 기존 `/api/translate` 경로로 보완
+- **추천 답변**: final transcript에서 질문 번역과 병렬로 answer assist를 시작하며, 답변 언어는 현재 Interview output 언어를 따름
+- **답변 번역**: 기본 호출하지 않고 사용자가 `번역`을 눌렀을 때만 기존 translate 경로를 재사용하며 utterance별로 cache
 - **키보드 입력**: 왼쪽 고정 composer에서 Enter로 번역, Shift+Enter로 줄바꿈
 - **원문/번역 독립 수정**: 원문 수정은 번역을 자동 재작성하지 않으며, 다시 번역은 명시적 사용자 동작
 - **대화 기록**: 비로그인 상태에서도 브라우저 localStorage에 텍스트 세션 저장
 - **용어집**: 메인 대화 화면이 아니라 Interview 설정에서 관리
 
-현재 Interview의 Live Translate 런타임은 한국어/영어 세션을 사용합니다. 입력 자동 감지 + 복수 번역 언어 선택 UX는 [Issue #23](../../issues/23)에서 추적 중이며, 이전 발화 번역이 다음 행으로 이어지는 문제는 [Issue #22](../../issues/22)에서 별도 수정합니다.
+Interview의 Live Translate는 발화별 session/context로 격리되어 이전 발화가 다음 번역 행으로 이어지지 않습니다. 선택된 target set에서 source 언어를 제외해 번역하며, 기본 KO ↔ EN 흐름에서는 반대 언어가 추가 클릭 없이 보입니다. Live Translate preview가 늦거나 실패해도 final transcript 기준 번역을 보장하고, 기술 질문에는 현재 output 언어의 추천 답변을 독립적으로 생성합니다.
 
 ## 사용 시나리오(수업 1시간)
 
@@ -125,7 +130,7 @@ Interview 모드는 `?mode=interview`로 진입하며, 기존 Global Classroom U
 
 일반 Classroom 모드는 발화 텍스트를 기반으로 `/api/detect-language`를 사용해 입력 언어를 감지하고 기존 입력/출력 언어 UX를 유지합니다.
 
-Interview 모드는 Gemini Transcribe Live의 자동 감지를 사용하며, 현재 Live Translate는 한국어/영어 대상으로 동작합니다. Interview 전용 복수 번역 언어 선택과 고급 언어쌍 정책은 Issue #23에서 진행 중입니다.
+Interview 모드는 Gemini Transcribe Live의 자동 감지를 사용하고, 사용자가 선택한 복수 target set에서 감지된 source 언어를 제외해 번역합니다. 기본 preset은 KO ↔ EN이며, 3개 이상의 target을 선택하면 행 안의 언어 탭으로 각 번역을 전환할 수 있습니다. 새 행은 source와 다른 output을 자동 선택하고, 사용자가 기존 행에서 직접 고른 탭은 비동기 응답으로 되돌리지 않습니다.
 
 ### TTS(문장 재생/전체 듣기) + 음성 캐시(IndexedDB)
 
@@ -155,7 +160,7 @@ TTS 생성은 Netlify Functions(`/api/tts`)를 사용합니다.
 
 ### Google Workspace 연동(Drive/Docs/Classroom)
 
-현재 구현은 Google 로그인(GIS OAuth) 후 아래 기능을 사용할 수 있습니다. 장기적으로는 Padiem 공용 Google connector authority를 재사용하는 방향이며, 전환 작업은 [Issue #20](../../issues/20)에서 관리합니다.
+현재 구현은 Google 로그인(GIS OAuth) 후 아래 기능을 사용할 수 있습니다. 이 기존 OAuth/Workspace 경로는 현재 유지 대상입니다. Padiem 공용 account/connector 연계는 실제 cross-product 필요가 생길 때만 재검토하는 미래 옵션이며 [Issue #20](../../issues/20)에 보류 상태로 기록되어 있습니다.
 
 - **Google Drive 백업**: 세션 폴더에 transcript/manifest/오디오를 저장
 - **Google Docs 저장**: 번역 노트를 문서로 정리하여 저장
@@ -469,13 +474,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-screenshots.
 - “음성 캐시(IndexedDB)”를 켜면 재생이 더 안정적일 수 있습니다.
 - 네트워크 상황에 따라 Drive에서 wav를 내려받는 시간이 길어질 수 있습니다.
 
-## 현재 작업 / 로드맵
+## 현재 상태 / 향후 후보
 
-- [#22](../../issues/22) — Live Translate 발화별 context isolation / 이전 번역 누적 제거
-- [#23](../../issues/23) — 입력 자동 감지 + 복수 번역 언어 선택 + 고급 언어쌍
-- [#24](../../issues/24) — 수정/재생/다시 번역 action을 compact icon으로 정리
-- [#20](../../issues/20) — Padiem 공용 계정/Portal/SSO 및 shared Google connector 전환
-- 내보내기 UX 개선: alert → 결과 모달(바로가기 링크 포함)
-- Docs/Drive 내보내기에서 결과 URL을 UI로 반환/표시
+최근 Interview 핵심 작업인 [#22](../../issues/22), [#23](../../issues/23), [#24](../../issues/24), [#53](../../issues/53), [#62](../../issues/62), [#63](../../issues/63)은 완료되었습니다.
+
+- [#66](../../issues/66) — **ACTIVE**. 내보내기 `alert`를 actionable result surface로 교체하고 Drive/Docs destination link를 명확히 노출
+- [#20](../../issues/20) — **DEFERRED / FUTURE**. Padiem 공용 계정/Portal/SSO 및 shared Google connector 연계는 현재 구현 대상이 아닙니다.
+
+새 작업은 Production 증거나 owner 요구를 확인한 뒤 focused issue로 만든 다음 구현합니다.
 
 
