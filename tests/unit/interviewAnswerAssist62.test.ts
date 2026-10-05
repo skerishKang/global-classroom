@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-// Provider stub: #62 tests only exercise request shaping, response validation
-// and fail-closed handling. No live provider call is ever made.
+// Provider stubs: #62 tests only exercise routing, prompt shaping, response
+// validation and fail-closed handling. No live provider call is ever made.
 const mocks = vi.hoisted(() => ({
   generateContent: vi.fn(),
+  groqCreate: vi.fn(),
   ctorKeys: [] as string[],
+  groqCtorKeys: [] as string[],
 }));
 
 vi.mock('@google/genai', async (importOriginal) => {
@@ -18,8 +20,25 @@ vi.mock('@google/genai', async (importOriginal) => {
   return { ...actual, GoogleGenAI };
 });
 
-import { handler, parseAnswerPayload, MAX_ANSWER_CONTEXT_TURNS } from '../../netlify/functions/interview-answer';
-import { buildAnswerRequest } from '../../utils/interviewAnswer';
+vi.mock('groq-sdk', () => {
+  class Groq {
+    chat = { completions: { create: mocks.groqCreate } };
+    constructor(options: { apiKey?: string }) {
+      mocks.groqCtorKeys.push(options?.apiKey || '');
+    }
+  }
+  return { default: Groq };
+});
+
+import { handler, parseAnswerPayload, ANSWER_PRIMARY_MODEL } from '../../netlify/functions/interview-answer';
+import {
+  buildAnswerRequest,
+  isAnswerTranslationFresh,
+  planAnswerTranslation,
+  resolveAnswerLanguage,
+  resolveAnswerTranslationTarget,
+  MAX_ANSWER_CONTEXT_TURNS,
+} from '../../utils/interviewAnswer';
 
 const postEvent = (body: unknown, headers: Record<string, string> = {}, method = 'POST') => ({
   httpMethod: method,
@@ -27,15 +46,29 @@ const postEvent = (body: unknown, headers: Record<string, string> = {}, method =
   body: JSON.stringify(body),
 });
 
-const modelReply = (text: string) => {
+const groqReply = (text: string) => {
+  mocks.groqCreate.mockResolvedValueOnce({ choices: [{ message: { content: text } }] });
+};
+
+const googleReply = (text: string) => {
   mocks.generateContent.mockResolvedValueOnce({ text });
 };
 
+const promptOf = (call = 0) => String(
+  mocks.groqCreate.mock.calls[call]?.[0]?.messages?.[0]?.content
+  || mocks.generateContent.mock.calls[call]?.[0]?.contents?.[0]?.parts?.[0]?.text
+  || '',
+);
+
 beforeEach(() => {
   mocks.generateContent.mockReset();
+  mocks.groqCreate.mockReset();
   mocks.ctorKeys.length = 0;
+  mocks.groqCtorKeys.length = 0;
   delete process.env.GEMINI_API_KEY;
   delete process.env.API_KEY;
+  // Production shape: Groq is configured and is the primary answer route.
+  process.env.GROQ_API_KEY = 'grok-server-key';
 });
 
 afterEach(() => {
@@ -51,70 +84,182 @@ describe('#62 interview answer assist endpoint', () => {
     expect(missing.statusCode).toBe(400);
 
     const huge = await handler(postEvent(
-      { text: 'x'.repeat(5000), language: 'en' },
+      { text: 'x'.repeat(5000), answerLanguage: 'en' },
       { 'x-user-api-key': 'k' },
     ));
     expect(huge.statusCode).toBe(413);
   });
 
-  test('a technical question yields a bounded structured answer in one call', async () => {
-    modelReply('{"shouldAnswer":true,"answer":"Use constructor injection.","language":"en"}');
-    const res = await handler(postEvent(
-      { text: 'Explain dependency injection.', language: 'en', recentContext: ['previous question'] },
+  test('answers in the requested output language, never the interviewer language', async () => {
+    // English question, Korean output => Korean answer.
+    groqReply('{"shouldAnswer":true,"answer":"의존성은 생성자로 주입합니다."}');
+    const englishQuestion = await handler(postEvent(
+      {
+        text: 'Explain dependency injection.',
+        answerLanguage: 'ko',
+        answerLanguageName: '한국어 (Korean)',
+        sourceLanguage: 'en',
+      },
       { 'x-user-api-key': 'user-key' },
     ));
+    expect(englishQuestion.statusCode).toBe(200);
+    expect(JSON.parse(englishQuestion.body)).toEqual({
+      shouldAnswer: true,
+      answer: '의존성은 생성자로 주입합니다.',
+      language: 'ko',
+    });
+    // The prompt names the output language and forbids mirroring the source.
+    const prompt = promptOf();
+    expect(prompt).toContain('한국어 (Korean) (ko)');
+    expect(prompt).toMatch(/NOT the interviewer'?s language \(en\)/);
+
+    // Korean question, English output => English answer.
+    groqReply('{"shouldAnswer":true,"answer":"Pass dependencies through the constructor."}');
+    const koreanQuestion = await handler(postEvent(
+      {
+        text: '의존성 주입을 설명해 주세요.',
+        answerLanguage: 'en',
+        answerLanguageName: 'English',
+        sourceLanguage: 'ko',
+      },
+      { 'x-user-api-key': 'user-key' },
+    ));
+    expect(JSON.parse(koreanQuestion.body).language).toBe('en');
+  });
+
+  test('the answer language is the endpoint contract, not a model choice', async () => {
+    // A model that reports its own language cannot move the answer off the
+    // requested output language.
+    groqReply('{"shouldAnswer":true,"answer":"answer text","language":"en"}');
+    const res = await handler(postEvent(
+      { text: 'Explain GC.', answerLanguage: 'ko', sourceLanguage: 'en' },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(JSON.parse(res.body).language).toBe('ko');
+
+    // A missing answerLanguage still answers deterministically.
+    groqReply('{"shouldAnswer":true,"answer":"answer text"}');
+    const defaulted = await handler(postEvent({ text: 'Explain GC.' }, { 'x-user-api-key': 'k' }));
+    expect(JSON.parse(defaulted.body).language).toBe('en');
+  });
+
+  test('region tags are reduced to the base answer language', async () => {
+    groqReply('{"shouldAnswer":true,"answer":"ok"}');
+    const res = await handler(postEvent(
+      { text: 'Explain GC.', answerLanguage: 'ko-KR', sourceLanguage: 'en-US' },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(JSON.parse(res.body).language).toBe('ko');
+    expect(promptOf()).toContain('(ko)');
+  });
+
+  test('the primary answer model is the same speed-first model as translation', async () => {
+    groqReply('{"shouldAnswer":true,"answer":"ok"}');
+    await handler(postEvent(
+      { text: 'Explain GC.', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(ANSWER_PRIMARY_MODEL).toBe('openai/gpt-oss-20b');
+    expect(mocks.groqCreate.mock.calls[0]?.[0]?.model).toBe('openai/gpt-oss-20b');
+    // Low reasoning effort + hidden reasoning, matching translate.ts.
+    expect(mocks.groqCreate.mock.calls[0]?.[0]?.reasoning_effort).toBe('low');
+    expect(mocks.groqCreate.mock.calls[0]?.[0]?.reasoning_format).toBe('hidden');
+    // The personal key is a Google credential: Groq must not receive it.
+    expect(mocks.groqCtorKeys).toEqual(['grok-server-key']);
+    expect(mocks.ctorKeys).toEqual([]);
+  });
+
+  test('falls back through the speed-first route when Groq is unavailable', async () => {
+    // No Groq key configured at all: the Google family takes over directly.
+    delete process.env.GROQ_API_KEY;
+    googleReply('{"shouldAnswer":true,"answer":"ok"}');
+    await handler(postEvent({ text: 'Explain GC.', answerLanguage: 'ko' }, { 'x-user-api-key': 'k' }));
+    expect(mocks.groqCreate).not.toHaveBeenCalled();
+    expect(mocks.ctorKeys).toEqual(['k']);
+  });
+
+  test('a failing primary model falls through to the next route', async () => {
+    mocks.groqCreate.mockRejectedValueOnce(new Error('rate limited'));
+    googleReply('{"shouldAnswer":true,"answer":"ok"}');
+    const res = await handler(postEvent(
+      { text: 'Explain GC.', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
     expect(res.statusCode).toBe(200);
-    const payload = JSON.parse(res.body);
-    expect(payload).toEqual({ shouldAnswer: true, answer: 'Use constructor injection.', language: 'en' });
-    // One call decides everything; no classifier round trip.
-    expect(mocks.generateContent).toHaveBeenCalledTimes(1);
-    // #32 contract: the personal key is what the endpoint used.
-    expect(mocks.ctorKeys).toEqual(['user-key']);
+    expect(mocks.groqCreate.mock.calls[1]?.[0]?.model).toBe('openai/gpt-oss-120b');
+    expect(mocks.generateContent.mock.calls[0]?.[0]?.model).toBe('gemma-4-26b-a4b-it');
   });
 
   test('fails closed on malformed or empty model output', async () => {
-    modelReply('Sorry, I cannot help with that.');
-    const prose = await handler(postEvent({ text: 'hello', language: 'en' }, { 'x-user-api-key': 'k' }));
-    expect(JSON.parse(prose.body)).toEqual({ shouldAnswer: false, answer: '', language: 'en' });
+    groqReply('Sorry, I cannot help with that.');
+    const prose = await handler(postEvent(
+      { text: 'hello', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(JSON.parse(prose.body)).toEqual({ shouldAnswer: false, answer: '', language: 'ko' });
 
-    modelReply('{"shouldAnswer":true,"answer":"","language":"en"}');
-    const emptyAnswer = await handler(postEvent({ text: 'hello', language: 'en' }, { 'x-user-api-key': 'k' }));
+    groqReply('{"shouldAnswer":true,"answer":"","language":"ko"}');
+    const emptyAnswer = await handler(postEvent(
+      { text: 'hello', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
     expect(JSON.parse(emptyAnswer.body).shouldAnswer).toBe(false);
 
-    modelReply('{ not json at all');
-    const broken = await handler(postEvent({ text: 'hello', language: 'en' }, { 'x-user-api-key': 'k' }));
-    expect(JSON.parse(broken.body)).toEqual({ shouldAnswer: false, answer: '', language: 'en' });
+    groqReply('{ not json at all');
+    const broken = await handler(postEvent(
+      { text: 'hello', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(JSON.parse(broken.body)).toEqual({ shouldAnswer: false, answer: '', language: 'ko' });
+
+    groqReply('');
+    const emptyRaw = await handler(postEvent(
+      { text: 'hello', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(emptyRaw.statusCode).toBe(502);
   });
 
   test('a non-question never produces an answer', async () => {
-    modelReply('{"shouldAnswer":false,"answer":"","language":"en"}');
-    const res = await handler(postEvent({ text: 'Okay, thank you.', language: 'en' }, { 'x-user-api-key': 'k' }));
+    groqReply('{"shouldAnswer":false,"answer":""}');
+    const res = await handler(postEvent(
+      { text: 'Okay, thank you.', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
     const payload = JSON.parse(res.body);
     expect(payload.shouldAnswer).toBe(false);
     expect(payload.answer).toBe('');
   });
 
-  test('falls back to the source language when the model omits language', async () => {
-    modelReply('{"shouldAnswer":true,"answer":"의존성 주입은 생성자로 받습니다."}');
-    const res = await handler(postEvent({ text: '의존성 주입을 설명해 주세요.', language: 'ko' }, { 'x-user-api-key': 'k' }));
-    expect(JSON.parse(res.body).language).toBe('ko');
+  test('the parser itself fails closed to the requested language', () => {
+    expect(parseAnswerPayload('{"shouldAnswer":true,"answer":"ok","language":"en"}', 'ko').language).toBe('ko');
+    expect(parseAnswerPayload('{"shouldAnswer":true}', 'ko')).toEqual({ shouldAnswer: false, answer: '', language: 'ko' });
+    expect(parseAnswerPayload('', 'ko')).toEqual({ shouldAnswer: false, answer: '', language: 'ko' });
   });
 
   test('recent context is bounded to the last five turns', async () => {
-    modelReply('{"shouldAnswer":true,"answer":"ok","language":"en"}');
+    groqReply('{"shouldAnswer":true,"answer":"ok"}');
     const recentContext = Array.from({ length: 9 }, (_, i) => `turn ${i}`);
-    await handler(postEvent({ text: 'What about production?', language: 'en', recentContext }, { 'x-user-api-key': 'k' }));
-    const prompt = String(mocks.generateContent.mock.calls[0]?.[0]?.contents?.[0]?.parts?.[0]?.text || '');
+    await handler(postEvent(
+      { text: 'What about production?', answerLanguage: 'en', recentContext },
+      { 'x-user-api-key': 'k' },
+    ));
+    const prompt = promptOf();
     expect(prompt).toContain('turn 8');
     expect(prompt).not.toContain('turn 2\n');
     expect(prompt.split('---').length).toBeLessThanOrEqual(MAX_ANSWER_CONTEXT_TURNS + 1);
   });
 
   test('server errors surface as a 502 without leaking key material', async () => {
-    mocks.generateContent.mockRejectedValue(new Error('provider exploded'));
-    const res = await handler(postEvent({ text: 'Explain GC.', language: 'en' }, { 'x-user-api-key': 'secret-value' }));
+    process.env.GROQ_API_KEY = 'gsk_server_secret_value';
+    mocks.groqCreate.mockRejectedValue(new Error('provider exploded'));
+    const res = await handler(postEvent(
+      { text: 'Explain GC.', answerLanguage: 'en' },
+      { 'x-user-api-key': 'secret-value' },
+    ));
     expect(res.statusCode).toBe(502);
     expect(res.body).not.toContain('secret-value');
+    expect(res.body).not.toContain('gsk_server_secret_value');
   });
 });
 
@@ -126,7 +271,7 @@ describe('#62 buildAnswerRequest', () => {
       'ko',
     );
     expect(request.text).toBe('Explain GC');
-    expect(request.language).toBe('ko');
+    expect(request.answerLanguage).toBe('ko');
     // The empty turn is dropped and the oversized one is truncated.
     expect(request.recentContext).toHaveLength(4);
     expect(request.recentContext[0]).toBe('earlier turn');
@@ -141,9 +286,112 @@ describe('#62 buildAnswerRequest', () => {
     expect(request.recentContext[4]).toBe('turn 7');
   });
 
-  test('the answer language hint is the source language, never the translation', () => {
-    expect(buildAnswerRequest('Hello', [], 'en').language).toBe('en');
-    expect(buildAnswerRequest('안녕', [], 'ko').language).toBe('ko');
-    expect(buildAnswerRequest('Hello', [], '').language).toBe('en');
+  test('the answer language is the output language and never the source language', () => {
+    const englishQuestionKoreanOutput = buildAnswerRequest('Hello', [], 'ko', {
+      answerLanguageName: '한국어 (Korean)',
+      sourceLanguage: 'en',
+    });
+    expect(englishQuestionKoreanOutput.answerLanguage).toBe('ko');
+    expect(englishQuestionKoreanOutput.answerLanguageName).toBe('한국어 (Korean)');
+    expect(englishQuestionKoreanOutput.sourceLanguage).toBe('en');
+
+    const koreanQuestionEnglishOutput = buildAnswerRequest('안녕', [], 'en', { sourceLanguage: 'ko' });
+    expect(koreanQuestionEnglishOutput.answerLanguage).toBe('en');
+    expect(koreanQuestionEnglishOutput.sourceLanguage).toBe('ko');
+
+    // Output language is required and canonical; a region tag collapses.
+    expect(buildAnswerRequest('Hello', [], '').answerLanguage).toBe('en');
+    expect(buildAnswerRequest('Hello', [], 'ko-KR').answerLanguage).toBe('ko');
+  });
+
+  test('generation needs no translation: the payload carries only transcript, languages and context', () => {
+    const request = buildAnswerRequest('Explain GC.', ['earlier'], 'ko', { sourceLanguage: 'en' });
+    expect(Object.keys(request).sort()).toEqual(
+      ['answerLanguage', 'answerLanguageName', 'recentContext', 'sourceLanguage', 'text'].sort(),
+    );
+    // No translated answer/translation text is requested: the answer starts
+    // from the finalized transcript alone.
+    expect(JSON.stringify(request)).not.toContain('translated');
+  });
+});
+
+describe('#62 answer language resolution', () => {
+  test('the visible output target is the answer language', () => {
+    // English question, Korean output.
+    expect(resolveAnswerLanguage('ko', ['ko', 'en'], 'en')).toBe('ko');
+    // Korean question, English output.
+    expect(resolveAnswerLanguage('en', ['ko', 'en'], 'ko')).toBe('en');
+  });
+
+  test('falls back to a non-source selected target, then any target, then the source', () => {
+    expect(resolveAnswerLanguage('', ['ko', 'en'], 'en')).toBe('ko');
+    expect(resolveAnswerLanguage('', ['en', 'ko'], 'en')).toBe('ko');
+    expect(resolveAnswerLanguage('', ['ko'], 'ko')).toBe('ko');
+    expect(resolveAnswerLanguage('', [], 'ko')).toBe('ko');
+    expect(resolveAnswerLanguage('', [], '')).toBe('en');
+    // The pseudo language is never an answer language.
+    expect(resolveAnswerLanguage('', ['auto', 'vi'], 'en')).toBe('vi');
+  });
+});
+
+describe('#62 on-demand answer translation policy', () => {
+  const answerState = {
+    suggestedAnswer: '의존성은 생성자로 주입합니다.',
+    answerLanguage: 'ko',
+    sourceLanguage: 'en',
+  };
+
+  test('nothing is translated until the user asks, then hide/show is free', () => {
+    // No cache yet: the first press is the only request.
+    expect(planAnswerTranslation(answerState)).toEqual({ kind: 'request', targetLanguage: 'en' });
+
+    const cached = {
+      ...answerState,
+      answerTranslation: 'Inject dependencies through the constructor.',
+      answerTranslationSource: answerState.suggestedAnswer,
+      answerTranslationStatus: 'ready' as const,
+      answerTranslationVisible: true,
+    };
+    // Second press hides it, third shows it again: both are visibility only.
+    expect(planAnswerTranslation(cached)).toEqual({ kind: 'hide' });
+    expect(planAnswerTranslation({ ...cached, answerTranslationVisible: false })).toEqual({ kind: 'show' });
+    // Neither hiding nor showing may be answered with a request.
+    expect(planAnswerTranslation(cached).kind).not.toBe('request');
+  });
+
+  test('a changed suggested answer invalidates the cached translation', () => {
+    const cached = {
+      ...answerState,
+      answerTranslation: 'Inject dependencies through the constructor.',
+      answerTranslationSource: answerState.suggestedAnswer,
+      answerTranslationStatus: 'ready' as const,
+      answerTranslationVisible: true,
+    };
+    expect(isAnswerTranslationFresh(cached)).toBe(true);
+
+    const regenerated = { ...cached, suggestedAnswer: '새로 생성된 답변입니다.' };
+    expect(isAnswerTranslationFresh(regenerated)).toBe(false);
+    // Even when it is visible, a stale translation is never displayed.
+    expect(planAnswerTranslation(regenerated)).toEqual({ kind: 'request', targetLanguage: 'en' });
+  });
+
+  test('no answer, no opposite language, or an in-flight request means no request', () => {
+    expect(planAnswerTranslation({ ...answerState, suggestedAnswer: '' })).toEqual({ kind: 'ignore' });
+    expect(planAnswerTranslation({ ...answerState, sourceLanguage: 'ko' })).toEqual({ kind: 'ignore' });
+    expect(planAnswerTranslation({ ...answerState, sourceLanguage: '' })).toEqual({ kind: 'ignore' });
+    expect(planAnswerTranslation({ ...answerState, answerTranslationStatus: 'loading' }))
+      .toEqual({ kind: 'ignore' });
+  });
+
+  test('a failed translation may be retried', () => {
+    expect(planAnswerTranslation({ ...answerState, answerTranslationStatus: 'error' }))
+      .toEqual({ kind: 'request', targetLanguage: 'en' });
+  });
+
+  test('the translation target is the opposite, source-side language', () => {
+    expect(resolveAnswerTranslationTarget('ko', 'en')).toBe('en');
+    expect(resolveAnswerTranslationTarget('en', 'ko-KR')).toBe('ko');
+    expect(resolveAnswerTranslationTarget('ko', 'ko')).toBe('');
+    expect(resolveAnswerTranslationTarget('', 'en')).toBe('');
   });
 });

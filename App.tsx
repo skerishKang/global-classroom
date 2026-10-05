@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { logOut } from './utils/firebase';
 import { clearSessions } from './utils/localStorage';
@@ -29,7 +29,7 @@ import {
   HISTORY_RENDER_STEP
 } from './constants';
 import { decodeAudioData, base64ToUint8Array, arrayBufferToBase64 } from './utils/audioUtils';
-import { MAX_ANSWER_CONTEXT_TURNS } from './utils/interviewAnswer';
+import { MAX_ANSWER_CONTEXT_TURNS, resolveAnswerLanguage } from './utils/interviewAnswer';
 import { retry } from './utils/retry';
 import Visualizer from './components/Visualizer';
 import CameraView from './components/CameraView';
@@ -279,9 +279,11 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     postApi,
     translateText,
     translateToTargets,
-    generateInterviewAnswer
+    generateInterviewAnswer,
+    toggleAnswerTranslation
   } = useTranslationService({
     settings,
+    history,
     setHistory,
     isAutoPlay,
     playTTS: (text, id) => playTTS(text, id),
@@ -598,14 +600,22 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       timestamp: Date.now(),
     };
 
-    setHistory((prev) => [...prev, newItem]);
+setHistory((prev) => [...prev, newItem]);
     interviewRowIdsRef.current.add(newItem.id);
     interviewTargetsByUtteranceRef.current.delete(utteranceId);
 
-    // #62: answer assist starts from the finalized source transcript right
-    // away — it does not wait for (nor depend on) the translation, and it is
-    // bound to this utterance id so late responses cannot cross rows.
-    void generateInterviewAnswer(normalized, newItem.id, recentContext, sourceLanguage);
+    // #62: the suggested answer is written in the OUTPUT language the user is
+    // reading on this row, not in the interviewer's language (#63 already
+    // guarantees activeTarget is never the source). The request is built from
+    // the finalized source transcript and that resolved target only, so it is
+    // fired here without waiting for any translation response, and it stays
+    // bound to this utterance id.
+    const answerLanguage = resolveAnswerLanguage(activeTarget, interviewPolicyRef.current.targets, sourceLanguage);
+    const answerLanguageName = SUPPORTED_LANGUAGES.find((language) => language.code === answerLanguage)?.name || answerLanguage;
+    void generateInterviewAnswer(normalized, newItem.id, recentContext, answerLanguage, {
+      answerLanguageName,
+      sourceLanguage,
+    });
 
     if (missingFinalTargetsAtBoundary.length > 0) {
       // Keep an entry present only while this row is inside the final grace
@@ -1161,6 +1171,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         onRetranslate={interviewMode ? handleInterviewRetranslate : undefined}
         onSubmitText={interviewMode ? handleInterviewTextSubmit : undefined}
         onSelectTranslationTarget={interviewMode ? handleInterviewSelectTarget : undefined}
+        onToggleAnswerTranslation={interviewMode ? toggleAnswerTranslation : undefined}
       />
 
       <BottomControls

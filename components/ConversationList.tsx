@@ -2,6 +2,7 @@ import React, { memo, useState } from 'react';
 import Visualizer from './Visualizer';
 import { MicIcon, CopyIcon } from './Icons';
 import { ConversationItem, TranslationMap, ConnectionStatus } from '../types';
+import { isAnswerTranslationFresh, resolveAnswerTranslationTarget } from '../utils/interviewAnswer';
 
 interface ConversationListProps {
     analyser: any;
@@ -36,6 +37,8 @@ interface ConversationListProps {
     onRetranslate?: (item: ConversationItem) => void;
     onSubmitText?: (text: string) => void;
     onSelectTranslationTarget?: (itemId: string, target: string) => void;
+    /** #62: on-demand translation of one suggested answer into the opposite language. */
+    onToggleAnswerTranslation?: (itemId: string) => void;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -71,6 +74,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
     onRetranslate,
     onSubmitText,
     onSelectTranslationTarget,
+    onToggleAnswerTranslation,
 }) => {
     const [interviewDraft, setInterviewDraft] = useState('');
 
@@ -290,6 +294,12 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                     </div>
 
                                     <div className={`relative min-w-0 rounded-xl border p-4 text-sm transition-all md:text-base ${item.isTranslating ? 'border-gray-100 bg-gray-50' : 'border-indigo-100 bg-indigo-50/50 shadow-sm'}`}>
+                                        {/* #62: the answer block is a SIBLING of the translation state,
+                                            not part of it, so a pending or failed question
+                                            translation can never hide an answer that is already
+                                            ready. Visible order stays original -> question
+                                            translation -> suggested answer. */}
+                                        <div className="flex h-full flex-col gap-3">
                                         {item.isTranslating ? (
                                             <div className="flex h-6 items-center gap-1">
                                                 <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
@@ -297,7 +307,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 delay-150" />
                                             </div>
                                         ) : isEditingTranslated ? (
-                                            <div className="flex h-full flex-col gap-3">
+                                            <div className="flex flex-1 flex-col gap-3">
                                                 <label className="text-[11px] font-black text-indigo-600 tracking-wide">{translationEditLabel}</label>
                                                 <textarea
                                                     autoFocus
@@ -312,7 +322,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 </div>
                                             </div>
                                         ) : (
-                                            <div className="flex h-full flex-col gap-3 pt-11 sm:pt-0 sm:pr-28">
+                                            <div className="flex flex-col gap-3 pt-11 sm:pt-0 sm:pr-28">
                                                 {translationTargets.length > 1 && (
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         {translationTargets.map((target) => (
@@ -342,29 +352,6 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 <span className="block whitespace-pre-wrap text-sm font-medium leading-relaxed text-indigo-900 md:text-base">
                                                     {item.translated || (uiLangCode === 'ko' ? '번역 없음' : 'No translation yet')}
                                                 </span>
-                                                {/* #62 answer assist: always below the translation, never TTS-automated. */}
-                                                {item.answerStatus === 'loading' && (
-                                                    <div
-                                                        className="text-[11px] font-bold text-violet-500"
-                                                        data-testid="answer-assist-loading"
-                                                    >
-                                                        {uiLangCode === 'ko' ? '답변 준비 중…' : 'Drafting a suggested answer…'}
-                                                    </div>
-                                                )}
-                                                {item.answerStatus === 'ready' && item.suggestedAnswer && (
-                                                    <div
-                                                        className="rounded-lg border border-violet-100 bg-violet-50/70 p-3"
-                                                        data-testid="suggested-answer"
-                                                    >
-                                                        <div className="mb-1 text-[10px] font-black uppercase tracking-wide text-violet-500">
-                                                            {uiLangCode === 'ko' ? '추천 답변' : 'Suggested answer'}
-                                                            {item.answerLanguage ? ` · ${item.answerLanguage}` : ''}
-                                                        </div>
-                                                        <div className="whitespace-pre-wrap text-sm leading-relaxed text-violet-950">
-                                                            {item.suggestedAnswer}
-                                                        </div>
-                                                    </div>
-                                                )}
                                                 <div
                                                     className="absolute right-2 top-2 z-10 flex items-center gap-1"
                                                     data-testid="translation-row-actions"
@@ -421,6 +408,89 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 </div>
                                             </div>
                                         )}
+{!isEditingTranslated && (
+                                            <>
+                                                {/* #62 answer assist: below the translation, never TTS-automated, and still readable while the question translation is pending. */}
+                                                {item.answerStatus === 'loading' && (
+                                                    <div
+                                                        className="text-[11px] font-bold text-violet-500"
+                                                        data-testid="answer-assist-loading"
+                                                    >
+                                                        {uiLangCode === 'ko' ? '답변 준비 중…' : 'Drafting a suggested answer…'}
+                                                    </div>
+                                                )}
+                                                {item.answerStatus === 'ready' && item.suggestedAnswer && (() => {
+                                                    const translationTarget = resolveAnswerTranslationTarget(item.answerLanguage, item.sourceLanguage);
+                                                    // Only a translation produced from the answer currently on
+                                                    // screen may be shown; a regenerated answer drops it.
+                                                    const answerTranslationFresh = isAnswerTranslationFresh(item);
+                                                    const answerTranslationVisible = Boolean(item.answerTranslationVisible) && answerTranslationFresh;
+                                                    const answerTranslationLoading = item.answerTranslationStatus === 'loading';
+                                                    return (
+                                                        <div
+                                                            className="rounded-lg border border-violet-100 bg-violet-50/70 p-3"
+                                                            data-testid="suggested-answer"
+                                                            data-answer-language={item.answerLanguage || ''}
+                                                        >
+                                                            <div className="mb-1 flex items-center justify-between gap-2">
+                                                                <div className="text-[10px] font-black uppercase tracking-wide text-violet-500">
+                                                                    {uiLangCode === 'ko' ? '추천 답변' : 'Suggested answer'}
+                                                                    {item.answerLanguage ? ` · ${item.answerLanguage}` : ''}
+                                                                </div>
+                                                                {translationTarget && (
+                                                                    <button
+                                                                        type="button"
+                                                                        data-testid="answer-translate-toggle"
+                                                                        data-target-language={translationTarget}
+                                                                        aria-pressed={answerTranslationVisible}
+                                                                        onClick={(event) => {
+                                                                            event.stopPropagation();
+                                                                            onToggleAnswerTranslation?.(item.id);
+                                                                        }}
+                                                                        className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[10px] font-black tracking-wide text-violet-600 transition hover:bg-violet-100 active:scale-95"
+                                                                        title={answerTranslationVisible
+                                                                            ? (uiLangCode === 'ko' ? '답변 번역 숨기기' : 'Hide answer translation')
+                                                                            : (uiLangCode === 'ko' ? '답변을 원래 언어로 번역' : 'Translate the answer into the other language')}
+                                                                    >
+                                                                        {answerTranslationLoading
+                                                                            ? (uiLangCode === 'ko' ? '번역 중…' : 'Translating…')
+                                                                            : answerTranslationVisible
+                                                                                ? (uiLangCode === 'ko' ? '숨기기' : 'Hide')
+                                                                                : (uiLangCode === 'ko' ? '번역' : 'Translate')}
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                            <div className="whitespace-pre-wrap text-sm leading-relaxed text-violet-950" data-testid="suggested-answer-text">
+                                                                {item.suggestedAnswer}
+                                                            </div>
+                                                            {item.answerTranslationStatus === 'error' && (
+                                                                <div
+                                                                    className="mt-2 text-[10px] font-bold text-rose-500"
+                                                                    data-testid="answer-translation-error"
+                                                                >
+                                                                    {uiLangCode === 'ko' ? '답변 번역에 실패했습니다.' : 'Answer translation failed.'}
+                                                                </div>
+                                                            )}
+                                                            {answerTranslationVisible && item.answerTranslation && (
+                                                                <div
+                                                                    className="mt-2 border-t border-violet-200 pt-2"
+                                                                    data-testid="answer-translation"
+                                                                >
+                                                                    <div className="text-[10px] font-black uppercase tracking-wide text-violet-400">
+                                                                        {uiLangCode === 'ko' ? '답변 번역' : 'Answer translation'}
+                                                                        {item.answerTranslationLanguage ? ` · ${item.answerTranslationLanguage}` : ''}
+                                                                    </div>
+                                                                    <div className="whitespace-pre-wrap text-sm leading-relaxed text-violet-900">
+                                                                        {item.answerTranslation}
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </>
+                                        )}
+                                    </div>
                                     </div>
                                 </div>
                             );

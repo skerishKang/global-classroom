@@ -53,10 +53,25 @@ export interface ConversationItem {
   /**
    * Technical answer assist state (#62), bound to this utterance's identity so
    * a late response can never land on another row.
+   *
+   * `suggestedAnswer` is written in `answerLanguage`, which follows the
+   * current Interview OUTPUT (translation) language, not the source language.
    */
   answerStatus?: 'loading' | 'ready' | 'none' | 'error';
   suggestedAnswer?: string;
   answerLanguage?: string;
+  /**
+   * On-demand translation of `suggestedAnswer` into the opposite
+   * (source-side) language. Nothing is requested until the user presses 번역;
+   * the result is cached on this utterance and dropped as soon as
+   * `suggestedAnswer` itself changes.
+   */
+  answerTranslationStatus?: 'idle' | 'loading' | 'ready' | 'error';
+  answerTranslation?: string;
+  answerTranslationLanguage?: string;
+  /** The `suggestedAnswer` text the cached translation was produced from. */
+  answerTranslationSource?: string;
+  answerTranslationVisible?: boolean;
   audioBase64?: string; // Cache for TTS audio (in-memory)
   /**
    * Provenance of `audioBase64`: `<target>:<textHash>:<voice>:<model>` of the
