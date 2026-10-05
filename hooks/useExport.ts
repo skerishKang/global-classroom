@@ -1,6 +1,15 @@
 import { useState, useRef } from 'react';
 import { backupToDrive, exportToDocs, listCourses, createCourseWork } from '../utils/googleWorkspace';
 import { downloadTranscriptLocally } from '../utils/fileExport';
+import {
+    ExportResult,
+    buildClassroomExportResult,
+    buildDocsExportResult,
+    buildDocsLocalFallbackResult,
+    buildDriveExportResult,
+    buildExportFailureResult,
+    getExportResultMessages,
+} from '../utils/exportResult';
 import { AppSettings, ConversationItem, TranslationMap, VoiceOption } from '../types';
 import { MODEL_TTS } from '../constants';
 
@@ -8,19 +17,23 @@ interface UseExportProps {
     accessToken: string | null;
     history: ConversationItem[];
     selectedVoice: VoiceOption;
+    uiLangCode: string;
     t: TranslationMap;
     setIsLoginModalOpen: (v: boolean) => void;
     /** Settings carry the local-only personal key used by the backup TTS path. */
     settings: AppSettings;
 }
 
-export function useExport({ accessToken, history, selectedVoice, t, setIsLoginModalOpen, settings }: UseExportProps) {
+export function useExport({ accessToken, history, selectedVoice, uiLangCode, t, setIsLoginModalOpen, settings }: UseExportProps) {
     const [isExportMenuOpen, setIsExportMenuOpen] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isClassroomModalOpen, setIsClassroomModalOpen] = useState(false);
     const [isNotebookLMGuideOpen, setIsNotebookLMGuideOpen] = useState(false);
     const [courses, setCourses] = useState<any[]>([]);
     const [isLoadingCourses, setIsLoadingCourses] = useState(false);
+    // #66: export outcomes go to one actionable surface instead of a blocking
+    // alert, so the destination stays openable without hijacking a tab.
+    const [exportResult, setExportResult] = useState<ExportResult | null>(null);
 
     const exportMenuRef = useRef<HTMLDivElement>(null);
 
@@ -32,7 +45,7 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
             setCourses(list);
         } catch (e) {
             console.error("Failed to fetch courses", e);
-            window.open('https://classroom.google.com', '_blank');
+            setExportResult(buildExportFailureResult('classroom', e, getExportResultMessages(uiLangCode, t)));
             setIsClassroomModalOpen(false);
         } finally {
             setIsLoadingCourses(false);
@@ -46,6 +59,8 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
             return;
         }
 
+        const messages = getExportResultMessages(uiLangCode, t);
+
         setIsExporting(true);
         try {
             if (type === 'drive') {
@@ -56,8 +71,9 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
                     ttsModel: MODEL_TTS,
                     userApiKey: settings.userApiKey || undefined,
                 });
-                if (result?.folderUrl) window.open(result.folderUrl, '_blank');
-                alert(`Drive: ${t.exportSuccess}`);
+                // No automatic popup: the result surface offers the folder as an
+                // explicit action the user chooses to follow (#66).
+                setExportResult(buildDriveExportResult(result, messages));
             } else if (type === 'notebooklm') {
                 const result = await backupToDrive(accessToken!, history, {
                     includeAudio: false,
@@ -69,11 +85,11 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
                 setIsNotebookLMGuideOpen(true);
             } else if (type === 'docs') {
                 if (accessToken) {
-                    await exportToDocs(accessToken, history);
-                    alert(`Docs: ${t.exportSuccess}`);
+                    const result = await exportToDocs(accessToken, history);
+                    setExportResult(buildDocsExportResult(result, messages));
                 } else {
                     downloadTranscriptLocally(history);
-                    alert(t.offlineMode);
+                    setExportResult(buildDocsLocalFallbackResult({ kind: 'signed-out' }, messages));
                 }
             } else if (type === 'classroom') {
                 setIsClassroomModalOpen(true);
@@ -83,9 +99,9 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
             console.error("Export failed", e);
             if (type === 'docs') {
                 downloadTranscriptLocally(history);
-                alert(t.offlineMode);
+                setExportResult(buildDocsLocalFallbackResult({ kind: 'failed', error: e }, messages));
             } else {
-                alert("Error: " + (e as Error).message);
+                setExportResult(buildExportFailureResult(type, e, messages));
             }
         } finally {
             setIsExporting(false);
@@ -97,11 +113,11 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
         setIsExporting(true);
         try {
             await createCourseWork(accessToken, courseId, history);
-            alert(t.exportSuccess);
             setIsClassroomModalOpen(false);
+            setExportResult(buildClassroomExportResult(getExportResultMessages(uiLangCode, t)));
         } catch (e) {
             console.error(e);
-            alert("Failed to submit to Classroom");
+            setExportResult(buildExportFailureResult('classroom', e, getExportResultMessages(uiLangCode, t)));
         } finally {
             setIsExporting(false);
         }
@@ -118,6 +134,8 @@ export function useExport({ accessToken, history, selectedVoice, t, setIsLoginMo
         courses,
         isLoadingCourses,
         exportMenuRef,
+        exportResult,
+        setExportResult,
         handleExport,
         handleSubmitCourseWork
     };

@@ -8,7 +8,28 @@ const getHeaders = (accessToken: string, contentType: string = 'application/json
     };
 };
 
-export const exportToDocs = async (accessToken: string, history: ConversationItem[]) => {
+const GOOGLE_DOC_ID_PATTERN = /^[a-zA-Z0-9_-]{1,128}$/;
+
+/** Canonical Docs URL built only from a validated document id. */
+export const buildGoogleDocsDocumentUrl = (docId: unknown): string | null =>
+    typeof docId === 'string' && GOOGLE_DOC_ID_PATTERN.test(docId)
+        ? `https://docs.google.com/document/d/${docId}/edit`
+        : null;
+
+/**
+ * Destination metadata for the export result surface (#66). `documentUrl` is
+ * derived from `docId` by the canonical builder, so the caller never has to
+ * trust a URL handed to it from elsewhere.
+ */
+export type DocsExportResult = {
+    success: boolean;
+    docId: string;
+    documentUrl: string | null;
+    title: string;
+    message: string;
+};
+
+export const exportToDocs = async (accessToken: string, history: ConversationItem[]): Promise<DocsExportResult> => {
     try {
         const today = new Date().toISOString().split('T')[0];
         const title = `Global Classroom Notes - ${today}`;
@@ -53,7 +74,13 @@ export const exportToDocs = async (accessToken: string, history: ConversationIte
         });
         await requireGoogleOk(batchRes, 'Docs 내용 쓰기');
 
-        return { success: true, docId: docId, message: "Document created successfully." };
+        return {
+            success: true,
+            docId: docId,
+            documentUrl: buildGoogleDocsDocumentUrl(docId),
+            title: title,
+            message: "Document created successfully.",
+        };
 
     } catch (error) {
         console.error("Docs Export Error", error);

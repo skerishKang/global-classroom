@@ -39,6 +39,7 @@ import LoginModal from './components/LoginModal';
 import HistoryModal from './components/HistoryModal';
 import SettingsModal from './components/SettingsModal';
 import ClassroomModal from './components/ClassroomModal';
+import ExportResultSurface from './components/ExportResultSurface';
 import VisionNotificationModal from './components/VisionNotificationModal';
 import SummaryModal from './components/SummaryModal';
 import AppHeader from './components/AppHeader';
@@ -430,12 +431,15 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     courses,
     isLoadingCourses,
     exportMenuRef,
+    exportResult,
+    setExportResult,
     handleExport,
     handleSubmitCourseWork
   } = useExport({
     accessToken,
     history,
     selectedVoice,
+    uiLangCode,
     t,
     setIsLoginModalOpen,
     settings
@@ -1301,6 +1305,12 @@ setHistory((prev) => [...prev, newItem]);
       <NotebookLMGuide
         isOpen={isNotebookLMGuideOpen}
         onClose={() => setIsNotebookLMGuideOpen(false)}
+      />
+
+      <ExportResultSurface
+        result={exportResult}
+        onClose={() => setExportResult(null)}
+        langCode={uiLangCode}
       />
 
       <LiveSharingModal

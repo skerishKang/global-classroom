@@ -281,6 +281,7 @@ describe('docs export truthfulness (#35)', () => {
     const result = await exportToDocs('token', []);
     expect(result.success).toBe(true);
     expect(result.docId).toBe('doc-1');
+    expect(result.documentUrl).toBe('https://docs.google.com/document/d/doc-1/edit');
   });
 });
 
