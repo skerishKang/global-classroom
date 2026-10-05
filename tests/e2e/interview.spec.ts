@@ -948,4 +948,73 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     expect(selected.length).toBeGreaterThan(0);
     expect('Selectable transcript sentence for drag.').toContain(selected);
   });
+
+  test('new text utterances show the opposite translation without an extra click (#63)', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('global_class_settings', JSON.stringify({
+        driveBackupMode: 'manual',
+        audioCacheEnabled: true,
+        recordOriginalEnabled: true,
+        interviewTargets: ['ko', 'en', 'vi'],
+      }));
+
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          const code = /[가-힣]/.test(String(body?.text || '')) ? 'ko' : 'en';
+          return new Response(JSON.stringify({ code }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          const prefix = body.to === 'English' ? 'EN' : body.to === '한국어 (Korean)' ? 'KO' : 'VI';
+          return new Response(JSON.stringify({ translated: prefix + ':' + body.text }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+
+    const rowTabs = (index: number) =>
+      page.locator('div.grid.grid-cols-2').nth(index).getByRole('button', { name: /en|ko|vi/, exact: true });
+    const activeTab = (index: number) =>
+      page.locator('div.grid.grid-cols-2').nth(index).locator('button[aria-pressed="true"]');
+    const submit = async (text: string) => {
+      const textarea = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+      await textarea.fill(text);
+      await textarea.press('Enter');
+    };
+
+    // ENGLISH source -> the Korean variant is visible immediately (no tab click).
+    await submit('I built it in production.');
+    await expect(page.getByText('KO:I built it in production.')).toBeVisible();
+    await expect(activeTab(0)).toHaveText('ko');
+
+    // KOREAN source -> the English variant is visible immediately.
+    await submit('안녕하세요');
+    await expect(page.getByText('EN:안녕하세요')).toBeVisible();
+    await expect(activeTab(1)).toHaveText('en');
+    // The source language tab never becomes the initial active target.
+    await expect(page.getByText('KO:안녕하세요')).toHaveCount(0);
+
+    // A manual tab selection on an existing row sticks through retranslation.
+    await rowTabs(1).filter({ hasText: 'vi' }).click();
+    await expect(page.getByText('VI:안녕하세요')).toBeVisible();
+    await page.locator('div.grid.grid-cols-2').nth(1).getByRole('button', { name: '다시 번역' }).click();
+    await expect(page.getByText('VI:안녕하세요')).toBeVisible();
+    await expect(activeTab(1)).toHaveText('vi');
+
+    // The manual choice becomes the preferred default for the next utterance.
+    await submit('프로젝트를 발표했습니다');
+    await expect(page.getByText('VI:프로젝트를 발표했습니다')).toBeVisible();
+    await expect(activeTab(2)).toHaveText('vi');
+  });
 });

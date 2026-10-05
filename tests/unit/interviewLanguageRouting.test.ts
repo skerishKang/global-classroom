@@ -9,6 +9,7 @@ import {
   normalizeLanguageCode,
   parsePairRules,
   pickActiveTarget,
+  pickInitialActiveTarget,
   sanitizeTargets,
 } from '../../utils/interviewLanguageRouting';
 
@@ -140,5 +141,32 @@ describe('interviewLanguageRouting', () => {
 
   test('sanitizeTargets canonicalizes stored codes', () => {
     expect(sanitizeTargets(['KO ', 'en-US', 'ko', 'auto'])).toEqual(['ko', 'en']);
+  });
+
+  test('initial active target defaults to the opposite of the source (#63)', () => {
+    expect(pickInitialActiveTarget('ko', ['en'])).toBe('en');
+    expect(pickInitialActiveTarget('en', ['ko'])).toBe('ko');
+    // Region-tagged sources are canonicalized before the comparison.
+    expect(pickInitialActiveTarget('ko-KR', ['en'])).toBe('en');
+  });
+
+  test('three or more targets pick the first selected non-source target deterministically', () => {
+    expect(pickInitialActiveTarget('ko', ['en', 'vi'])).toBe('en');
+    expect(pickInitialActiveTarget('en', ['ko', 'vi'])).toBe('ko');
+    expect(pickInitialActiveTarget('vi', ['ko', 'en'])).toBe('ko');
+    // A source that is not selected still yields a deterministic pick.
+    expect(pickInitialActiveTarget('ja', ['ko', 'en'])).toBe('ko');
+    expect(pickInitialActiveTarget('ko', [])).toBe('');
+  });
+
+  test('a manually preferred target carries over when valid and not the source', () => {
+    expect(pickInitialActiveTarget('ko', ['en', 'vi'], 'vi')).toBe('vi');
+    // Preferred equals the source -> fall back to the opposite side.
+    expect(pickInitialActiveTarget('ko', ['en', 'vi'], 'ko')).toBe('en');
+    // Preferred is not a selected target -> fall back.
+    expect(pickInitialActiveTarget('ko', ['en'], 'vi')).toBe('en');
+    expect(pickInitialActiveTarget('ko', ['en', 'vi'], 'ja')).toBe('en');
+    // Preferred wins over order even when it is not first.
+    expect(pickInitialActiveTarget('en', ['ko', 'vi'], 'ko')).toBe('ko');
   });
 });

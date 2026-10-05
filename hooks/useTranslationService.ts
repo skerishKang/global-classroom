@@ -4,6 +4,7 @@ import { SUPPORTED_LANGUAGES } from '../constants';
 import {
     getTargetsForSource,
     normalizeLanguageCode,
+    pickInitialActiveTarget,
     type InterviewLanguagePolicy,
 } from '../utils/interviewLanguageRouting';
 
@@ -147,7 +148,8 @@ export function useTranslationService({
         fromLang: Language,
         policy: InterviewLanguagePolicy,
         glossary: GlossaryEntry[] = [],
-        detectedCodeOverride?: string
+        detectedCodeOverride?: string,
+        preferredActiveTarget?: string
     ) => {
         const uniqueTargets = Array.from(new Set(policy.targets.filter((code) => code && code !== 'auto')));
         if (uniqueTargets.length === 0) {
@@ -218,9 +220,14 @@ export function useTranslationService({
                     }
                     translations[result.targetCode] = { text: result.translated, kind: 'manual', stale: false, updatedAt: Date.now() };
                 }
-                const activeTarget = effectiveTargets.find(code => translations[code]?.text)
-                    || effectiveTargets[0]
-                    || item.activeTarget
+                // #63: a target the user manually selected on this row always
+                // wins over the async default; otherwise the opposite-of-source
+                // default applies (preferred target first, then the first
+                // selected non-source target, deterministically).
+                const activeTarget =
+                    (item.activeTarget && (effectiveTargets.includes(item.activeTarget) || translations[item.activeTarget]?.text)
+                        ? item.activeTarget
+                        : pickInitialActiveTarget(sourceLang.code, effectiveTargets, preferredActiveTarget))
                     || '';
                 return {
                     ...item,
