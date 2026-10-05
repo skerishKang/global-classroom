@@ -82,9 +82,11 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                                 : 'bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100'
                         }`}
-                        title={interviewMode ? (uiLangCode === 'ko' ? 'Global Classroom으로 이동' : 'Go to Global Classroom') : (uiLangCode === 'ko' ? '인터뷰 통역으로 이동' : 'Go to Interview Interpreter')}
+                        title={interviewMode ? (uiLangCode === 'ko' ? 'Global Classroom으로 돌아가기' : 'Return to Global Classroom') : (uiLangCode === 'ko' ? 'AI 인터뷰 통역 열기' : 'Open AI Interview Interpreter')}
                     >
-                        {interviewMode ? 'GLOBAL CLASSROOM' : 'INTERVIEW'}
+                        {interviewMode
+                            ? (uiLangCode === 'ko' ? '← GLOBAL CLASSROOM' : '← GLOBAL CLASSROOM')
+                            : (uiLangCode === 'ko' ? '인터뷰 통역 열기' : 'OPEN INTERVIEW')}
                     </button>
                     <div className="flex items-center px-2 py-1 bg-white/50 rounded-full border border-gray-100 hover:border-indigo-200 transition-all shrink-0 h-9">
                         <select
