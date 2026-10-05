@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { logOut } from './utils/firebase';
 import { clearSessions } from './utils/localStorage';
@@ -29,6 +29,7 @@ import {
   HISTORY_RENDER_STEP
 } from './constants';
 import { decodeAudioData, base64ToUint8Array, arrayBufferToBase64 } from './utils/audioUtils';
+import { MAX_ANSWER_CONTEXT_TURNS, resolveAnswerLanguage } from './utils/interviewAnswer';
 import { retry } from './utils/retry';
 import Visualizer from './components/Visualizer';
 import CameraView from './components/CameraView';
@@ -277,9 +278,12 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const {
     postApi,
     translateText,
-    translateToTargets
+    translateToTargets,
+    generateInterviewAnswer,
+    toggleAnswerTranslation
   } = useTranslationService({
     settings,
+    history,
     setHistory,
     isAutoPlay,
     playTTS: (text, id) => playTTS(text, id),
@@ -498,6 +502,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   // The target the user last picked manually (#63): new utterances default to
   // it while it is still a selected target and not the source language.
   const preferredInterviewTargetRef = useRef<string>('');
+  // Bounded recent interview context for the answer assist (#62): a few
+  // finalized interviewer utterances, oldest first.
+  const recentInterviewUtterancesRef = useRef<string[]>([]);
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -568,6 +575,16 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     // resolved through /api/translate.
     const missingFinalTargetsAtBoundary = allowedTargets.filter((target) => !settled?.get(target)?.trim());
 
+    // Snapshot earlier turns before the current one joins the context.
+    const recentContext = recentInterviewUtterancesRef.current.slice(-MAX_ANSWER_CONTEXT_TURNS);
+    recentInterviewUtterancesRef.current.push(normalized);
+    if (recentInterviewUtterancesRef.current.length > MAX_ANSWER_CONTEXT_TURNS * 2) {
+      recentInterviewUtterancesRef.current.splice(
+        0,
+        recentInterviewUtterancesRef.current.length - MAX_ANSWER_CONTEXT_TURNS * 2,
+      );
+    }
+
     const newItem: ConversationItem = {
       id: utteranceId || crypto.randomUUID(),
       original: normalized,
@@ -583,9 +600,22 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       timestamp: Date.now(),
     };
 
-    setHistory((prev) => [...prev, newItem]);
+setHistory((prev) => [...prev, newItem]);
     interviewRowIdsRef.current.add(newItem.id);
     interviewTargetsByUtteranceRef.current.delete(utteranceId);
+
+    // #62: the suggested answer is written in the OUTPUT language the user is
+    // reading on this row, not in the interviewer's language (#63 already
+    // guarantees activeTarget is never the source). The request is built from
+    // the finalized source transcript and that resolved target only, so it is
+    // fired here without waiting for any translation response, and it stays
+    // bound to this utterance id.
+    const answerLanguage = resolveAnswerLanguage(activeTarget, interviewPolicyRef.current.targets, sourceLanguage);
+    const answerLanguageName = SUPPORTED_LANGUAGES.find((language) => language.code === answerLanguage)?.name || answerLanguage;
+    void generateInterviewAnswer(normalized, newItem.id, recentContext, answerLanguage, {
+      answerLanguageName,
+      sourceLanguage,
+    });
 
     if (missingFinalTargetsAtBoundary.length > 0) {
       // Keep an entry present only while this row is inside the final grace
@@ -631,7 +661,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     }
 
     setCurrentTurnText('');
-  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
+  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets, generateInterviewAnswer]);
 
   const onInterviewInterimTranscript = useCallback((text: string) => {
     const sourceLanguage = detectSourceLanguageHeuristic(text);
@@ -1141,6 +1171,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         onRetranslate={interviewMode ? handleInterviewRetranslate : undefined}
         onSubmitText={interviewMode ? handleInterviewTextSubmit : undefined}
         onSelectTranslationTarget={interviewMode ? handleInterviewSelectTarget : undefined}
+        onToggleAnswerTranslation={interviewMode ? toggleAnswerTranslation : undefined}
       />
 
       <BottomControls
