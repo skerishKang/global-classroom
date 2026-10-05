@@ -338,6 +338,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   // Gemini Props Helpers
   const onTranscriptReceived = useCallback((text: string, isFinal: boolean) => {
     if (isFinal) {
+      // The finalized row becomes the source of truth; never leave the previous
+      // interim caption rendered beside it.
+      setCurrentTurnText('');
       const newItem: ConversationItem = {
         id: crypto.randomUUID(),
         original: text,
