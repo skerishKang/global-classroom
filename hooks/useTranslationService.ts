@@ -7,6 +7,7 @@ import {
     pickInitialActiveTarget,
     type InterviewLanguagePolicy,
 } from '../utils/interviewLanguageRouting';
+import { buildAnswerRequest } from '../utils/interviewAnswer';
 
 interface UseTranslationServiceProps {
     settings: AppSettings;
@@ -255,9 +256,57 @@ export function useTranslationService({
         }
     };
 
+    /**
+     * #62 answer assist: one bounded call per finalized interviewer utterance.
+     *
+     * The result is bound to the utterance id through a per-id run counter, so
+     * a slow response can never overwrite a newer answer on the same row, and
+     * a response for a deleted row is dropped with the setHistory map.
+     */
+    const answerRunRef = useRef<Map<string, number>>(new Map());
+
+    const generateInterviewAnswer = useCallback(async (
+        text: string,
+        id: string,
+        recentUtterances: readonly string[],
+        sourceLanguage: string
+    ) => {
+        const request = buildAnswerRequest(text, recentUtterances, sourceLanguage);
+        if (!request.text) return;
+
+        const run = (answerRunRef.current.get(id) || 0) + 1;
+        answerRunRef.current.set(id, run);
+        const isCurrentRun = () => answerRunRef.current.get(id) === run;
+
+        setHistory(prev => prev.map(item => item.id === id ? { ...item, answerStatus: 'loading' } : item));
+
+        try {
+            const data = await postApi<{ shouldAnswer?: boolean; answer?: string; language?: string }>(
+                'interview-answer',
+                request
+            );
+            if (!isCurrentRun()) return;
+            const suggestedAnswer = typeof data?.answer === 'string' ? data.answer.trim() : '';
+            const shouldAnswer = data?.shouldAnswer === true && suggestedAnswer.length > 0;
+            setHistory(prev => prev.map(item => item.id === id ? {
+                ...item,
+                answerStatus: shouldAnswer ? 'ready' : 'none',
+                suggestedAnswer: shouldAnswer ? suggestedAnswer : '',
+                answerLanguage: typeof data?.language === 'string' && data.language.trim()
+                    ? data.language.trim()
+                    : request.language,
+            } : item));
+        } catch (error) {
+            console.error('Interview answer assist failed:', error);
+            if (!isCurrentRun()) return;
+            setHistory(prev => prev.map(item => item.id === id ? { ...item, answerStatus: 'error' } : item));
+        }
+    }, [postApi, setHistory]);
+
     return {
         postApi,
         translateText,
-        translateToTargets
+        translateToTargets,
+        generateInterviewAnswer
     };
 }

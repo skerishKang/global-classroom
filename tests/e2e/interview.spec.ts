@@ -1017,4 +1017,141 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('VI:프로젝트를 발표했습니다')).toBeVisible();
     await expect(activeTab(2)).toHaveText('vi');
   });
+  test('finalized interview utterances get a source-language answer assist (#62)', async ({ page }) => {
+    await page.addInitScript(() => {
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('/live-token')) {
+          return new Response(JSON.stringify({ token: 'e2e-fake-token' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('/api/translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          if (String(body.text || '').indexOf('번역 실패') !== -1) {
+            return new Response(JSON.stringify({ error: 'translate failed' }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          const prefix = body.to === 'English' ? 'EN' : 'KO';
+          return new Response(JSON.stringify({ translated: prefix + ':' + body.text }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('/api/interview-answer')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          const reply = (payload: unknown) => new Response(JSON.stringify(payload), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+          if (body.text === 'Okay, thank you.') {
+            return reply({ shouldAnswer: false, answer: '', language: 'en' });
+          }
+          if (String(body.text || '').indexOf('Explain dependency injection.') === 0) {
+            // Slow first answer: it must still land on its own row only.
+            await new Promise((resolve) => setTimeout(resolve, 2500));
+            return reply({ shouldAnswer: true, answer: 'ANSWER-EN-DI', language: 'en' });
+          }
+          if (String(body.text || '').indexOf('번역 실패') !== -1) {
+            return reply({ shouldAnswer: true, answer: 'ANSWER-KO-FAIL', language: 'ko' });
+          }
+          return reply({ shouldAnswer: true, answer: 'ANSWER-KO-DI', language: 'ko' });
+        }
+        return realFetch(input, init);
+      };
+
+      const fakeTrack = { stop: () => {} } as unknown as MediaStreamTrack;
+      const fakeStream = { getTracks: () => [fakeTrack] } as unknown as MediaStream;
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => fakeStream },
+      });
+
+      class FakeAudioContext {
+        sampleRate = 16000;
+        state = 'running';
+        destination = {};
+        async resume() {}
+        async close() {}
+        createAnalyser() {
+          return { fftSize: 256, frequencyBinCount: 128, connect: () => {}, disconnect: () => {}, getByteFrequencyData: () => {} };
+        }
+        createMediaStreamSource() { return { connect: () => {} }; }
+        createScriptProcessor() { return { onaudioprocess: null, connect: () => {}, disconnect: () => {} }; }
+        createBuffer() { return { getChannelData: () => new Float32Array(1) }; }
+        createBufferSource() { return { connect: () => {}, start: () => {}, stop: () => {}, onended: null }; }
+      }
+      (window as any).AudioContext = FakeAudioContext;
+      (window as any).webkitAudioContext = FakeAudioContext;
+
+      const sockets: any[] = [];
+      class FakeLiveSocket {
+        readyState = 0;
+        onopen: ((event?: unknown) => void) | null = null;
+        onmessage: ((event: { data: string }) => void) | null = null;
+        onerror: ((event?: unknown) => void) | null = null;
+        onclose: ((event?: unknown) => void) | null = null;
+        model = '';
+        constructor(readonly url: string) {
+          if (url.includes('generativelanguage.googleapis.com')) sockets.push(this);
+          setTimeout(() => this.onopen?.({}), 0);
+        }
+        emit(data: unknown) { this.onmessage?.({ data: JSON.stringify(data) }); }
+        send(raw: string) {
+          const message = JSON.parse(raw);
+          if (message.setup) {
+            this.model = String(message.setup.model || '');
+            this.emit({ setupComplete: {} });
+          }
+        }
+        close() { this.readyState = 3; }
+      }
+      (window as any).WebSocket = FakeLiveSocket;
+
+      (window as any).__answerMock = {
+        finalize(text: string, languageCode: string) {
+          for (const socket of sockets) {
+            if (socket.model.includes('transcribe')) {
+              socket.emit({ serverContent: { inputTranscription: { text, languageCode } } });
+            }
+          }
+        },
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    await page.getByTitle(/마이크 켜기/).first().click();
+    await expect(page.getByTitle(/마이크 끄기/).first()).toBeVisible({ timeout: 10000 });
+
+    const row = (index: number) => page.locator('div.grid.grid-cols-2').nth(index);
+    const sayIt = async (text: string, languageCode: string) => {
+      await page.evaluate(([t, code]) => (window as any).__answerMock.finalize(t, code), [text, languageCode]);
+    };
+
+    // 1) English technical question -> Korean translation (#63) + English answer.
+    await sayIt('Explain dependency injection.', 'en');
+    await expect(row(0).getByText('KO:Explain dependency injection.')).toBeVisible({ timeout: 10000 });
+    // 2) Korean technical question -> English translation + Korean answer.
+    await sayIt('의존성 주입을 설명해 주세요.', 'ko');
+    await expect(row(1).getByText('EN:의존성 주입을 설명해 주세요.')).toBeVisible({ timeout: 10000 });
+
+    // 3) Non-question never gets a forced answer.
+    await sayIt('Okay, thank you.', 'en');
+    await expect(row(2).getByText('KO:Okay, thank you.')).toBeVisible({ timeout: 10000 });
+
+    // 4) Translation failure does not block the source-based answer.
+    await sayIt('번역 실패 표시를 확인해 주세요.', 'ko');
+    await expect(row(3)).toContainText('번역 오류', { timeout: 10000 });
+
+    // Each row keeps only its own answer; the slow first answer lands on row 0.
+    await expect(row(1).getByTestId('suggested-answer')).toContainText('ANSWER-KO-DI', { timeout: 10000 });
+    await expect(row(0).getByTestId('suggested-answer')).toContainText('ANSWER-EN-DI', { timeout: 15000 });
+    await expect(row(0).getByTestId('suggested-answer')).not.toContainText('ANSWER-KO-DI');
+    await expect(row(2).getByTestId('suggested-answer')).toHaveCount(0);
+    await expect(row(3).getByTestId('suggested-answer')).toContainText('ANSWER-KO-FAIL', { timeout: 10000 });
+  });
 });

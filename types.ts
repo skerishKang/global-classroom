@@ -50,6 +50,13 @@ export interface ConversationItem {
   translations?: Record<string, TranslationVariant>;
   /** Which translation key to display when several targets exist. */
   activeTarget?: string;
+  /**
+   * Technical answer assist state (#62), bound to this utterance's identity so
+   * a late response can never land on another row.
+   */
+  answerStatus?: 'loading' | 'ready' | 'none' | 'error';
+  suggestedAnswer?: string;
+  answerLanguage?: string;
   audioBase64?: string; // Cache for TTS audio (in-memory)
   /**
    * Provenance of `audioBase64`: `<target>:<textHash>:<voice>:<model>` of the

@@ -29,6 +29,7 @@ import {
   HISTORY_RENDER_STEP
 } from './constants';
 import { decodeAudioData, base64ToUint8Array, arrayBufferToBase64 } from './utils/audioUtils';
+import { MAX_ANSWER_CONTEXT_TURNS } from './utils/interviewAnswer';
 import { retry } from './utils/retry';
 import Visualizer from './components/Visualizer';
 import CameraView from './components/CameraView';
@@ -277,7 +278,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const {
     postApi,
     translateText,
-    translateToTargets
+    translateToTargets,
+    generateInterviewAnswer
   } = useTranslationService({
     settings,
     setHistory,
@@ -498,6 +500,9 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   // The target the user last picked manually (#63): new utterances default to
   // it while it is still a selected target and not the source language.
   const preferredInterviewTargetRef = useRef<string>('');
+  // Bounded recent interview context for the answer assist (#62): a few
+  // finalized interviewer utterances, oldest first.
+  const recentInterviewUtterancesRef = useRef<string[]>([]);
 
   const interviewEnglish = SUPPORTED_LANGUAGES.find((language) => language.code === 'en') || SUPPORTED_LANGUAGES[1];
   const interviewAuto = SUPPORTED_LANGUAGES.find((language) => language.code === 'auto') || SUPPORTED_LANGUAGES[0];
@@ -568,6 +573,16 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     // resolved through /api/translate.
     const missingFinalTargetsAtBoundary = allowedTargets.filter((target) => !settled?.get(target)?.trim());
 
+    // Snapshot earlier turns before the current one joins the context.
+    const recentContext = recentInterviewUtterancesRef.current.slice(-MAX_ANSWER_CONTEXT_TURNS);
+    recentInterviewUtterancesRef.current.push(normalized);
+    if (recentInterviewUtterancesRef.current.length > MAX_ANSWER_CONTEXT_TURNS * 2) {
+      recentInterviewUtterancesRef.current.splice(
+        0,
+        recentInterviewUtterancesRef.current.length - MAX_ANSWER_CONTEXT_TURNS * 2,
+      );
+    }
+
     const newItem: ConversationItem = {
       id: utteranceId || crypto.randomUUID(),
       original: normalized,
@@ -586,6 +601,11 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     setHistory((prev) => [...prev, newItem]);
     interviewRowIdsRef.current.add(newItem.id);
     interviewTargetsByUtteranceRef.current.delete(utteranceId);
+
+    // #62: answer assist starts from the finalized source transcript right
+    // away — it does not wait for (nor depend on) the translation, and it is
+    // bound to this utterance id so late responses cannot cross rows.
+    void generateInterviewAnswer(normalized, newItem.id, recentContext, sourceLanguage);
 
     if (missingFinalTargetsAtBoundary.length > 0) {
       // Keep an entry present only while this row is inside the final grace
@@ -631,7 +651,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     }
 
     setCurrentTurnText('');
-  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
+  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets, generateInterviewAnswer]);
 
   const onInterviewInterimTranscript = useCallback((text: string) => {
     const sourceLanguage = detectSourceLanguageHeuristic(text);

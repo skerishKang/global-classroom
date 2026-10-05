@@ -342,6 +342,29 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 <span className="block whitespace-pre-wrap text-sm font-medium leading-relaxed text-indigo-900 md:text-base">
                                                     {item.translated || (uiLangCode === 'ko' ? '번역 없음' : 'No translation yet')}
                                                 </span>
+                                                {/* #62 answer assist: always below the translation, never TTS-automated. */}
+                                                {item.answerStatus === 'loading' && (
+                                                    <div
+                                                        className="text-[11px] font-bold text-violet-500"
+                                                        data-testid="answer-assist-loading"
+                                                    >
+                                                        {uiLangCode === 'ko' ? '답변 준비 중…' : 'Drafting a suggested answer…'}
+                                                    </div>
+                                                )}
+                                                {item.answerStatus === 'ready' && item.suggestedAnswer && (
+                                                    <div
+                                                        className="rounded-lg border border-violet-100 bg-violet-50/70 p-3"
+                                                        data-testid="suggested-answer"
+                                                    >
+                                                        <div className="mb-1 text-[10px] font-black uppercase tracking-wide text-violet-500">
+                                                            {uiLangCode === 'ko' ? '추천 답변' : 'Suggested answer'}
+                                                            {item.answerLanguage ? ` · ${item.answerLanguage}` : ''}
+                                                        </div>
+                                                        <div className="whitespace-pre-wrap text-sm leading-relaxed text-violet-950">
+                                                            {item.suggestedAnswer}
+                                                        </div>
+                                                    </div>
+                                                )}
                                                 <div
                                                     className="absolute right-2 top-2 z-10 flex items-center gap-1"
                                                     data-testid="translation-row-actions"
