@@ -281,7 +281,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     translateText,
     translateToTargets,
     generateInterviewAnswer,
-    toggleAnswerTranslation
+    translateAnswerToTarget
   } = useTranslationService({
     settings,
     history,
@@ -608,17 +608,15 @@ setHistory((prev) => [...prev, newItem]);
     interviewRowIdsRef.current.add(newItem.id);
     interviewTargetsByUtteranceRef.current.delete(utteranceId);
 
-    // #62: the suggested answer is written in the OUTPUT language the user is
-    // reading on this row, not in the interviewer's language (#63 already
-    // guarantees activeTarget is never the source). The request is built from
-    // the finalized source transcript and that resolved target only, so it is
-    // fired here without waiting for any translation response, and it stays
-    // bound to this utterance id.
+    // #70: the suggested answer follows the finalized transcript/source
+    // language so it is immediately speakable. Its translation is generated
+    // automatically into this row's active question-translation target.
     const answerLanguage = resolveAnswerLanguage(activeTarget, interviewPolicyRef.current.targets, sourceLanguage);
     const answerLanguageName = SUPPORTED_LANGUAGES.find((language) => language.code === answerLanguage)?.name || answerLanguage;
     void generateInterviewAnswer(normalized, newItem.id, recentContext, answerLanguage, {
       answerLanguageName,
       sourceLanguage,
+      answerTranslationTarget: activeTarget,
     });
 
     if (missingFinalTargetsAtBoundary.length > 0) {
@@ -881,7 +879,8 @@ setHistory((prev) => [...prev, newItem]);
         updatedAt: Date.now(),
       };
     }));
-  }, [setHistory]);
+    void translateAnswerToTarget(itemId, target);
+  }, [setHistory, translateAnswerToTarget]);
 
   // --- Editing State ---
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
@@ -1175,7 +1174,6 @@ setHistory((prev) => [...prev, newItem]);
         onRetranslate={interviewMode ? handleInterviewRetranslate : undefined}
         onSubmitText={interviewMode ? handleInterviewTextSubmit : undefined}
         onSelectTranslationTarget={interviewMode ? handleInterviewSelectTarget : undefined}
-        onToggleAnswerTranslation={interviewMode ? toggleAnswerTranslation : undefined}
       />
 
       <BottomControls

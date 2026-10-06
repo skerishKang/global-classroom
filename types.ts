@@ -55,16 +55,15 @@ export interface ConversationItem {
    * a late response can never land on another row.
    *
    * `suggestedAnswer` is written in `answerLanguage`, which follows the
-   * current Interview OUTPUT (translation) language, not the source language.
+   * finalized transcript/source language (#70).
    */
   answerStatus?: 'loading' | 'ready' | 'none' | 'error';
   suggestedAnswer?: string;
   answerLanguage?: string;
   /**
-   * On-demand translation of `suggestedAnswer` into the opposite
-   * (source-side) language. Nothing is requested until the user presses 번역;
-   * the result is cached on this utterance and dropped as soon as
-   * `suggestedAnswer` itself changes.
+   * Automatic translation of `suggestedAnswer` into the row's active
+   * question-translation target. The result is cached on this utterance and
+   * dropped/replaced when the answer text or active target changes.
    */
   answerTranslationStatus?: 'idle' | 'loading' | 'ready' | 'error';
   answerTranslation?: string;
