@@ -315,82 +315,76 @@ describe('#62 buildAnswerRequest', () => {
   });
 });
 
-describe('#62 answer language resolution', () => {
-  test('the visible output target is the answer language', () => {
-    // English question, Korean output.
-    expect(resolveAnswerLanguage('ko', ['ko', 'en'], 'en')).toBe('ko');
-    // Korean question, English output.
-    expect(resolveAnswerLanguage('en', ['ko', 'en'], 'ko')).toBe('en');
+describe('#70 answer language resolution', () => {
+  test('the finalized source language is the answer language', () => {
+    expect(resolveAnswerLanguage('ko', ['ko', 'en'], 'en')).toBe('en');
+    expect(resolveAnswerLanguage('en', ['ko', 'en'], 'ko')).toBe('ko');
   });
 
-  test('falls back to a non-source selected target, then any target, then the source', () => {
-    expect(resolveAnswerLanguage('', ['ko', 'en'], 'en')).toBe('ko');
-    expect(resolveAnswerLanguage('', ['en', 'ko'], 'en')).toBe('ko');
-    expect(resolveAnswerLanguage('', ['ko'], 'ko')).toBe('ko');
-    expect(resolveAnswerLanguage('', [], 'ko')).toBe('ko');
+  test('falls back to the active target only when source identity is unavailable', () => {
+    expect(resolveAnswerLanguage('ko', ['ko', 'en'], '')).toBe('ko');
+    expect(resolveAnswerLanguage('', ['vi', 'en'], '')).toBe('vi');
+    expect(resolveAnswerLanguage('', ['auto', 'vi'], '')).toBe('vi');
     expect(resolveAnswerLanguage('', [], '')).toBe('en');
-    // The pseudo language is never an answer language.
-    expect(resolveAnswerLanguage('', ['auto', 'vi'], 'en')).toBe('vi');
   });
 });
 
-describe('#62 on-demand answer translation policy', () => {
+describe('#70 automatic answer translation policy', () => {
   const answerState = {
-    suggestedAnswer: '의존성은 생성자로 주입합니다.',
-    answerLanguage: 'ko',
-    sourceLanguage: 'en',
+    suggestedAnswer: 'Inject dependencies through the constructor.',
+    answerLanguage: 'en',
+    activeTarget: 'ko',
   };
 
-  test('nothing is translated until the user asks, then hide/show is free', () => {
-    // No cache yet: the first press is the only request.
-    expect(planAnswerTranslation(answerState)).toEqual({ kind: 'request', targetLanguage: 'en' });
+  test('the active question-translation target is the answer translation target', () => {
+    expect(planAnswerTranslation(answerState)).toEqual({ kind: 'request', targetLanguage: 'ko' });
 
     const cached = {
       ...answerState,
-      answerTranslation: 'Inject dependencies through the constructor.',
+      answerTranslation: 'translated answer',
+      answerTranslationLanguage: 'ko',
       answerTranslationSource: answerState.suggestedAnswer,
       answerTranslationStatus: 'ready' as const,
       answerTranslationVisible: true,
     };
-    // Second press hides it, third shows it again: both are visibility only.
     expect(planAnswerTranslation(cached)).toEqual({ kind: 'hide' });
     expect(planAnswerTranslation({ ...cached, answerTranslationVisible: false })).toEqual({ kind: 'show' });
-    // Neither hiding nor showing may be answered with a request.
-    expect(planAnswerTranslation(cached).kind).not.toBe('request');
+    expect(isAnswerTranslationFresh(cached, cached.suggestedAnswer, 'ko')).toBe(true);
   });
 
-  test('a changed suggested answer invalidates the cached translation', () => {
+  test('changing the answer or active target invalidates the cached translation', () => {
     const cached = {
       ...answerState,
-      answerTranslation: 'Inject dependencies through the constructor.',
+      answerTranslation: 'translated answer',
+      answerTranslationLanguage: 'ko',
       answerTranslationSource: answerState.suggestedAnswer,
       answerTranslationStatus: 'ready' as const,
       answerTranslationVisible: true,
     };
-    expect(isAnswerTranslationFresh(cached)).toBe(true);
 
-    const regenerated = { ...cached, suggestedAnswer: '새로 생성된 답변입니다.' };
-    expect(isAnswerTranslationFresh(regenerated)).toBe(false);
-    // Even when it is visible, a stale translation is never displayed.
-    expect(planAnswerTranslation(regenerated)).toEqual({ kind: 'request', targetLanguage: 'en' });
+    expect(planAnswerTranslation({ ...cached, suggestedAnswer: 'A new answer.' }))
+      .toEqual({ kind: 'request', targetLanguage: 'ko' });
+    expect(planAnswerTranslation({ ...cached, activeTarget: 'vi' }))
+      .toEqual({ kind: 'request', targetLanguage: 'vi' });
+    expect(isAnswerTranslationFresh(cached, cached.suggestedAnswer, 'vi')).toBe(false);
   });
 
-  test('no answer, no opposite language, or an in-flight request means no request', () => {
+  test('no answer, same-language target, missing target, or in-flight request means no request', () => {
     expect(planAnswerTranslation({ ...answerState, suggestedAnswer: '' })).toEqual({ kind: 'ignore' });
-    expect(planAnswerTranslation({ ...answerState, sourceLanguage: 'ko' })).toEqual({ kind: 'ignore' });
-    expect(planAnswerTranslation({ ...answerState, sourceLanguage: '' })).toEqual({ kind: 'ignore' });
+    expect(planAnswerTranslation({ ...answerState, activeTarget: 'en' })).toEqual({ kind: 'ignore' });
+    expect(planAnswerTranslation({ ...answerState, activeTarget: '' })).toEqual({ kind: 'ignore' });
     expect(planAnswerTranslation({ ...answerState, answerTranslationStatus: 'loading' }))
       .toEqual({ kind: 'ignore' });
   });
 
   test('a failed translation may be retried', () => {
     expect(planAnswerTranslation({ ...answerState, answerTranslationStatus: 'error' }))
-      .toEqual({ kind: 'request', targetLanguage: 'en' });
+      .toEqual({ kind: 'request', targetLanguage: 'ko' });
   });
 
-  test('the translation target is the opposite, source-side language', () => {
-    expect(resolveAnswerTranslationTarget('ko', 'en')).toBe('en');
-    expect(resolveAnswerTranslationTarget('en', 'ko-KR')).toBe('ko');
+  test('translation target is the active target, not the source-side language', () => {
+    expect(resolveAnswerTranslationTarget('en', 'ko')).toBe('ko');
+    expect(resolveAnswerTranslationTarget('ko', 'en-US')).toBe('en');
     expect(resolveAnswerTranslationTarget('ko', 'ko')).toBe('');
     expect(resolveAnswerTranslationTarget('', 'en')).toBe('');
   });

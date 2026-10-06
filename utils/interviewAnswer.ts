@@ -2,21 +2,13 @@ import type { ConversationItem } from '../types';
 import { normalizeLanguageCode } from './interviewLanguageRouting';
 
 /**
- * Request shaping and language policy for the interview answer assist (#62).
+ * Request shaping and language policy for the interview answer assist (#62/#70).
  *
- * Two rules drive everything in this module:
- *
- * 1. The suggested answer is written in the current Interview OUTPUT
- *    (translation) language, not in the interviewer's source language. An
- *    English question with Korean output produces a Korean answer, and a
- *    Korean question with English output produces an English answer.
- * 2. Answer generation starts from the finalized source transcript and the
- *    resolved output target, so it never waits for a translation response.
- *
- * Translating that ONE answer into the opposite language is an on-demand user
- * action (번역), served by the existing /translate path and cached per
- * utterance; the policy helpers below are pure so the caching, hiding and
- * invalidation rules are unit-testable without React or network access.
+ * The suggested answer follows the finalized transcript/source language so it
+ * is immediately speakable in the interviewer's language. Its translation is
+ * produced automatically through the existing /translate path into the row's
+ * active translation target. Generation still starts from the finalized source
+ * transcript and never waits for the question translation response.
  */
 export const MAX_ANSWER_CONTEXT_TURNS = 5;
 export const MAX_ANSWER_CONTEXT_TURN_CHARS = 600;
@@ -24,7 +16,7 @@ export const MAX_ANSWER_CONTEXT_TURN_CHARS = 600;
 export interface InterviewAnswerRequestPayload {
   /** The latest interviewer utterance (the finalized source transcript). */
   text: string;
-  /** Answer language: the resolved Interview output/translation language. */
+  /** Answer language: the finalized transcript/source language. */
   answerLanguage: string;
   /** Display name of `answerLanguage`, used by the prompt for clarity. */
   answerLanguageName?: string;
@@ -60,47 +52,36 @@ export function buildAnswerRequest(
   };
 }
 
-/**
- * Language the suggested answer must be written in (#62).
- *
- * The visible translation variant of the utterance is authoritative: an
- * utterance whose output target is Korean gets a Korean answer. The source
- * language is only a fallback for the degenerate case where no non-source
- * target exists at all, because then there is no other language on screen to
- * read the answer in.
- */
+/** Language the suggested answer must be written in (#70): source first. */
 export function resolveAnswerLanguage(
   activeTarget: string | null | undefined,
   selectedTargets: readonly string[],
   sourceLanguage: string | null | undefined,
 ): string {
-  const active = normalizeLanguageCode(activeTarget || '');
-  if (active) return active;
-
   const source = normalizeLanguageCode(sourceLanguage || '');
+  if (source && source !== 'auto') return source;
+
+  const active = normalizeLanguageCode(activeTarget || '');
+  if (active && active !== 'auto') return active;
+
   const targets = (selectedTargets || [])
     .map((target) => normalizeLanguageCode(target))
     .filter((target) => target && target !== 'auto');
-  const opposite = targets.find((target) => target !== source);
-  if (opposite) return opposite;
-  return targets[0] || source || 'en';
+  return targets[0] || 'en';
 }
 
 /**
- * Language the on-demand 번역 action translates the answer INTO: the opposite,
- * source-side language of the conversation.
- *
- * Returns '' when the two sides are the same language or either side is
- * unknown, which hides the button instead of offering a pointless translation.
+ * Answer translation follows the row's active question-translation target.
+ * Returns '' when there is no distinct target to translate into.
  */
 export function resolveAnswerTranslationTarget(
   answerLanguage: string | null | undefined,
-  sourceLanguage: string | null | undefined,
+  activeTarget: string | null | undefined,
 ): string {
   const answer = normalizeLanguageCode(answerLanguage || '');
-  const source = normalizeLanguageCode(sourceLanguage || '');
-  if (!answer || !source || answer === source) return '';
-  return source;
+  const target = normalizeLanguageCode(activeTarget || '');
+  if (!answer || !target || target === 'auto' || answer === target) return '';
+  return target;
 }
 
 /**
@@ -111,18 +92,22 @@ export function resolveAnswerTranslationTarget(
 export function isAnswerTranslationFresh(
   state: Pick<
     ConversationItem,
-    'suggestedAnswer' | 'answerTranslation' | 'answerTranslationSource'
+    'suggestedAnswer' | 'answerTranslation' | 'answerTranslationSource' | 'answerTranslationLanguage'
   >,
   suggestedAnswer: string | null | undefined = state.suggestedAnswer,
+  targetLanguage?: string | null,
 ): boolean {
   const source = normalize(suggestedAnswer || '');
   if (!source) return false;
   const cached = String(state.answerTranslation || '').trim();
   if (!cached) return false;
-  return String(state.answerTranslationSource || '').trim() === source;
+  if (String(state.answerTranslationSource || '').trim() !== source) return false;
+
+  const target = normalizeLanguageCode(targetLanguage || '');
+  return !target || normalizeLanguageCode(state.answerTranslationLanguage || '') === target;
 }
 
-/** What one press of the answer 번역 control must do. */
+/** Reusable answer-translation planning contract (#62/#70). */
 export type AnswerTranslationAction =
   | { kind: 'ignore' }
   | { kind: 'hide' }
@@ -130,20 +115,18 @@ export type AnswerTranslationAction =
   | { kind: 'request'; targetLanguage: string };
 
 /**
- * Single policy for the answer translation button (#62).
- *
- * `hide` and `show` are pure visibility changes on an already cached
- * translation and therefore never call the API — which is what makes repeated
- * hide/show free. `request` is the only action that reaches /translate, and it
- * requires a live translation for the exact answer on screen.
+ * A cached translation is reusable only for the exact answer and active target.
+ * The current #70 UI translates automatically; this helper remains pure so the
+ * target/freshness contract stays unit-testable.
  */
 export function planAnswerTranslation(
   state: Pick<
     ConversationItem,
     | 'suggestedAnswer'
     | 'answerLanguage'
-    | 'sourceLanguage'
+    | 'activeTarget'
     | 'answerTranslation'
+    | 'answerTranslationLanguage'
     | 'answerTranslationSource'
     | 'answerTranslationVisible'
     | 'answerTranslationStatus'
@@ -154,10 +137,10 @@ export function planAnswerTranslation(
   // A request for this utterance is already in flight: never double-spend it.
   if (state.answerTranslationStatus === 'loading') return { kind: 'ignore' };
 
-  const targetLanguage = resolveAnswerTranslationTarget(state.answerLanguage, state.sourceLanguage);
+  const targetLanguage = resolveAnswerTranslationTarget(state.answerLanguage, state.activeTarget);
   if (!targetLanguage) return { kind: 'ignore' };
 
-  if (isAnswerTranslationFresh(state, suggestedAnswer)) {
+  if (isAnswerTranslationFresh(state, suggestedAnswer, targetLanguage)) {
     return state.answerTranslationVisible ? { kind: 'hide' } : { kind: 'show' };
   }
   return { kind: 'request', targetLanguage };

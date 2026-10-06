@@ -9,7 +9,6 @@ import {
 } from '../utils/interviewLanguageRouting';
 import {
     buildAnswerRequest,
-    planAnswerTranslation,
     resolveAnswerTranslationTarget,
 } from '../utils/interviewAnswer';
 
@@ -277,25 +276,103 @@ export function useTranslationService({
     };
 
     /**
-     * #62 answer assist: one bounded call per finalized interviewer utterance.
-     *
-     * `answerLanguage` is the utterance's resolved OUTPUT/translation
-     * language, so an English question with Korean output gets a Korean answer.
-     * The request is built from the finalized source transcript alone and is
-     * fired without waiting for (or depending on) the translation response.
-     *
-     * The result is bound to the utterance id through a per-id run counter, so
-     * a slow response can never overwrite a newer answer on the same row, and
-     * a response for a deleted row is dropped with the setHistory map.
+     * #62/#70 answer assist: one bounded call per finalized interviewer
+     * utterance. The answer itself follows the finalized source language.
+     * Its translation is then produced automatically into the row's active
+     * translation target; neither path waits for the question translation.
      */
     const answerRunRef = useRef<Map<string, number>>(new Map());
+    const answerTranslationRunRef = useRef<Map<string, number>>(new Map());
+
+    const languageForCode = useCallback((code: string | undefined): Language => {
+        const found = SUPPORTED_LANGUAGES.find((language) => language.code === code);
+        return found || { code: code || 'en', name: code || 'en', flag: '' };
+    }, []);
+
+    const translateAnswerToTarget = useCallback(async (
+        id: string,
+        targetLanguage: string,
+        override?: { answer?: string; answerLanguage?: string },
+    ) => {
+        const item = historyRef.current.find((entry) => entry.id === id);
+        const requestedAnswer = String(override?.answer || item?.suggestedAnswer || '').trim();
+        const answerLanguage = normalizeLanguageCode(override?.answerLanguage || item?.answerLanguage || '');
+        const target = normalizeLanguageCode(targetLanguage);
+        if (!requestedAnswer || !answerLanguage || !target || target === 'auto' || target === answerLanguage) {
+            return;
+        }
+        // A just-created row may not have reached historyRef yet when a very
+        // fast answer provider responds. The generation path already carries
+        // the exact answer/language in override, so keep its automatic
+        // translation independent of that render timing.
+        if (
+            !override
+            && item
+            && item.answerTranslationStatus === 'ready'
+            && String(item.answerTranslation || '').trim()
+            && normalizeLanguageCode(item.answerTranslationLanguage || '') === target
+            && String(item.answerTranslationSource || '').trim() === requestedAnswer
+        ) {
+            setHistory(prev => prev.map(entry => entry.id === id
+                ? { ...entry, answerTranslationVisible: true }
+                : entry
+            ));
+            return;
+        }
+
+        const run = (answerTranslationRunRef.current.get(id) || 0) + 1;
+        answerTranslationRunRef.current.set(id, run);
+        const isCurrentRun = () => answerTranslationRunRef.current.get(id) === run;
+
+        setHistory(prev => prev.map(entry => entry.id === id ? {
+            ...entry,
+            answerTranslationStatus: 'loading',
+            answerTranslation: entry.answerTranslationLanguage === target ? entry.answerTranslation : '',
+            answerTranslationLanguage: target,
+            answerTranslationSource: requestedAnswer,
+            answerTranslationVisible: true,
+        } : entry));
+
+        try {
+            const translated = await requestTranslation(
+                requestedAnswer,
+                languageForCode(answerLanguage),
+                languageForCode(target),
+            );
+            if (!isCurrentRun()) return;
+            setHistory(prev => prev.map(entry => {
+                if (entry.id !== id) return entry;
+                if (String(entry.suggestedAnswer || '').trim() !== requestedAnswer) {
+                    return { ...entry, answerTranslationStatus: 'idle' };
+                }
+                if (!translated) {
+                    return { ...entry, answerTranslationStatus: 'error', answerTranslationVisible: true };
+                }
+                return {
+                    ...entry,
+                    answerTranslationStatus: 'ready',
+                    answerTranslation: translated,
+                    answerTranslationLanguage: target,
+                    answerTranslationSource: requestedAnswer,
+                    answerTranslationVisible: true,
+                };
+            }));
+        } catch (error) {
+            console.error('Answer translation failed:', error);
+            if (!isCurrentRun()) return;
+            setHistory(prev => prev.map(entry => entry.id === id
+                ? { ...entry, answerTranslationStatus: 'error', answerTranslationVisible: true }
+                : entry
+            ));
+        }
+    }, [requestTranslation, languageForCode, setHistory]);
 
     const generateInterviewAnswer = useCallback(async (
         text: string,
         id: string,
         recentUtterances: readonly string[],
         answerLanguage: string,
-        options?: { answerLanguageName?: string; sourceLanguage?: string },
+        options?: { answerLanguageName?: string; sourceLanguage?: string; answerTranslationTarget?: string },
     ) => {
         const request = buildAnswerRequest(text, recentUtterances, answerLanguage, options);
         if (!request.text) return;
@@ -314,111 +391,46 @@ export function useTranslationService({
             if (!isCurrentRun()) return;
             const suggestedAnswer = typeof data?.answer === 'string' ? data.answer.trim() : '';
             const shouldAnswer = data?.shouldAnswer === true && suggestedAnswer.length > 0;
+            const resolvedAnswerLanguage = typeof data?.language === 'string' && data.language.trim()
+                ? normalizeLanguageCode(data.language.trim())
+                : request.answerLanguage;
+            const latestRow = historyRef.current.find((entry) => entry.id === id);
+            const translationTarget = normalizeLanguageCode(
+                latestRow?.activeTarget || options?.answerTranslationTarget || ''
+            );
+            const shouldTranslate = shouldAnswer
+                && Boolean(resolveAnswerTranslationTarget(resolvedAnswerLanguage, translationTarget));
+
             setHistory(prev => prev.map(item => item.id === id ? {
                 ...item,
                 answerStatus: shouldAnswer ? 'ready' : 'none',
                 suggestedAnswer: shouldAnswer ? suggestedAnswer : '',
-                // A fresh answer invalidates any cached answer translation:
-                // that translation described different text (#62).
-                answerLanguage: typeof data?.language === 'string' && data.language.trim()
-                    ? data.language.trim()
-                    : request.answerLanguage,
-                answerTranslationStatus: 'idle',
+                answerLanguage: resolvedAnswerLanguage,
+                answerTranslationStatus: shouldTranslate ? 'loading' : 'idle',
                 answerTranslation: '',
-                answerTranslationLanguage: '',
-                answerTranslationSource: '',
-                answerTranslationVisible: false,
+                answerTranslationLanguage: shouldTranslate ? translationTarget : '',
+                answerTranslationSource: shouldAnswer ? suggestedAnswer : '',
+                answerTranslationVisible: shouldTranslate,
             } : item));
+
+            if (shouldTranslate) {
+                void translateAnswerToTarget(id, translationTarget, {
+                    answer: suggestedAnswer,
+                    answerLanguage: resolvedAnswerLanguage,
+                });
+            }
         } catch (error) {
             console.error('Interview answer assist failed:', error);
             if (!isCurrentRun()) return;
             setHistory(prev => prev.map(item => item.id === id ? { ...item, answerStatus: 'error' } : item));
         }
-    }, [postApi, setHistory]);
-
-    /**
-     * #62 on-demand answer translation: the only place the answer block talks
-     * to /translate, and only after the user asks for it.
-     *
-     * planAnswerTranslation decides between three cheap outcomes and one
-     * request: hiding or showing an already cached translation never calls the
-     * API, so repeated toggles are free. The request itself is bound to the
-     * utterance id by a per-id run counter, and its result is discarded when
-     * the answer changed while it was in flight.
-     */
-    const answerTranslationRunRef = useRef<Map<string, number>>(new Map());
-
-    const languageForCode = useCallback((code: string | undefined): Language => {
-        const found = SUPPORTED_LANGUAGES.find((language) => language.code === code);
-        return found || { code: code || 'en', name: code || 'en', flag: '' };
-    }, []);
-
-    const toggleAnswerTranslation = useCallback(async (id: string) => {
-        const item = historyRef.current.find((entry) => entry.id === id);
-        if (!item) return;
-
-        const action = planAnswerTranslation(item);
-        if (action.kind === 'ignore') return;
-        if (action.kind === 'hide' || action.kind === 'show') {
-            // Cached already: a pure visibility change, no API call at all.
-            setHistory(prev => prev.map(entry => entry.id === id
-                ? { ...entry, answerTranslationVisible: action.kind === 'show' }
-                : entry
-            ));
-            return;
-        }
-
-        const requestedAnswer = String(item.suggestedAnswer || '').trim();
-        const from = languageForCode(item.answerLanguage);
-        const to = languageForCode(action.targetLanguage);
-        const run = (answerTranslationRunRef.current.get(id) || 0) + 1;
-        answerTranslationRunRef.current.set(id, run);
-        const isCurrentRun = () => answerTranslationRunRef.current.get(id) === run;
-
-        setHistory(prev => prev.map(entry => entry.id === id
-            ? { ...entry, answerTranslationStatus: 'loading', answerTranslationVisible: false }
-            : entry
-        ));
-
-        try {
-            const translated = await requestTranslation(requestedAnswer, from, to);
-            if (!isCurrentRun()) return;
-            setHistory(prev => prev.map(entry => {
-                if (entry.id !== id) return entry;
-                if (String(entry.suggestedAnswer || '').trim() !== requestedAnswer) {
-                    // The answer was regenerated while this ran: the cached
-                    // translation no longer describes what is on screen.
-                    return { ...entry, answerTranslationStatus: 'idle' };
-                }
-                if (!translated) {
-                    return { ...entry, answerTranslationStatus: 'error' };
-                }
-                return {
-                    ...entry,
-                    answerTranslationStatus: 'ready',
-                    answerTranslation: translated,
-                    answerTranslationLanguage: action.targetLanguage,
-                    answerTranslationSource: requestedAnswer,
-                    answerTranslationVisible: true,
-                };
-            }));
-        } catch (error) {
-            console.error('Answer translation failed:', error);
-            if (!isCurrentRun()) return;
-            setHistory(prev => prev.map(entry => entry.id === id
-                ? { ...entry, answerTranslationStatus: 'error' }
-                : entry
-            ));
-        }
-    }, [requestTranslation, languageForCode, setHistory]);
+    }, [postApi, setHistory, translateAnswerToTarget]);
 
     return {
         postApi,
         translateText,
         translateToTargets,
         generateInterviewAnswer,
-        toggleAnswerTranslation,
-        canTranslateAnswer: (item: Pick<ConversationItem, 'answerLanguage' | 'sourceLanguage'>) =>
-            resolveAnswerTranslationTarget(item.answerLanguage, item.sourceLanguage) !== '',
+        translateAnswerToTarget,
     };
 }

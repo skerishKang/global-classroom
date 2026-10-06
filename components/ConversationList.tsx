@@ -2,7 +2,7 @@ import React, { memo, useState } from 'react';
 import Visualizer from './Visualizer';
 import { MicIcon, CopyIcon } from './Icons';
 import { ConversationItem, TranslationMap, ConnectionStatus } from '../types';
-import { isAnswerTranslationFresh, resolveAnswerTranslationTarget } from '../utils/interviewAnswer';
+import { isAnswerTranslationFresh } from '../utils/interviewAnswer';
 
 interface ConversationListProps {
     analyser: any;
@@ -37,8 +37,6 @@ interface ConversationListProps {
     onRetranslate?: (item: ConversationItem) => void;
     onSubmitText?: (text: string) => void;
     onSelectTranslationTarget?: (itemId: string, target: string) => void;
-    /** #62: on-demand translation of one suggested answer into the opposite language. */
-    onToggleAnswerTranslation?: (itemId: string) => void;
 }
 
 const ConversationList: React.FC<ConversationListProps> = ({
@@ -74,9 +72,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
     onRetranslate,
     onSubmitText,
     onSelectTranslationTarget,
-    onToggleAnswerTranslation,
 }) => {
     const [interviewDraft, setInterviewDraft] = useState('');
+    const [showInterviewAnswers, setShowInterviewAnswers] = useState(true);
 
     const submitInterviewDraft = () => {
         if (!onSubmitText || !interviewDraft.trim()) return;
@@ -243,6 +241,23 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         </div>
                     )}
 
+                    {interviewMode && !isOutputOnly && history.length > 0 && (
+                        <div className="mb-3 flex justify-end">
+                            <button
+                                type="button"
+                                data-testid="answer-visibility-toggle"
+                                aria-pressed={showInterviewAnswers}
+                                onClick={() => setShowInterviewAnswers((visible) => !visible)}
+                                className="inline-flex min-h-10 items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 shadow-sm transition hover:bg-gray-50 active:scale-95"
+                            >
+                                <span className={`h-2 w-2 rounded-full ${showInterviewAnswers ? 'bg-emerald-400' : 'bg-gray-300'}`} aria-hidden="true" />
+                                {showInterviewAnswers
+                                    ? (uiLangCode === 'ko' ? '답변 숨기기' : 'Hide answers')
+                                    : (uiLangCode === 'ko' ? '답변 보기' : 'Show answers')}
+                            </button>
+                        </div>
+                    )}
+
                     {history.map((item) => {
                         const isEditing = editingItemId === item.id;
                         const isEditingOriginal = isEditing && editingField === 'original';
@@ -256,18 +271,33 @@ const ConversationList: React.FC<ConversationListProps> = ({
                             const translationEditLabel = uiLangCode === 'ko' ? '번역 수정' : 'Edit translation';
                             const cancelLabel = uiLangCode === 'ko' ? '취소' : 'Cancel';
                             const saveLabel = uiLangCode === 'ko' ? '저장' : 'Save';
+                            const answerTranslationFresh = isAnswerTranslationFresh(
+                                item,
+                                item.suggestedAnswer,
+                                item.activeTarget,
+                            );
+                            const showAnswerRow = showInterviewAnswers
+                                && (item.answerStatus === 'loading'
+                                    || item.answerStatus === 'ready'
+                                    || item.answerStatus === 'error');
 
                             return (
-                                <div key={item.id} className="grid grid-cols-2 gap-4 items-stretch">
-                                    <div className="relative bg-white border border-gray-200 p-4 rounded-xl shadow-sm text-gray-800 leading-relaxed text-sm md:text-base min-w-0">
+                                <div key={item.id} data-testid="interview-row" className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 items-stretch">
+                                    <div
+                                        data-testid="transcript-cell"
+                                        className="relative min-w-0 rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-900 shadow-sm md:text-base"
+                                    >
+                                        <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                            {uiLangCode === 'ko' ? '전사' : 'Transcript'}
+                                            {item.sourceLanguage ? ' · ' + item.sourceLanguage : ''}
+                                        </div>
                                         {isEditingOriginal ? (
                                             <div className="flex h-full flex-col gap-3">
-                                                <label className="text-[11px] font-black text-indigo-600 tracking-wide">{sourceEditLabel}</label>
                                                 <textarea
                                                     autoFocus
                                                     value={editOriginalText}
                                                     onChange={(event) => setEditOriginalText(event.target.value)}
-                                                    className="min-h-[140px] w-full flex-1 resize-y rounded-lg border border-indigo-200 bg-white p-3 text-sm leading-relaxed text-gray-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    className="min-h-[120px] w-full flex-1 resize-y rounded-lg border border-slate-200 bg-white p-3 text-base leading-relaxed text-slate-950 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                                     aria-label={sourceEditLabel}
                                                 />
                                                 <div className="flex justify-end gap-2">
@@ -282,7 +312,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                     <button
                                                         type="button"
                                                         onClick={(event) => { event.stopPropagation(); startEditing(item, 'original'); }}
-                                                        className="absolute right-2 top-2 rounded-lg border border-gray-200 bg-white/90 p-1.5 text-gray-500 shadow-sm transition hover:border-indigo-600 hover:bg-indigo-600 hover:text-white"
+                                                        className="absolute right-2 top-2 rounded-lg border border-slate-200 bg-white/95 p-1.5 text-slate-500 shadow-sm transition hover:border-indigo-600 hover:bg-indigo-600 hover:text-white"
                                                         title={sourceEditLabel}
                                                         aria-label={sourceEditLabel}
                                                     >
@@ -293,27 +323,27 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                         )}
                                     </div>
 
-                                    <div className={`relative min-w-0 rounded-xl border p-4 text-sm transition-all md:text-base ${item.isTranslating ? 'border-gray-100 bg-gray-50' : 'border-indigo-100 bg-indigo-50/50 shadow-sm'}`}>
-                                        {/* #62: the answer block is a SIBLING of the translation state,
-                                            not part of it, so a pending or failed question
-                                            translation can never hide an answer that is already
-                                            ready. Visible order stays original -> question
-                                            translation -> suggested answer. */}
-                                        <div className="flex h-full flex-col gap-3">
+                                    <div
+                                        data-testid="question-translation-cell"
+                                        className={'relative min-w-0 rounded-xl border p-4 text-sm leading-relaxed text-sky-950 shadow-sm transition-all md:text-base ' + (item.isTranslating ? 'border-sky-100 bg-sky-50/45' : 'border-sky-100 bg-sky-50/75')}
+                                    >
+                                        <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-sky-600">
+                                            {uiLangCode === 'ko' ? '번역' : 'Translation'}
+                                            {item.activeTarget ? ' · ' + item.activeTarget : ''}
+                                        </div>
                                         {item.isTranslating ? (
-                                            <div className="flex h-6 items-center gap-1">
-                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400" />
-                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 delay-75" />
-                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-gray-400 delay-150" />
+                                            <div className="flex h-8 items-center gap-1" data-testid="question-translation-loading">
+                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-sky-400" />
+                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-sky-400 delay-75" />
+                                                <div className="h-1.5 w-1.5 animate-bounce rounded-full bg-sky-400 delay-150" />
                                             </div>
                                         ) : isEditingTranslated ? (
                                             <div className="flex flex-1 flex-col gap-3">
-                                                <label className="text-[11px] font-black text-indigo-600 tracking-wide">{translationEditLabel}</label>
                                                 <textarea
                                                     autoFocus
                                                     value={editTranslatedText}
                                                     onChange={(event) => setEditTranslatedText(event.target.value)}
-                                                    className="min-h-[140px] w-full flex-1 resize-y rounded-lg border border-indigo-200 bg-white p-3 text-sm font-medium leading-relaxed text-indigo-950 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    className="min-h-[120px] w-full flex-1 resize-y rounded-lg border border-sky-200 bg-white p-3 text-base font-medium leading-relaxed text-sky-950 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                                     aria-label={translationEditLabel}
                                                 />
                                                 <div className="flex justify-end gap-2">
@@ -322,7 +352,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 </div>
                                             </div>
                                         ) : (
-                                            <div className="flex flex-col gap-3 pt-11 sm:pt-0 sm:pr-28">
+                                            <div className="flex flex-col gap-3 pt-8 sm:pt-0 sm:pr-28">
                                                 {translationTargets.length > 1 && (
                                                     <div className="flex flex-wrap items-center gap-1.5">
                                                         {translationTargets.map((target) => (
@@ -335,9 +365,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                                 }}
                                                                 aria-pressed={item.activeTarget === target}
                                                                 title={uiLangCode === 'ko' ? '번역 언어 전환' : 'Switch translation language'}
-                                                                className={`rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition-all ${item.activeTarget === target
-                                                                    ? 'border-indigo-600 bg-indigo-600 text-white shadow-sm'
-                                                                    : 'border-indigo-200 bg-white text-indigo-600 hover:bg-indigo-50'}`}
+                                                                className={'rounded-full border px-2 py-0.5 text-[10px] font-black uppercase tracking-wide transition-all ' + (item.activeTarget === target
+                                                                    ? 'border-sky-600 bg-sky-600 text-white shadow-sm'
+                                                                    : 'border-sky-200 bg-white text-sky-700 hover:bg-sky-50')}
                                                             >
                                                                 {target}
                                                             </button>
@@ -349,17 +379,14 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                         {uiLangCode === 'ko' ? '원문이 수정됨 · 다시 번역 권장' : 'Source edited · retranslation recommended'}
                                                     </span>
                                                 )}
-                                                <span className="block whitespace-pre-wrap text-sm font-medium leading-relaxed text-indigo-900 md:text-base">
+                                                <span className="block whitespace-pre-wrap font-medium text-sky-950">
                                                     {item.translated || (uiLangCode === 'ko' ? '번역 없음' : 'No translation yet')}
                                                 </span>
-                                                <div
-                                                    className="absolute right-2 top-2 z-10 flex items-center gap-1"
-                                                    data-testid="translation-row-actions"
-                                                >
+                                                <div className="absolute right-2 top-2 z-10 flex items-center gap-1" data-testid="translation-row-actions">
                                                     <button
                                                         type="button"
                                                         onClick={(event) => { event.stopPropagation(); startEditing(item, 'translated'); }}
-                                                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-gray-200 bg-white/95 text-gray-500 shadow-sm transition hover:border-indigo-600 hover:bg-indigo-600 hover:text-white active:scale-95 sm:h-9 sm:w-9"
+                                                        className="flex h-10 w-10 items-center justify-center rounded-lg border border-sky-100 bg-white/95 text-slate-500 shadow-sm transition hover:border-indigo-600 hover:bg-indigo-600 hover:text-white active:scale-95 sm:h-9 sm:w-9"
                                                         title={translationEditLabel}
                                                         aria-label={translationEditLabel}
                                                     >
@@ -373,16 +400,12 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                                 if (item.ttsStatus === 'playing') stopTTS();
                                                                 else playTTS(item.translated, item.id);
                                                             }}
-                                                            className="flex h-10 w-10 items-center justify-center rounded-lg border border-indigo-100 bg-white/95 text-indigo-600 shadow-sm transition hover:bg-indigo-50 active:scale-95 sm:h-9 sm:w-9"
-                                                            title={item.ttsStatus === 'playing'
-                                                                ? (uiLangCode === 'ko' ? '정지' : 'Stop')
-                                                                : (uiLangCode === 'ko' ? '재생' : 'Play')}
-                                                            aria-label={item.ttsStatus === 'playing'
-                                                                ? (uiLangCode === 'ko' ? '정지' : 'Stop')
-                                                                : (uiLangCode === 'ko' ? '재생' : 'Play')}
+                                                            className="flex h-10 w-10 items-center justify-center rounded-lg border border-sky-100 bg-white/95 text-sky-700 shadow-sm transition hover:bg-sky-50 active:scale-95 sm:h-9 sm:w-9"
+                                                            title={item.ttsStatus === 'playing' ? (uiLangCode === 'ko' ? '정지' : 'Stop') : (uiLangCode === 'ko' ? '재생' : 'Play')}
+                                                            aria-label={item.ttsStatus === 'playing' ? (uiLangCode === 'ko' ? '정지' : 'Stop') : (uiLangCode === 'ko' ? '재생' : 'Play')}
                                                         >
                                                             {item.ttsStatus === 'loading' ? (
-                                                                <span className="h-4 w-4 animate-spin rounded-full border-2 border-indigo-300 border-t-indigo-600" aria-hidden="true" />
+                                                                <span className="h-4 w-4 animate-spin rounded-full border-2 border-sky-300 border-t-sky-600" aria-hidden="true" />
                                                             ) : item.ttsStatus === 'playing' ? (
                                                                 <svg className="h-3.5 w-3.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z" /></svg>
                                                             ) : item.ttsStatus === 'error' ? (
@@ -396,7 +419,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                         <button
                                                             type="button"
                                                             onClick={(event) => { event.stopPropagation(); onRetranslate(item); }}
-                                                            className="flex h-10 w-10 items-center justify-center rounded-lg border border-indigo-200 bg-white/95 text-indigo-700 shadow-sm transition hover:bg-indigo-50 active:scale-95 sm:h-9 sm:w-9"
+                                                            className="flex h-10 w-10 items-center justify-center rounded-lg border border-sky-200 bg-white/95 text-sky-700 shadow-sm transition hover:bg-sky-50 active:scale-95 sm:h-9 sm:w-9"
                                                             title={uiLangCode === 'ko' ? '다시 번역' : 'Retranslate'}
                                                             aria-label={uiLangCode === 'ko' ? '다시 번역' : 'Retranslate'}
                                                         >
@@ -408,90 +431,66 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                                 </div>
                                             </div>
                                         )}
-{!isEditingTranslated && (
-                                            <>
-                                                {/* #62 answer assist: below the translation, never TTS-automated, and still readable while the question translation is pending. */}
+                                    </div>
+
+                                    {showAnswerRow && (
+                                        <>
+                                            <div
+                                                data-testid="suggested-answer"
+                                                data-answer-language={item.answerLanguage || ''}
+                                                className="min-w-0 rounded-xl border border-emerald-100 bg-emerald-50/70 p-4 text-emerald-950 shadow-sm"
+                                            >
+                                                <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-emerald-700">
+                                                    {uiLangCode === 'ko' ? '추천 답변' : 'Suggested answer'}
+                                                    {item.answerLanguage ? ' · ' + item.answerLanguage : ''}
+                                                </div>
                                                 {item.answerStatus === 'loading' && (
-                                                    <div
-                                                        className="text-[11px] font-bold text-violet-500"
-                                                        data-testid="answer-assist-loading"
-                                                    >
+                                                    <div className="flex min-h-10 items-center gap-2 text-sm font-bold text-emerald-600" data-testid="answer-assist-loading">
+                                                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-600" aria-hidden="true" />
                                                         {uiLangCode === 'ko' ? '답변 준비 중…' : 'Drafting a suggested answer…'}
                                                     </div>
                                                 )}
-                                                {item.answerStatus === 'ready' && item.suggestedAnswer && (() => {
-                                                    const translationTarget = resolveAnswerTranslationTarget(item.answerLanguage, item.sourceLanguage);
-                                                    // Only a translation produced from the answer currently on
-                                                    // screen may be shown; a regenerated answer drops it.
-                                                    const answerTranslationFresh = isAnswerTranslationFresh(item);
-                                                    const answerTranslationVisible = Boolean(item.answerTranslationVisible) && answerTranslationFresh;
-                                                    const answerTranslationLoading = item.answerTranslationStatus === 'loading';
-                                                    return (
-                                                        <div
-                                                            className="rounded-lg border border-violet-100 bg-violet-50/70 p-3"
-                                                            data-testid="suggested-answer"
-                                                            data-answer-language={item.answerLanguage || ''}
-                                                        >
-                                                            <div className="mb-1 flex items-center justify-between gap-2">
-                                                                <div className="text-[10px] font-black uppercase tracking-wide text-violet-500">
-                                                                    {uiLangCode === 'ko' ? '추천 답변' : 'Suggested answer'}
-                                                                    {item.answerLanguage ? ` · ${item.answerLanguage}` : ''}
-                                                                </div>
-                                                                {translationTarget && (
-                                                                    <button
-                                                                        type="button"
-                                                                        data-testid="answer-translate-toggle"
-                                                                        data-target-language={translationTarget}
-                                                                        aria-pressed={answerTranslationVisible}
-                                                                        onClick={(event) => {
-                                                                            event.stopPropagation();
-                                                                            onToggleAnswerTranslation?.(item.id);
-                                                                        }}
-                                                                        className="rounded-full border border-violet-200 bg-white px-2 py-0.5 text-[10px] font-black tracking-wide text-violet-600 transition hover:bg-violet-100 active:scale-95"
-                                                                        title={answerTranslationVisible
-                                                                            ? (uiLangCode === 'ko' ? '답변 번역 숨기기' : 'Hide answer translation')
-                                                                            : (uiLangCode === 'ko' ? '답변을 원래 언어로 번역' : 'Translate the answer into the other language')}
-                                                                    >
-                                                                        {answerTranslationLoading
-                                                                            ? (uiLangCode === 'ko' ? '번역 중…' : 'Translating…')
-                                                                            : answerTranslationVisible
-                                                                                ? (uiLangCode === 'ko' ? '숨기기' : 'Hide')
-                                                                                : (uiLangCode === 'ko' ? '번역' : 'Translate')}
-                                                                    </button>
-                                                                )}
-                                                            </div>
-                                                            <div className="whitespace-pre-wrap text-sm leading-relaxed text-violet-950" data-testid="suggested-answer-text">
-                                                                {item.suggestedAnswer}
-                                                            </div>
-                                                            {item.answerTranslationStatus === 'error' && (
-                                                                <div
-                                                                    className="mt-2 text-[10px] font-bold text-rose-500"
-                                                                    data-testid="answer-translation-error"
-                                                                >
-                                                                    {uiLangCode === 'ko' ? '답변 번역에 실패했습니다.' : 'Answer translation failed.'}
-                                                                </div>
-                                                            )}
-                                                            {answerTranslationVisible && item.answerTranslation && (
-                                                                <div
-                                                                    className="mt-2 border-t border-violet-200 pt-2"
-                                                                    data-testid="answer-translation"
-                                                                >
-                                                                    <div className="text-[10px] font-black uppercase tracking-wide text-violet-400">
-                                                                        {uiLangCode === 'ko' ? '답변 번역' : 'Answer translation'}
-                                                                        {item.answerTranslationLanguage ? ` · ${item.answerTranslationLanguage}` : ''}
-                                                                    </div>
-                                                                    <div className="whitespace-pre-wrap text-sm leading-relaxed text-violet-900">
-                                                                        {item.answerTranslation}
-                                                                    </div>
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })()}
-                                            </>
-                                        )}
-                                    </div>
-                                    </div>
+                                                {item.answerStatus === 'error' && (
+                                                    <div className="text-sm font-bold text-rose-600" data-testid="answer-assist-error">
+                                                        {uiLangCode === 'ko' ? '답변 생성에 실패했습니다.' : 'Suggested answer failed.'}
+                                                    </div>
+                                                )}
+                                                {item.answerStatus === 'ready' && item.suggestedAnswer && (
+                                                    <div className="whitespace-pre-wrap text-base font-medium leading-7 text-emerald-950 md:text-lg md:leading-8" data-testid="suggested-answer-text">
+                                                        {item.suggestedAnswer}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div
+                                                data-testid="answer-translation-cell"
+                                                className="min-w-0 rounded-xl border border-amber-100 bg-amber-50/65 p-4 text-amber-950 shadow-sm"
+                                            >
+                                                <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-amber-700">
+                                                    {uiLangCode === 'ko' ? '답변 번역' : 'Answer translation'}
+                                                    {(item.answerTranslationLanguage || item.activeTarget) ? ' · ' + (item.answerTranslationLanguage || item.activeTarget) : ''}
+                                                </div>
+                                                {item.answerStatus === 'loading' || item.answerTranslationStatus === 'loading' ? (
+                                                    <div className="flex min-h-10 items-center gap-2 text-sm font-bold text-amber-700" data-testid="answer-translation-loading">
+                                                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-amber-200 border-t-amber-600" aria-hidden="true" />
+                                                        {uiLangCode === 'ko' ? '답변 번역 중…' : 'Translating answer…'}
+                                                    </div>
+                                                ) : item.answerTranslationStatus === 'error' ? (
+                                                    <div className="text-sm font-bold text-rose-600" data-testid="answer-translation-error">
+                                                        {uiLangCode === 'ko' ? '답변 번역에 실패했습니다.' : 'Answer translation failed.'}
+                                                    </div>
+                                                ) : answerTranslationFresh && item.answerTranslation ? (
+                                                    <div className="whitespace-pre-wrap text-base leading-7 text-amber-950 md:text-lg md:leading-8" data-testid="answer-translation">
+                                                        {item.answerTranslation}
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-sm text-amber-700/70">
+                                                        {uiLangCode === 'ko' ? '답변이 생성되면 자동으로 번역됩니다.' : 'The answer will be translated automatically.'}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             );
                         }
