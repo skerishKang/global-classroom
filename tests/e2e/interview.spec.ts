@@ -1274,7 +1274,7 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     );
   });
 
-  test('keeps the Interview viewport stable and jumps only when Latest is pressed (#72)', async ({ page }) => {
+  test('smart-follows the latest Interview content until the user scrolls upward (#74)', async ({ page }) => {
     await page.addInitScript(() => {
       localStorage.setItem('global_class_settings', JSON.stringify({
         driveBackupMode: 'manual',
@@ -1312,37 +1312,53 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
       await composer.fill(text);
       await composer.press('Enter');
     };
+    const distanceFromBottom = () => scroll.evaluate((element) =>
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    );
 
+    // Default state follows the newest content just like a chat window.
+    await expect(scroll).toHaveAttribute('data-following-latest', 'true');
     for (let index = 0; index < 10; index += 1) {
       await submit(`Long interview question ${index} with enough words to make each transcript row visibly occupy space in the conversation list.`);
       await expect(page.getByTestId('interview-row')).toHaveCount(index + 1);
     }
-
-    // Clear any accumulated indicator by explicitly visiting the newest row,
-    // then move back up to the material the user wants to keep reading.
-    await scroll.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-      element.dispatchEvent(new Event('scroll'));
-    });
+    await expect.poll(distanceFromBottom).toBeLessThanOrEqual(24);
     await expect(page.getByTestId('interview-latest-button')).toHaveCount(0);
 
+    // An upward user scroll pauses following immediately.
     await scroll.evaluate((element) => {
       element.scrollTop = 0;
       element.dispatchEvent(new Event('scroll'));
     });
-    const before = await scroll.evaluate((element) => element.scrollTop);
+    await expect(scroll).toHaveAttribute('data-following-latest', 'false');
+    const pausedTop = await scroll.evaluate((element) => element.scrollTop);
 
+    // New work continues, but the viewport stays exactly where the user left it.
     await submit('Newest interview question that must not pull the viewport away from the earlier material.');
     await expect(page.getByTestId('interview-row')).toHaveCount(11);
     await expect(page.getByTestId('interview-latest-button')).toBeVisible();
+    await expect.poll(async () => scroll.evaluate((element) => element.scrollTop)).toBe(pausedTop);
 
-    const after = await scroll.evaluate((element) => element.scrollTop);
-    expect(Math.abs(after - before)).toBeLessThanOrEqual(1);
-
+    // Latest jumps down and resumes follow mode.
     await page.getByTestId('interview-latest-button').click();
-    await expect.poll(async () => scroll.evaluate((element) =>
-      element.scrollHeight - element.scrollTop - element.clientHeight
-    )).toBeLessThanOrEqual(24);
+    await expect.poll(distanceFromBottom).toBeLessThanOrEqual(64);
+    await expect(scroll).toHaveAttribute('data-following-latest', 'true');
+    await expect(page.getByTestId('interview-latest-button')).toHaveCount(0);
+
+    // Pausing again and manually returning to the bottom also resumes following.
+    await scroll.evaluate((element) => {
+      element.scrollTop = Math.max(0, element.scrollTop - 300);
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect(scroll).toHaveAttribute('data-following-latest', 'false');
+    await submit('Another new row while paused.');
+    await expect(page.getByTestId('interview-latest-button')).toBeVisible();
+
+    await scroll.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect(scroll).toHaveAttribute('data-following-latest', 'true');
     await expect(page.getByTestId('interview-latest-button')).toHaveCount(0);
   });
 });
