@@ -76,7 +76,15 @@ const ConversationList: React.FC<ConversationListProps> = ({
     const [interviewDraft, setInterviewDraft] = useState('');
     const [expandedAnswerIds, setExpandedAnswerIds] = useState<Set<string>>(() => new Set());
     const [pendingNewRows, setPendingNewRows] = useState(0);
+    const [isFollowingLatest, setIsFollowingLatest] = useState(true);
     const previousHistoryLengthRef = useRef(history.length);
+    const followingLatestRef = useRef(true);
+    const lastScrollTopRef = useRef(0);
+
+    const setFollowingLatest = (value: boolean) => {
+        followingLatestRef.current = value;
+        setIsFollowingLatest(value);
+    };
 
     useEffect(() => {
         const previousLength = previousHistoryLengthRef.current;
@@ -84,29 +92,50 @@ const ConversationList: React.FC<ConversationListProps> = ({
         if (!interviewMode || history.length <= previousLength) return;
 
         const addedRows = history.length - previousLength;
+        if (!followingLatestRef.current) {
+            setPendingNewRows((count) => count + addedRows);
+        }
+    }, [history.length, interviewMode]);
+
+    useEffect(() => {
+        const hasConversationContent = history.length > 0 || Boolean(currentTurnText) || Boolean(currentTurnTranslation);
+        if (!interviewMode || !followingLatestRef.current || !hasConversationContent) return;
         const frame = window.requestAnimationFrame(() => {
             const container = historyRef.current;
             if (!container) return;
-            const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-            if (distanceFromBottom > 24) {
-                setPendingNewRows((count) => count + addedRows);
-            }
+            container.scrollTop = container.scrollHeight;
+            lastScrollTopRef.current = container.scrollTop;
+            setPendingNewRows(0);
         });
         return () => window.cancelAnimationFrame(frame);
-    }, [history.length, historyRef, interviewMode]);
+    }, [history, currentTurnText, currentTurnTranslation, historyRef, interviewMode]);
 
     const handleHistoryScroll = () => {
         const container = historyRef.current;
-        if (!container || pendingNewRows === 0) return;
-        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-        if (distanceFromBottom <= 24) setPendingNewRows(0);
+        if (!container || !interviewMode) return;
+
+        const currentTop = container.scrollTop;
+        const distanceFromBottom = container.scrollHeight - currentTop - container.clientHeight;
+        const movedUp = currentTop < lastScrollTopRef.current - 2;
+        lastScrollTopRef.current = currentTop;
+
+        if (movedUp) {
+            setFollowingLatest(false);
+            return;
+        }
+
+        if (distanceFromBottom <= 64) {
+            setFollowingLatest(true);
+            setPendingNewRows(0);
+        }
     };
 
     const scrollToLatest = () => {
         const container = historyRef.current;
         if (!container) return;
-        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        setFollowingLatest(true);
         setPendingNewRows(0);
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
     };
 
     const toggleAnswerRow = (itemId: string) => {
@@ -138,6 +167,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                 ref={historyRef}
                 onScroll={handleHistoryScroll}
                 data-testid="conversation-scroll"
+                data-following-latest={interviewMode ? String(isFollowingLatest) : undefined}
                 style={interviewMode ? { overflowAnchor: 'none', scrollBehavior: 'auto' } : undefined}
                 className={`flex-1 overflow-y-auto p-4 pb-40 md:pb-24 z-10 relative ${interviewMode ? '' : 'scroll-smooth'}`}
             >
@@ -779,7 +809,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
                 <div className={interviewMode ? "h-48" : "h-40"}></div> {/* Spacer for fixed interview composer + bottom bar */}
             </div>
 
-            {interviewMode && pendingNewRows > 0 && (
+            {interviewMode && !isFollowingLatest && pendingNewRows > 0 && (
                 <button
                     type="button"
                     data-testid="interview-latest-button"
