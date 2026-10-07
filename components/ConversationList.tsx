@@ -1,4 +1,4 @@
-import React, { memo, useState } from 'react';
+import React, { memo, useEffect, useRef, useState } from 'react';
 import Visualizer from './Visualizer';
 import { MicIcon, CopyIcon } from './Icons';
 import { ConversationItem, TranslationMap, ConnectionStatus } from '../types';
@@ -74,7 +74,49 @@ const ConversationList: React.FC<ConversationListProps> = ({
     onSelectTranslationTarget,
 }) => {
     const [interviewDraft, setInterviewDraft] = useState('');
-    const [showInterviewAnswers, setShowInterviewAnswers] = useState(true);
+    const [expandedAnswerIds, setExpandedAnswerIds] = useState<Set<string>>(() => new Set());
+    const [pendingNewRows, setPendingNewRows] = useState(0);
+    const previousHistoryLengthRef = useRef(history.length);
+
+    useEffect(() => {
+        const previousLength = previousHistoryLengthRef.current;
+        previousHistoryLengthRef.current = history.length;
+        if (!interviewMode || history.length <= previousLength) return;
+
+        const addedRows = history.length - previousLength;
+        const frame = window.requestAnimationFrame(() => {
+            const container = historyRef.current;
+            if (!container) return;
+            const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+            if (distanceFromBottom > 24) {
+                setPendingNewRows((count) => count + addedRows);
+            }
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [history.length, historyRef, interviewMode]);
+
+    const handleHistoryScroll = () => {
+        const container = historyRef.current;
+        if (!container || pendingNewRows === 0) return;
+        const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+        if (distanceFromBottom <= 24) setPendingNewRows(0);
+    };
+
+    const scrollToLatest = () => {
+        const container = historyRef.current;
+        if (!container) return;
+        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        setPendingNewRows(0);
+    };
+
+    const toggleAnswerRow = (itemId: string) => {
+        setExpandedAnswerIds((current) => {
+            const next = new Set(current);
+            if (next.has(itemId)) next.delete(itemId);
+            else next.add(itemId);
+            return next;
+        });
+    };
 
     const submitInterviewDraft = () => {
         if (!onSubmitText || !interviewDraft.trim()) return;
@@ -94,7 +136,10 @@ const ConversationList: React.FC<ConversationListProps> = ({
             {/* Scrollable Content */}
             <div
                 ref={historyRef}
-                className="flex-1 overflow-y-auto p-4 pb-40 md:pb-24 z-10 relative scroll-smooth"
+                onScroll={handleHistoryScroll}
+                data-testid="conversation-scroll"
+                style={interviewMode ? { overflowAnchor: 'none', scrollBehavior: 'auto' } : undefined}
+                className={`flex-1 overflow-y-auto p-4 pb-40 md:pb-24 z-10 relative ${interviewMode ? '' : 'scroll-smooth'}`}
             >
                 {history.length === 0 && !currentTurnText && !currentTurnTranslation && (
                     <div className="h-full flex flex-col items-center justify-start text-gray-400 text-center px-4 opacity-70 overflow-y-auto py-0">
@@ -241,23 +286,6 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         </div>
                     )}
 
-                    {interviewMode && !isOutputOnly && history.length > 0 && (
-                        <div className="mb-3 flex justify-end">
-                            <button
-                                type="button"
-                                data-testid="answer-visibility-toggle"
-                                aria-pressed={showInterviewAnswers}
-                                onClick={() => setShowInterviewAnswers((visible) => !visible)}
-                                className="inline-flex min-h-10 items-center gap-2 rounded-full border border-gray-200 bg-white px-3 py-2 text-xs font-bold text-gray-700 shadow-sm transition hover:bg-gray-50 active:scale-95"
-                            >
-                                <span className={`h-2 w-2 rounded-full ${showInterviewAnswers ? 'bg-emerald-400' : 'bg-gray-300'}`} aria-hidden="true" />
-                                {showInterviewAnswers
-                                    ? (uiLangCode === 'ko' ? '답변 숨기기' : 'Hide answers')
-                                    : (uiLangCode === 'ko' ? '답변 보기' : 'Show answers')}
-                            </button>
-                        </div>
-                    )}
-
                     {history.map((item) => {
                         const isEditing = editingItemId === item.id;
                         const isEditingOriginal = isEditing && editingField === 'original';
@@ -276,10 +304,16 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                 item.suggestedAnswer,
                                 item.activeTarget,
                             );
-                            const showAnswerRow = showInterviewAnswers
-                                && (item.answerStatus === 'loading'
-                                    || item.answerStatus === 'ready'
-                                    || item.answerStatus === 'error');
+                            const hasAnswerAssist = item.answerStatus === 'loading'
+                                || item.answerStatus === 'ready'
+                                || item.answerStatus === 'error';
+                            const answerExpanded = expandedAnswerIds.has(item.id);
+                            const showAnswerRow = answerExpanded && hasAnswerAssist;
+                            const answerToggleLabel = item.answerStatus === 'loading'
+                                ? (uiLangCode === 'ko' ? '답변 준비 중…' : 'Preparing answer…')
+                                : answerExpanded
+                                    ? (uiLangCode === 'ko' ? '답변 접기' : 'Hide answer')
+                                    : (uiLangCode === 'ko' ? '답변 보기' : 'Show answer');
 
                             return (
                                 <div key={item.id} data-testid="interview-row" className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 items-stretch">
@@ -432,6 +466,32 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                             </div>
                                         )}
                                     </div>
+
+                                    {hasAnswerAssist && (
+                                        <div className="sm:col-span-2 -mt-1">
+                                            <button
+                                                type="button"
+                                                data-testid="answer-row-toggle"
+                                                aria-expanded={answerExpanded}
+                                                onClick={() => toggleAnswerRow(item.id)}
+                                                className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white/90 px-4 py-2.5 text-left text-sm font-bold text-gray-700 shadow-sm transition hover:border-emerald-200 hover:bg-emerald-50/40 active:scale-[0.995]"
+                                            >
+                                                <span className="flex min-w-0 items-center gap-2">
+                                                    <span className={`h-2 w-2 shrink-0 rounded-full ${item.answerStatus === 'ready' ? 'bg-emerald-400' : item.answerStatus === 'error' ? 'bg-rose-400' : 'bg-amber-300'}`} aria-hidden="true" />
+                                                    <span>{answerToggleLabel}</span>
+                                                </span>
+                                                <svg
+                                                    className={`h-4 w-4 shrink-0 text-gray-400 transition-transform ${answerExpanded ? 'rotate-180' : ''}`}
+                                                    fill="none"
+                                                    stroke="currentColor"
+                                                    viewBox="0 0 24 24"
+                                                    aria-hidden="true"
+                                                >
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    )}
 
                                     {showAnswerRow && (
                                         <>
@@ -718,6 +778,20 @@ const ConversationList: React.FC<ConversationListProps> = ({
                 </div>
                 <div className={interviewMode ? "h-48" : "h-40"}></div> {/* Spacer for fixed interview composer + bottom bar */}
             </div>
+
+            {interviewMode && pendingNewRows > 0 && (
+                <button
+                    type="button"
+                    data-testid="interview-latest-button"
+                    onClick={scrollToLatest}
+                    className="absolute bottom-40 right-4 z-50 inline-flex min-h-10 items-center gap-2 rounded-full border border-indigo-200 bg-white/95 px-4 py-2 text-xs font-black text-indigo-700 shadow-lg backdrop-blur-md transition hover:bg-indigo-50 active:scale-95 sm:bottom-28"
+                >
+                    <span aria-hidden="true">↓</span>
+                    {uiLangCode === 'ko'
+                        ? `새 내용 ${pendingNewRows}개 · 최신으로`
+                        : `${pendingNewRows} new · Latest`}
+                </button>
+            )}
 
             {interviewMode && !isOutputOnly && onSubmitText && (
                 <div className="fixed bottom-[92px] left-3 right-3 z-40 sm:left-4 sm:right-[calc(50%+8px)]">

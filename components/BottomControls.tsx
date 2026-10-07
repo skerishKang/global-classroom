@@ -15,6 +15,7 @@ interface BottomControlsProps {
     setIsAutoPlay: (v: boolean) => void;
     isScrollLocked: boolean;
     setIsScrollLocked: (v: boolean) => void;
+    interviewMode?: boolean;
     status: ConnectionStatus;
     toggleMic: () => void;
     playAll: () => void;
@@ -32,6 +33,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
     setIsAutoPlay,
     isScrollLocked,
     setIsScrollLocked,
+    interviewMode = false,
     status,
     toggleMic,
     playAll,
@@ -152,25 +154,27 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                         <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">{t.autoPlay}</span>
                     </button>
 
-                    <button
-                        onClick={() => setIsScrollLocked(!isScrollLocked)}
-                        className={`flex flex-col items-center gap-1 transition-all active:scale-90 hover:scale-105 w-16 group cursor-pointer hover:text-indigo-600 ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
-                            }`}
-                        title={isScrollLocked ? (uiLangCode === 'ko' ? '자동 스크롤 켜기' : 'Enable auto-scroll') : (uiLangCode === 'ko' ? '자동 스크롤 끄기' : 'Disable auto-scroll')}
-                    >
-                        <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${!isScrollLocked ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
-                            {isScrollLocked ? (
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 002-2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-                                </svg>
-                            ) : (
-                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
-                                </svg>
-                            )}
-                        </div>
-                        <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">{t.autoScroll || '자동스크롤'}</span>
-                    </button>
+                    {!interviewMode && (
+                        <button
+                            onClick={() => setIsScrollLocked(!isScrollLocked)}
+                            className={`flex flex-col items-center gap-1 transition-all active:scale-90 hover:scale-105 w-16 group cursor-pointer hover:text-indigo-600 ${!isScrollLocked ? 'text-indigo-600' : 'text-gray-400'
+                                }`}
+                            title={isScrollLocked ? (uiLangCode === 'ko' ? '자동 스크롤 켜기' : 'Enable auto-scroll') : (uiLangCode === 'ko' ? '자동 스크롤 끄기' : 'Disable auto-scroll')}
+                        >
+                            <div className={`p-2 rounded-xl transition-all group-hover:bg-indigo-50 ${!isScrollLocked ? 'bg-indigo-50 shadow-sm' : 'bg-transparent'}`}>
+                                {isScrollLocked ? (
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 002-2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                                    </svg>
+                                ) : (
+                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+                                    </svg>
+                                )}
+                            </div>
+                            <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">{t.autoScroll || '자동스크롤'}</span>
+                        </button>
+                    )}
                 </div>
 
                 {/* Central Main Button - Toggle between Mic and Keyboard */}

@@ -1063,10 +1063,13 @@ setHistory((prev) => [...prev, newItem]);
 
   useEffect(() => {
     const hasConversationContent = history.length > 0 || !!currentTurnText || !!interviewLivePreview;
-    if (!isScrollLocked && hasConversationContent && historyRef.current) {
+    // #72: Interview mode keeps the user's viewport stable. New transcript,
+    // translation and answer work may continue in the background, but only an
+    // explicit "Latest" action may move the Interview scroll position.
+    if (!interviewMode && !isScrollLocked && hasConversationContent && historyRef.current) {
       historyRef.current.scrollTop = historyRef.current.scrollHeight;
     }
-  }, [history, currentTurnText, interviewLivePreview, isScrollLocked]);
+  }, [history, currentTurnText, interviewLivePreview, isScrollLocked, interviewMode]);
 
   useLayoutEffect(() => {
     if (!pendingHistoryExpandRef.current || !historyRef.current) return;
@@ -1180,8 +1183,9 @@ setHistory((prev) => [...prev, newItem]);
         key={`controls_${currentSessionId}`}
         isAutoPlay={isAutoPlay}
         setIsAutoPlay={setIsAutoPlay}
-        isScrollLocked={isScrollLocked}
+        isScrollLocked={interviewMode ? true : isScrollLocked}
         setIsScrollLocked={setIsScrollLocked}
+        interviewMode={interviewMode}
         status={effectiveStatus}
         toggleMic={effectiveToggleMic}
         playAll={playAll}

@@ -1181,12 +1181,18 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     // 4) Translation failure does not block the answer.
     await sayIt('번역 실패 표시를 확인해 주세요.', 'ko');
 
-    // Each row keeps only its own answer; the slow first answer lands on row 0.
-    await expect(row(1).getByTestId('suggested-answer')).toContainText('ANSWER-KO-DI', { timeout: 10000 });
-    await expect(row(0).getByTestId('suggested-answer')).toContainText('ANSWER-EN-DI', { timeout: 15000 });
+    // #72: answers are prepared in the background but each row stays collapsed
+    // until the user explicitly opens it.
+    await expect(row(1).getByTestId('answer-row-toggle')).toContainText('답변 보기', { timeout: 10000 });
+    await expect(row(0).getByTestId('answer-row-toggle')).toContainText('답변 보기', { timeout: 15000 });
+    await expect(row(0).getByTestId('suggested-answer')).toHaveCount(0);
+    await expect(row(1).getByTestId('suggested-answer')).toHaveCount(0);
+    await expect(row(2).getByTestId('answer-row-toggle')).toHaveCount(0);
+    await expect(row(3).getByTestId('answer-row-toggle')).toContainText('답변 보기', { timeout: 10000 });
+    await expect(row(3)).toContainText('번역 오류', { timeout: 10000 });
 
-    // #62 parallelism: row 0's question translation never resolves, yet its
-    // answer is already readable and usable.
+    // #62 parallelism: row 0's question translation never resolves, yet answer
+    // generation and automatic answer translation still finish behind the fold.
     const parallelEvents = await events();
     const firstAnswerRequest = parallelEvents.indexOf('answer-request:Explain dependency injection.');
     expect(firstAnswerRequest).toBeGreaterThanOrEqual(0);
@@ -1195,19 +1201,6 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
       () => document.body.innerText.indexOf('KO:Explain dependency injection.') !== -1,
     );
     expect(pendingTranslation).toBe(false);
-    await expect(row(0).getByTestId('answer-assist-loading')).toHaveCount(0);
-    await expect(row(0).getByTestId('suggested-answer-text')).toBeVisible();
-
-    await expect(row(0).getByTestId('suggested-answer')).not.toContainText('ANSWER-KO-DI');
-    await expect(row(2).getByTestId('suggested-answer')).toHaveCount(0);
-    await expect(row(3).getByTestId('suggested-answer')).toContainText('ANSWER-KO-FAIL', { timeout: 10000 });
-    await expect(row(3)).toContainText('번역 오류', { timeout: 10000 });
-
-    // The answer language follows each finalized transcript/source language.
-    await expect(row(0).getByTestId('suggested-answer')).toHaveAttribute('data-answer-language', 'en');
-    await expect(row(1).getByTestId('suggested-answer')).toHaveAttribute('data-answer-language', 'ko');
-    await expect(row(0).getByTestId('suggested-answer')).toContainText('추천 답변 · en');
-    await expect(row(1).getByTestId('suggested-answer')).toContainText('추천 답변 · ko');
 
     const requests = await answerRequests();
     expect(requests[0]).toMatchObject({
@@ -1220,27 +1213,32 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
       answerLanguage: 'ko',
       sourceLanguage: 'ko',
     });
-    // Generation never waits for a translation: the request carries no
-    // translated text at all.
     expect(Object.keys(requests[0])).not.toContain('translated');
 
-    // #70: each answer is translated automatically into the row's active
-    // question-translation target; no answer-translation click is required.
-    await expect(row(0).getByTestId('answer-translation')).toContainText('ANSWER-TRANSLATED(', { timeout: 15000 });
-    await expect(row(0).getByTestId('answer-translation')).toContainText('ANSWER-EN-DI');
-    await expect(row(1).getByTestId('answer-translation')).toContainText('ANSWER-KO-DI', { timeout: 15000 });
-    await expect(row(3).getByTestId('answer-translation')).toContainText('ANSWER-KO-FAIL', { timeout: 15000 });
-
+    await expect.poll(async () => (await answerTranslations()).length, { timeout: 15000 }).toBe(3);
     const automaticTranslations = await answerTranslations();
-    expect(automaticTranslations).toHaveLength(3);
     expect(automaticTranslations).toEqual(expect.arrayContaining([
       expect.objectContaining({ text: 'ANSWER-EN-DI' }),
       expect.objectContaining({ text: 'ANSWER-KO-DI' }),
       expect.objectContaining({ text: 'ANSWER-KO-FAIL' }),
     ]));
 
-    // Four semantic cells are distinct on desktop and the same row reflows on
-    // mobile through grid-cols-1 -> sm:grid-cols-2.
+    // Opening one row reveals the cached 2×2 answer cells without opening the
+    // other rows or issuing another AI/translation request.
+    const beforeOpenCount = (await answerTranslations()).length;
+    await row(0).getByTestId('answer-row-toggle').click();
+    await expect(row(0).getByTestId('suggested-answer')).toContainText('ANSWER-EN-DI');
+    await expect(row(0).getByTestId('answer-translation')).toContainText('ANSWER-EN-DI');
+    await expect(row(1).getByTestId('suggested-answer')).toHaveCount(0);
+    expect((await answerTranslations()).length).toBe(beforeOpenCount);
+
+    await row(1).getByTestId('answer-row-toggle').click();
+    await expect(row(1).getByTestId('suggested-answer')).toContainText('ANSWER-KO-DI');
+    await expect(row(1).getByTestId('answer-translation')).toContainText('ANSWER-KO-DI');
+    await expect(row(0).getByTestId('suggested-answer')).toHaveAttribute('data-answer-language', 'en');
+    await expect(row(1).getByTestId('suggested-answer')).toHaveAttribute('data-answer-language', 'ko');
+
+    // Four semantic cells remain distinct when expanded.
     await expect(row(0).getByTestId('transcript-cell')).toBeVisible();
     await expect(row(0).getByTestId('question-translation-cell')).toBeVisible();
     await expect(row(0).getByTestId('suggested-answer')).toBeVisible();
@@ -1248,28 +1246,21 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(row(0)).toHaveClass(/grid-cols-1/);
     await expect(row(0)).toHaveClass(/sm:grid-cols-2/);
 
-    // Switching the question translation target also refreshes the answer
-    // translation to that same target.
+    // Switching the question translation target also refreshes the cached
+    // answer translation to that target.
     const rowOneVi = row(1).getByRole('button', { name: 'vi', exact: true });
     await expect(rowOneVi).toBeVisible();
     const beforeTargetSwitch = (await answerTranslations()).length;
     await rowOneVi.click();
     await expect(row(1).getByTestId('answer-translation')).toContainText('ANSWER-KO-DI', { timeout: 15000 });
     await expect.poll(async () => (await answerTranslations()).length).toBe(beforeTargetSwitch + 1);
-    const switchedTranslations = await answerTranslations();
-    expect(switchedTranslations.at(-1)).toMatchObject({ text: 'ANSWER-KO-DI' });
 
-    // One Interview-level control hides/shows the whole answer row without
-    // spending another translation request.
-    const beforeToggleCount = (await answerTranslations()).length;
-    const answerVisibility = page.getByTestId('answer-visibility-toggle');
-    await answerVisibility.click();
+    // Collapse is per-row and free: row 1 stays open while row 0 closes.
+    const beforeCollapseCount = (await answerTranslations()).length;
+    await row(0).getByTestId('answer-row-toggle').click();
     await expect(row(0).getByTestId('suggested-answer')).toHaveCount(0);
-    await expect(row(0).getByTestId('answer-translation-cell')).toHaveCount(0);
-    await answerVisibility.click();
-    await expect(row(0).getByTestId('suggested-answer')).toBeVisible();
-    await expect(row(0).getByTestId('answer-translation')).toBeVisible();
-    expect((await answerTranslations()).length).toBe(beforeToggleCount);
+    await expect(row(1).getByTestId('suggested-answer')).toBeVisible();
+    expect((await answerTranslations()).length).toBe(beforeCollapseCount);
 
     // Row 0's translation is still outstanding at the end of the test, and the
     // answer never blocked it: it was requested first and never waited on it.
@@ -1281,5 +1272,77 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     expect(finalEvents.indexOf('translate-request:never-resolves')).toBeGreaterThan(
       finalEvents.indexOf('answer-request:Explain dependency injection.'),
     );
+  });
+
+  test('keeps the Interview viewport stable and jumps only when Latest is pressed (#72)', async ({ page }) => {
+    await page.addInitScript(() => {
+      localStorage.setItem('global_class_settings', JSON.stringify({
+        driveBackupMode: 'manual',
+        audioCacheEnabled: true,
+        recordOriginalEnabled: true,
+        interviewTargets: ['ko', 'en'],
+      }));
+
+      const realFetch = window.fetch.bind(window);
+      window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('detect-language')) {
+          return new Response(JSON.stringify({ code: 'en' }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        if (url.includes('/api/translate')) {
+          const body = JSON.parse(String(init?.body || '{}'));
+          return new Response(JSON.stringify({ translated: 'KO:' + body.text }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return realFetch(input, init);
+      };
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    await expect(page.getByText('자동스크롤', { exact: true })).toHaveCount(0);
+
+    const composer = page.getByRole('textbox', { name: '인터뷰 텍스트 입력' });
+    const scroll = page.getByTestId('conversation-scroll');
+    const submit = async (text: string) => {
+      await composer.fill(text);
+      await composer.press('Enter');
+    };
+
+    for (let index = 0; index < 10; index += 1) {
+      await submit(`Long interview question ${index} with enough words to make each transcript row visibly occupy space in the conversation list.`);
+      await expect(page.getByTestId('interview-row')).toHaveCount(index + 1);
+    }
+
+    // Clear any accumulated indicator by explicitly visiting the newest row,
+    // then move back up to the material the user wants to keep reading.
+    await scroll.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect(page.getByTestId('interview-latest-button')).toHaveCount(0);
+
+    await scroll.evaluate((element) => {
+      element.scrollTop = 0;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    const before = await scroll.evaluate((element) => element.scrollTop);
+
+    await submit('Newest interview question that must not pull the viewport away from the earlier material.');
+    await expect(page.getByTestId('interview-row')).toHaveCount(11);
+    await expect(page.getByTestId('interview-latest-button')).toBeVisible();
+
+    const after = await scroll.evaluate((element) => element.scrollTop);
+    expect(Math.abs(after - before)).toBeLessThanOrEqual(1);
+
+    await page.getByTestId('interview-latest-button').click();
+    await expect.poll(async () => scroll.evaluate((element) =>
+      element.scrollHeight - element.scrollTop - element.clientHeight
+    )).toBeLessThanOrEqual(24);
+    await expect(page.getByTestId('interview-latest-button')).toHaveCount(0);
   });
 });
