@@ -8,9 +8,8 @@ import {
     MAX_SUMMARY_TEXT_CHARS,
 } from './_aiGuards';
 
-// Text models already in production use elsewhere in this repo
-// (detect-language.ts / MODEL_TRANSLATE). Tried in order.
-const SUMMARY_MODELS = ['gemini-2.5-flash-lite', 'gemini-2.0-flash'];
+// History summaries use the owner's chosen Gemma order (#76).
+const SUMMARY_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
 
 export const handler = async (event: any) => {
     if (event.httpMethod !== 'POST') {

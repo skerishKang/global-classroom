@@ -49,6 +49,7 @@ import {
 import { handler as detectHandler } from '../../netlify/functions/detect-language';
 import { handler as liveTokenHandler } from '../../netlify/functions/live-token';
 import { handler as summarizeHandler } from '../../netlify/functions/summarize';
+import { handler as sessionMetadataHandler } from '../../netlify/functions/session-metadata';
 import { handler as translateHandler } from '../../netlify/functions/translate';
 import { handler as ttsHandler } from '../../netlify/functions/tts';
 import { handler as visionHandler } from '../../netlify/functions/vision';
@@ -103,7 +104,7 @@ describe('#36 summarize runtime API', () => {
     expect(res.json.summary).toBe('## 📝 Summary\n- point one');
     expect(mocks.generateContent).toHaveBeenCalledTimes(1);
     const request = mocks.generateContent.mock.calls[0][0];
-    expect(request.model).toBe('gemini-2.5-flash-lite');
+    expect(request.model).toBe('gemma-4-31b-it');
     expect(JSON.stringify(request.contents)).toContain('Hello');
   });
 
@@ -115,7 +116,7 @@ describe('#36 summarize runtime API', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json.summary).toBe('fallback summary');
     expect(mocks.generateContent).toHaveBeenCalledTimes(2);
-    expect(mocks.generateContent.mock.calls[1][0].model).toBe('gemini-2.0-flash');
+    expect(mocks.generateContent.mock.calls[1][0].model).toBe('gemma-4-26b-a4b-it');
   });
 
   test('source no longer contains the legacy getGenerativeModel shape', () => {
@@ -129,6 +130,32 @@ describe('#36 summarize runtime API', () => {
       await summarizeHandler(makeEvent({ history: repeat(MAX_SUMMARY_TEXT_CHARS + 1) })),
     );
     expect(res.statusCode).toBe(413);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
+});
+
+describe('#76 Gemma saved-session metadata endpoint', () => {
+  test('generates a specific title + summary with 31B first', async () => {
+    mocks.generateContent.mockResolvedValue({ text: '{"title":"Interview preparation","summary":"Interview questions and answers."}' });
+    const response = parseResponse(await sessionMetadataHandler(makeEvent({ history: '[1] What are your strengths?', lang: 'en' })));
+    expect(response.statusCode).toBe(200);
+    expect(response.json).toEqual({ title: 'Interview preparation', summary: 'Interview questions and answers.' });
+    expect(mocks.generateContent.mock.calls[0][0].model).toBe('gemma-4-31b-it');
+  });
+
+  test('falls back to Gemma 26B A4B only after 31B fails', async () => {
+    mocks.generateContent.mockRejectedValueOnce(new Error('limit')).mockResolvedValueOnce({
+      text: '{"title":"Mercor certification","summary":"Course overview and certification requirements."}',
+    });
+    const response = parseResponse(await sessionMetadataHandler(makeEvent({ history: '[1] Mercor Academy training details' })));
+    expect(response.statusCode).toBe(200);
+    expect(mocks.generateContent.mock.calls.map(([request]) => request.model))
+      .toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
+  });
+
+  test('rejects empty or oversized transcript before AI is called', async () => {
+    expect((await sessionMetadataHandler(makeEvent({ history: '' }))).statusCode).toBe(400);
+    expect((await sessionMetadataHandler(makeEvent({ history: 'x'.repeat(40_001) }))).statusCode).toBe(413);
     expect(mocks.generateContent).not.toHaveBeenCalled();
   });
 });
