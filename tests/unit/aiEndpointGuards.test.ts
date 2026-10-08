@@ -271,7 +271,7 @@ describe('#36 model allowlists', () => {
     });
     const res = parseResponse(
       await visionHandler(
-        makeEvent({ base64Image: 'QUJD', langA: 'ko', langB: 'en', model: MODEL_VISION }),
+        makeEvent({ base64Image: '/9j/2Q==', langA: 'ko', langB: 'en', model: MODEL_VISION }),
       ),
     );
     expect(res.statusCode).toBe(200);

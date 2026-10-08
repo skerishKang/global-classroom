@@ -56,7 +56,7 @@ export const VOICE_OPTIONS: VoiceOption[] = [
 export const MODEL_LIVE = 'gemini-2.5-flash-native-audio-preview-09-2025';
 // 기본 번역 모델을 경량 모델로 설정 (무료 쿼터 확보용)
 export const MODEL_TRANSLATE = 'gemini-2.5-flash-lite';
-export const MODEL_VISION = 'gemini-2.0-flash';
+export const MODEL_VISION = 'gemini-3.5-flash-lite';
 export const MODEL_TTS = 'gemini-2.5-flash-preview-tts';
 
 // 번역에 사용 가능한 모델들 (무료 제한량 많은 순서)

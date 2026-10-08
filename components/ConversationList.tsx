@@ -346,13 +346,15 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                     : (uiLangCode === 'ko' ? '답변 보기' : 'Show answer');
 
                             return (
-                                <div key={item.id} data-testid="interview-row" className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 items-stretch">
+                                <div key={item.id} data-testid="interview-row" data-source-kind={item.sourceKind || ''} className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 items-stretch">
                                     <div
                                         data-testid="transcript-cell"
                                         className="relative min-w-0 rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-900 shadow-sm md:text-base"
                                     >
                                         <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">
-                                            {uiLangCode === 'ko' ? '전사' : 'Transcript'}
+                                            {item.sourceKind === 'image'
+                                                ? (uiLangCode === 'ko' ? '이미지에서 읽음' : 'From image')
+                                                : (uiLangCode === 'ko' ? '전사' : 'Transcript')}
                                             {item.sourceLanguage ? ' · ' + item.sourceLanguage : ''}
                                         </div>
                                         {isEditingOriginal ? (
