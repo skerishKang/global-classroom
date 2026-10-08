@@ -41,10 +41,18 @@ export const handler = async (event: any) => {
 Transcript:
 ${history}`;
 
-  const ai = new GoogleGenAI({ apiKey });
   let lastDetail = '';
   for (const model of SESSION_METADATA_MODELS) {
     try {
+      // Netlify sync functions must return before their gateway deadline.
+      // Bound the slow 31B attempt so the faster 26B fallback really runs.
+      const ai = new GoogleGenAI({
+        apiKey,
+        httpOptions: {
+          timeout: model === 'gemma-4-31b-it' ? 8_000 : 9_000,
+          retryOptions: { attempts: 1 },
+        },
+      });
       const reply = await ai.models.generateContent({
         model,
         contents: [{ role: 'user', parts: [{ text: prompt }] }],

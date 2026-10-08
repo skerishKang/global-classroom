@@ -51,11 +51,14 @@ export const handler = async (event: any) => {
       ${historyText}
     `;
 
-    const ai = new GoogleGenAI({ apiKey });
     let lastDetail = '';
 
     for (const model of SUMMARY_MODELS) {
         try {
+            const ai = new GoogleGenAI({
+                apiKey,
+                httpOptions: { timeout: model === 'gemma-4-31b-it' ? 8_000 : 9_000, retryOptions: { attempts: 1 } },
+            });
             // Current SDK API (@google/genai 2.x). The legacy Gemini 1.x
             // model-factory call shape is intentionally gone (#36).
             const response = await ai.models.generateContent({
