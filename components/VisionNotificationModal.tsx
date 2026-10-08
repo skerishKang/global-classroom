@@ -60,12 +60,12 @@ const VisionNotificationModal: React.FC<VisionNotificationModalProps> = ({
                                     {originalText || t.visionNoText}
                                 </div>
                             </div>
-                            <div>
+                            {!n.interviewImported && <div>
                                 <div className="text-xs font-bold text-gray-500 mb-1">{t.visionTranslated}</div>
                                 <div className="bg-indigo-50 border border-indigo-100 p-4 rounded-xl text-sm text-indigo-900 whitespace-pre-wrap break-words">
                                     {translatedText || t.visionNoText}
                                 </div>
-                            </div>
+                            </div>}
                         </div>
                     );
                 })()}

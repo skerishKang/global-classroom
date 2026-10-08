@@ -40,7 +40,7 @@ export interface ConversationItem {
   translated: string;
   isTranslating: boolean;
   timestamp: number;
-  sourceKind?: 'voice' | 'text';
+  sourceKind?: 'voice' | 'text' | 'image';
   originalRaw?: string;
   translationKind?: 'live' | 'manual';
   translationStale?: boolean;
@@ -171,6 +171,7 @@ export interface VisionNotification {
   status: VisionNotificationStatus;
   isRead: boolean;
   result?: VisionResult;
+  interviewImported?: boolean;
   error?: string;
 }
 

@@ -14,6 +14,7 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
   const [stream, setStream] = useState<MediaStream | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const [isLeaveConfirmOpen, setIsLeaveConfirmOpen] = useState(false);
   const mountedRef = useRef(false);
 
@@ -65,12 +66,14 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
   const handleClose = () => {
     setIsLeaveConfirmOpen(false);
     stopCamera();
+    setIsCameraReady(false);
     onClose();
   };
 
   useEffect(() => {
     mountedRef.current = true;
     if (isOpen) {
+      setIsCameraReady(false);
       startCamera();
     } else {
       stopCamera();
@@ -143,7 +146,7 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
 
       {/* Camera Preview */}
       <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
-        <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+        <video ref={videoRef} autoPlay playsInline onLoadedMetadata={() => setIsCameraReady(true)} className="w-full h-full object-cover" />
         <canvas ref={canvasRef} className="hidden" />
         
         {/* Overlay Result */}
@@ -200,7 +203,7 @@ const CameraView: React.FC<CameraViewProps> = ({ isOpen, onClose, onCaptured, t 
         <button 
           onClick={handleCapture}
           aria-label="촬영"
-          disabled={isProcessing || isLeaveConfirmOpen}
+          disabled={isProcessing || isLeaveConfirmOpen || !isCameraReady}
           className="w-20 h-20 rounded-full border-[5px] border-white flex items-center justify-center group active:scale-95 transition-transform"
         >
           <div className="w-16 h-16 bg-white rounded-full group-hover:scale-90 transition-transform shadow-inner"></div>

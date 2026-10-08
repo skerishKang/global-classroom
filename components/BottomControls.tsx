@@ -20,6 +20,7 @@ interface BottomControlsProps {
     toggleMic: () => void;
     playAll: () => void;
     setIsCameraOpen: (v: boolean) => void;
+    onOpenInterviewImage?: () => void;
     t: TranslationMap;
     micRestricted: boolean;
     handRaiseStatus: 'idle' | 'pending' | 'approved' | 'denied';
@@ -38,6 +39,7 @@ const BottomControls: React.FC<BottomControlsProps> = ({
     toggleMic,
     playAll,
     setIsCameraOpen,
+    onOpenInterviewImage,
     t,
     micRestricted,
     handRaiseStatus,
@@ -261,15 +263,15 @@ const BottomControls: React.FC<BottomControlsProps> = ({
                     </button>
 
                     <button
-                        onClick={() => setIsCameraOpen(true)}
+                        onClick={() => interviewMode ? onOpenInterviewImage?.() : setIsCameraOpen(true)}
                         className="flex flex-col items-center gap-1 text-gray-400 transition-all active:scale-90 hover:scale-105 w-14 hover:text-emerald-600 group cursor-pointer"
-                        title={uiLangCode === 'ko' ? '칠판/노트 촬영 및 번역' : 'Capture & Translate notes'}
+                        title={interviewMode ? (uiLangCode === 'ko' ? '이미지에서 질문 읽기' : 'Read interview image') : (uiLangCode === 'ko' ? '칠판/노트 촬영 및 번역' : 'Capture & Translate notes')}
                     >
                         <div className="p-2 rounded-xl group-hover:bg-emerald-50 transition-all">
                             <CameraIcon />
                         </div>
                         <span className="text-[9px] font-bold tracking-tighter whitespace-nowrap">
-                            {uiLangCode === 'jp' ? '撮影' : t.visionButton}
+                            {interviewMode ? (uiLangCode === 'ko' ? '이미지' : 'Image') : (uiLangCode === 'jp' ? '撮影' : t.visionButton)}
                         </span>
                     </button>
                 </div>

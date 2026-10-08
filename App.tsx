@@ -33,6 +33,7 @@ import { MAX_ANSWER_CONTEXT_TURNS, resolveAnswerLanguage } from './utils/intervi
 import { retry } from './utils/retry';
 import Visualizer from './components/Visualizer';
 import CameraView from './components/CameraView';
+import InterviewImageInput from './components/InterviewImageInput';
 import AdminPanelModal from './components/AdminPanelModal';
 import NotebookLMGuide from './components/NotebookLMGuide';
 import LoginModal from './components/LoginModal';
@@ -122,6 +123,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
 
   // --- UI Display State ---
   const [isCameraOpen, setIsCameraOpen] = useState(false);
+  const [isInterviewImageOpen, setIsInterviewImageOpen] = useState(false);
+  const interviewImageSubmitRef = useRef<((text: string, kind?: 'text' | 'image') => void) | null>(null);
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
 
   // --- Custom Hooks ---
@@ -464,7 +467,10 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     handleVisionCaptured,
     openVisionNotification,
     dismissVisionToast
-  } = useVision({ postApi, langInput, langOutput, MODEL_VISION });
+  } = useVision({
+    postApi, langInput, langOutput, MODEL_VISION, interviewMode, sessionId: currentSessionId,
+    onExtractedText: (text) => interviewImageSubmitRef.current?.(text, 'image'),
+  });
 
   const {
     driveSessions,
@@ -827,7 +833,7 @@ setHistory((prev) => [...prev, newItem]);
     ? interviewLiveError || interviewLiveWarning
     : errorMessage;
 
-  const handleInterviewTextSubmit = useCallback((text: string) => {
+  const handleInterviewTextSubmit = useCallback((text: string, kind: 'text' | 'image' = 'text') => {
     const normalized = text.trim();
     if (!normalized) return;
     // #78: typed/pasted Interview turns must use the same answer pipeline as
@@ -852,7 +858,7 @@ setHistory((prev) => [...prev, newItem]);
       originalRaw: normalized,
       translated: '',
       isTranslating: allowedTargets.length > 0,
-      sourceKind: 'text',
+      sourceKind: kind,
       sourceLanguage,
       activeTarget: activeTarget || '',
       translationKind: 'manual',
@@ -879,6 +885,7 @@ setHistory((prev) => [...prev, newItem]);
       answerTranslationTarget: activeTarget,
     });
   }, [interviewAuto, interviewGlossary, setHistory, translateToTargets, generateInterviewAnswer]);
+  interviewImageSubmitRef.current = handleInterviewTextSubmit;
 
   const handleInterviewRetranslate = useCallback((item: ConversationItem) => {
     setHistory((prev) => prev.map((entry) =>
@@ -1234,6 +1241,7 @@ setHistory((prev) => [...prev, newItem]);
         playAll={playAll}
         stopTTS={stopTTS}
         setIsCameraOpen={setIsCameraOpen}
+        onOpenInterviewImage={() => setIsInterviewImageOpen(true)}
         t={t}
         micRestricted={micRestricted}
         handRaiseStatus={handRaiseStatus}
@@ -1253,6 +1261,14 @@ setHistory((prev) => [...prev, newItem]);
             broadcastMessage(text, langInput.code);
           }
         }}
+      />
+
+      <InterviewImageInput
+        isOpen={interviewMode && isInterviewImageOpen}
+        onClose={() => setIsInterviewImageOpen(false)}
+        onImage={async (blob) => { await handleVisionCaptured({ blob }); }}
+        onCamera={() => setIsCameraOpen(true)}
+        uiLangCode={uiLangCode}
       />
 
       <CameraView

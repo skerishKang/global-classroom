@@ -28,7 +28,7 @@ export default function VisionToastSystem({
                 const translatedText = (n.result?.translatedText || '').trim();
                 const message =
                     n.status === 'done'
-                        ? (translatedText || originalText || t.visionNoText)
+                        ? (n.interviewImported ? '이미지 내용을 Interview에 추가했습니다.' : (translatedText || originalText || t.visionNoText))
                         : n.status === 'capturing'
                             ? '이미지 캡처 중...'
                             : n.status === 'analyzing'

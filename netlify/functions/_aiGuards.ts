@@ -36,7 +36,7 @@ export const MAX_LIVE_TOKEN_BODY_BYTES = 2 * 1024;
 // - tts/vision: constants.ts MODEL_TTS / MODEL_VISION
 // - live: MODEL_LIVE plus the interview session models (useInterviewLive.ts)
 export const ALLOWED_TTS_MODELS = ['gemini-2.5-flash-preview-tts'] as const;
-export const ALLOWED_VISION_MODELS = ['gemini-2.0-flash'] as const;
+export const ALLOWED_VISION_MODELS = ['gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it'] as const;
 export const ALLOWED_LIVE_MODELS = [
   'gemini-2.5-flash-native-audio-preview-09-2025', // classroom mic mode (useGeminiLive)
   'gemini-3.5-transcribe-live', // interview STT (useInterviewLive)
