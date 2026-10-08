@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import Groq from 'groq-sdk';
 import {
     errorResponse,
     enforceTextLimit,
@@ -18,7 +19,8 @@ export const handler = async (event: any) => {
 
     const userApiKey = event.headers['x-user-api-key'];
     const apiKey = userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
-    if (!apiKey) {
+    const groqApiKey = process.env.GROQ_API_KEY;
+    if (!apiKey && !groqApiKey) {
         return errorResponse(500, 'API 키가 설정되지 않았습니다.');
     }
 
@@ -53,7 +55,7 @@ export const handler = async (event: any) => {
 
     let lastDetail = '';
 
-    for (const model of SUMMARY_MODELS) {
+    for (const model of apiKey ? SUMMARY_MODELS : []) {
         try {
             const ai = new GoogleGenAI({
                 apiKey,
@@ -78,6 +80,28 @@ export const handler = async (event: any) => {
         }
     }
 
+    if (groqApiKey) {
+        const groq = new Groq({ apiKey: groqApiKey });
+        for (const model of ['openai/gpt-oss-20b', 'openai/gpt-oss-120b']) {
+            try {
+                const request: any = {
+                    model,
+                    messages: [{ role: 'user', content: prompt }],
+                    temperature: 0.1,
+                    max_tokens: 1600,
+                    reasoning_effort: 'low',
+                    reasoning_format: 'hidden',
+                };
+                const response = await groq.chat.completions.create(request);
+                const summary = response.choices?.[0]?.message?.content?.trim() || '';
+                if (!summary) throw new Error('empty summary');
+                return jsonResponse(200, { summary });
+            } catch (error) {
+                lastDetail = safeErrorDetail(error);
+                console.error(`summarize: Groq ${model} failed:`, lastDetail);
+            }
+        }
+    }
     return errorResponse(502, '요약에 실패했습니다.', lastDetail ? { detail: lastDetail } : undefined);
 };
 

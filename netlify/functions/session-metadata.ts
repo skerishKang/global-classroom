@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import Groq from 'groq-sdk';
 import { errorResponse, enforceTextLimit, jsonResponse, readJsonBody, safeErrorDetail } from './_aiGuards';
 
 export const SESSION_METADATA_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite'] as const;
@@ -29,7 +30,8 @@ export const handler = async (event: any) => {
   if (invalid) return invalid;
 
   const apiKey = event.headers['x-user-api-key'] || process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) return errorResponse(500, 'Google API key is not configured');
+  const groqApiKey = process.env.GROQ_API_KEY;
+  if (!apiKey && !groqApiKey) return errorResponse(500, 'AI API keys are not configured');
 
   const prompt = `Read the following saved conversation transcript and produce a descriptive library listing in ${lang === 'ko' ? 'Korean' : 'English'}.
 - "title": concise, specific topic of this conversation (ideally 12–45 characters), not a generic "new chat", no invented entities.
@@ -42,7 +44,7 @@ Transcript:
 ${history}`;
 
   let lastDetail = '';
-  for (const model of SESSION_METADATA_MODELS) {
+  for (const model of apiKey ? SESSION_METADATA_MODELS : []) {
     try {
       // Netlify sync functions must return before their gateway deadline.
       // Bound the slow 31B attempt so the faster 26B fallback really runs.
@@ -63,6 +65,30 @@ ${history}`;
     } catch (error) {
       lastDetail = safeErrorDetail(error);
       console.error(`session-metadata: ${model} failed:`, lastDetail);
+    }
+  }
+  // Last resort when the Google family is rate-limited or unavailable.
+  // This reuses the already-configured Groq account; no paid integration.
+  if (groqApiKey) {
+    const groq = new Groq({ apiKey: groqApiKey });
+    for (const model of ['openai/gpt-oss-20b', 'openai/gpt-oss-120b']) {
+      try {
+        const response = await groq.chat.completions.create({
+          model,
+          messages: [{ role: 'user', content: prompt }],
+          temperature: 0.1,
+          max_tokens: 1100,
+          reasoning_effort: 'low',
+          reasoning_format: 'hidden',
+          response_format: { type: 'json_object' },
+        } as any);
+        const result = parseSessionMetadata(response.choices?.[0]?.message?.content || '');
+        if (!result) throw new Error('Missing JSON title/summary');
+        return jsonResponse(200, result);
+      } catch (error) {
+        lastDetail = safeErrorDetail(error);
+        console.error(`session-metadata: Groq ${model} failed:`, lastDetail);
+      }
     }
   }
   return errorResponse(502, '세션 제목·요약 생성에 실패했습니다.', lastDetail ? { detail: lastDetail } : undefined);

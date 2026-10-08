@@ -163,6 +163,19 @@ describe('#76 Gemma saved-session metadata endpoint', () => {
       .toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite']);
   });
 
+  test('exhausted Google quota uses existing Groq as last resort', async () => {
+    mocks.generateContent.mockRejectedValue(new Error('429 exhausted'));
+    mocks.groqCreate.mockResolvedValue({ choices: [{ message: {
+      content: '{"title":"Candidate interview practice","summary":"Discussed personal strengths and motivation."}',
+    } }] });
+    process.env.GROQ_API_KEY = 'groq-existing-server-key';
+    const response = parseResponse(await sessionMetadataHandler(makeEvent({ history: '[1] Why should we hire you?' })));
+    expect(response.statusCode).toBe(200);
+    expect(response.json.title).toBe('Candidate interview practice');
+    expect(mocks.groqCreate.mock.calls[0][0].model).toBe('openai/gpt-oss-20b');
+    delete process.env.GROQ_API_KEY;
+  });
+
   test('rejects empty or oversized transcript before AI is called', async () => {
     expect((await sessionMetadataHandler(makeEvent({ history: '' }))).statusCode).toBe(400);
     expect((await sessionMetadataHandler(makeEvent({ history: 'x'.repeat(40_001) }))).statusCode).toBe(413);
