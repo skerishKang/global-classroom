@@ -828,23 +828,57 @@ setHistory((prev) => [...prev, newItem]);
     : errorMessage;
 
   const handleInterviewTextSubmit = useCallback((text: string) => {
-    if (!text.trim()) return;
+    const normalized = text.trim();
+    if (!normalized) return;
+    // #78: typed/pasted Interview turns must use the same answer pipeline as
+    // finalized speech. The previous text path only translated, so no answer
+    // request (or accordion) could ever appear for an entered question.
+    const sourceLanguage = detectSourceLanguageHeuristic(normalized);
+    const allowedTargets = getTargetsForSource(sourceLanguage, interviewPolicyRef.current);
+    const activeTarget = pickInitialActiveTarget(
+      sourceLanguage, allowedTargets, preferredInterviewTargetRef.current,
+    );
+    const recentContext = recentInterviewUtterancesRef.current.slice(-MAX_ANSWER_CONTEXT_TURNS);
+    recentInterviewUtterancesRef.current.push(normalized);
+    if (recentInterviewUtterancesRef.current.length > MAX_ANSWER_CONTEXT_TURNS * 2) {
+      recentInterviewUtterancesRef.current.splice(
+        0, recentInterviewUtterancesRef.current.length - MAX_ANSWER_CONTEXT_TURNS * 2,
+      );
+    }
+
     const newItem: ConversationItem = {
       id: crypto.randomUUID(),
-      original: text,
-      originalRaw: text,
+      original: normalized,
+      originalRaw: normalized,
       translated: '',
-      isTranslating: true,
+      isTranslating: allowedTargets.length > 0,
       sourceKind: 'text',
+      sourceLanguage,
+      activeTarget: activeTarget || '',
       translationKind: 'manual',
       translationStale: false,
       timestamp: Date.now(),
     };
     setHistory((prev) => [...prev, newItem]);
-    // Voice and text share one routing policy: detect the source, then
-    // translate into every selected target except the source language.
-    void translateToTargets(text, newItem.id, interviewAuto, interviewPolicyRef.current, interviewGlossary, undefined, preferredInterviewTargetRef.current);
-  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets]);
+
+    // Translation and answer generation run independently and stay bound to
+    // this row. Hidden/collapsed answers continue processing and caching.
+    void translateToTargets(
+      normalized, newItem.id, interviewAuto, interviewPolicyRef.current,
+      interviewGlossary, sourceLanguage, preferredInterviewTargetRef.current,
+    );
+    const answerLanguage = resolveAnswerLanguage(
+      activeTarget, interviewPolicyRef.current.targets, sourceLanguage,
+    );
+    const answerLanguageName = SUPPORTED_LANGUAGES.find(
+      (language) => language.code === answerLanguage,
+    )?.name || answerLanguage;
+    void generateInterviewAnswer(normalized, newItem.id, recentContext, answerLanguage, {
+      answerLanguageName,
+      sourceLanguage,
+      answerTranslationTarget: activeTarget,
+    });
+  }, [interviewAuto, interviewGlossary, setHistory, translateToTargets, generateInterviewAnswer]);
 
   const handleInterviewRetranslate = useCallback((item: ConversationItem) => {
     setHistory((prev) => prev.map((entry) =>
