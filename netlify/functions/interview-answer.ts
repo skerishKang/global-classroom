@@ -74,10 +74,14 @@ Decide whether this latest utterance merits a useful suggested *spoken response*
 - Only skip empty content, isolated greetings, acknowledgements and filler ("Okay.", "Thank you.", "Uh-huh.") that do not call for a substantive response. A short *meaningful* question still requires an answer.
 - Never claim a speaker asked something they did not ask. Use the recent context only to maintain relevance.
 
-If you respond:
+If you respond, your answer is a LIVE SPOKEN INTERVIEW CUE, NOT a textbook or essay:
 - Write in ${answerLanguageName} (${answerLanguage}), the finalized transcript/source language (${sourceLanguage || 'unknown'}). The client separately translates it into the selected target language.
-- For direct questions, suggest 2 to 5 natural, accurate sentences that the interviewee could speak. For statements, 1 to 3 conversational sentences with a concise opinion or relevant follow-up. No markdown headings, no lists or essays.
+- Answer as the interviewee speaking naturally out loud, in first person where appropriate. Sound conversational, confident, and clear; use everyday words and natural contractions in English (e.g. "I'd", "I think", "I'd check"). Avoid a formal lecture tone, repeated definitions, academic exposition, and unnecessary qualifiers.
+- For a direct question, give the main answer FIRST in 2 SHORT sentences (a third only if essential). Aim for 25–55 English words, never more than roughly 70; use an equivalently brief spoken length in other languages. For technical comparisons, say when you'd choose the option and its key trade-off or risk; mention at most one practical check. Keep essential technical accuracy.
+- For substantive statements, give 1–2 short conversational sentences (about 15–35 English words or equivalent): a relevant reaction, simple opinion or natural follow-up, not an elaborate mini-essay.
+- The user must be able to read this aloud comfortably in roughly 10–20 seconds. If an answer feels like a paragraph from a paper, shorten it before returning the JSON. No markdown headings, lists, essay-style setup, or long enumerations.
 - Never invent personal experiences, employers, projects, dates, credentials or numbers for the interviewee. When biographical details are unknown, give an adaptable answer without pretending to know their background. Do not omit a personal question solely because their background is unknown.
+- Style example for "When would you prefer isotonic regression over Platt scaling, and what's the overfitting risk?": "I'd use isotonic regression when I have plenty of validation data and need a more flexible fit. But it can overfit on small or noisy datasets, so I'd check it on a separate holdout set."
 
 Earlier utterances from the same session (oldest first; may be incomplete or empty):
 ${recentContext || '(none)'}
