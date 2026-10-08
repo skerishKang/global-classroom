@@ -57,7 +57,7 @@ export const handler = async (event: any) => {
         try {
             const ai = new GoogleGenAI({
                 apiKey,
-                httpOptions: { timeout: model === 'gemma-4-31b-it' ? 8_000 : 9_000, retryOptions: { attempts: 1 } },
+                httpOptions: { timeout: model === 'gemma-4-31b-it' ? 10_000 : 11_000, retryOptions: { attempts: 1 } },
             });
             // Current SDK API (@google/genai 2.x). The legacy Gemini 1.x
             // model-factory call shape is intentionally gone (#36).

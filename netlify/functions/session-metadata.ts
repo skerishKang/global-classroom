@@ -49,7 +49,7 @@ ${history}`;
       const ai = new GoogleGenAI({
         apiKey,
         httpOptions: {
-          timeout: model === 'gemma-4-31b-it' ? 8_000 : 9_000,
+          timeout: model === 'gemma-4-31b-it' ? 10_000 : 11_000,
           retryOptions: { attempts: 1 },
         },
       });
