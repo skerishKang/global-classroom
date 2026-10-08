@@ -88,23 +88,27 @@
 
 Interview 모드는 `?mode=interview`로 진입하며, 기존 Global Classroom UI를 재사용합니다.
 
+**모델별 실제 라우팅과 구형 언어 감지 분리는 [모델·라우팅 기준](docs/MODEL_ROUTES.md)을 참조합니다.** 이 문서는 현재 구현(AS-IS)과 아직 수정하지 않은 목표(TO-BE)를 구분합니다.
+
 현재 Interview 경로의 핵심 동작:
 
 - **음성 원문**: Gemini `gemini-3.5-transcribe-live`를 authoritative transcript로 사용
 - **실시간 번역 미리보기**: Gemini `gemini-3.5-live-translate-preview`
 - **fallback STT**: Browser SpeechRecognition → Groq Whisper 순으로 전환
-- **텍스트 번역/다시 번역**: Groq 우선, Google 계열 모델 fallback
+- **텍스트 번역/다시 번역**: Groq `openai/gpt-oss-20b` → `openai/gpt-oss-120b` → `qwen/qwen3.8-27b` → Google `gemma-4-26b-a4b-it` → `gemma-4-31b-it` → `gemini-3.5-flash-lite` → `gemini-3.1-flash-lite` 순서. 응답 실패·할당량·타임아웃과 접근성은 [#84](https://github.com/skerishKang/global-classroom/issues/84)에서 별도 추적
 - **입력 자동 감지 + 복수 번역 대상**: 기본 KO ↔ EN이며, 감지된 source 언어는 target에서 제외
 - **새 행 기본 표시**: source=ko이면 EN, source=en이면 KO를 즉시 표시하고 기존 행의 수동 탭 선택은 유지
 - **최종 번역 보장**: Live Translate는 저지연 preview로 사용하고, final translation이 비어 있으면 기존 `/api/translate` 경로로 보완
-- **추천 답변**: final transcript에서 질문 번역과 병렬로 answer assist를 시작하며, 답변 언어는 현재 Interview output 언어를 따름
-- **답변 번역**: 기본 호출하지 않고 사용자가 `번역`을 눌렀을 때만 기존 translate 경로를 재사용하며 utterance별로 cache
-- **키보드 입력**: 왼쪽 고정 composer에서 Enter로 번역, Shift+Enter로 줄바꿈
+- **추천 답변**: 확정 전사의 source 언어로 짧은 구어체 답변·내용에 맞는 의견을 번역과 병렬 생성. 음성 확정뿐 아니라 직접 입력/이미지 입력도 동일한 답변 경로를 사용
+- **답변 번역**: 선택된 target 언어로 자동 번역하며 utterance별로 캐시. 답변은 기본 접힘이며 `답변 보기`로 펼침
+- **키보드 입력**: 왼쪽 composer에서 Enter로 전사 행·번역·답변 생성, Shift+Enter로 줄바꿈
+- **이미지 입력**: JPG/PNG/WEBP 업로드, Ctrl+V 붙여넣기, 1프레임 화면 캡처(사용자 권한), 카메라 촬영. 추출 텍스트는 Interview 행·번역·추천 답변으로 이어짐
+- **스크롤**: 기본 최신 행 따라가기; 위로 스크롤하면 따라가기 일시 중지; `최신으로` 또는 맨 아래 복귀 시 재개
 - **원문/번역 독립 수정**: 원문 수정은 번역을 자동 재작성하지 않으며, 다시 번역은 명시적 사용자 동작
-- **대화 기록**: 비로그인 상태에서도 브라우저 localStorage에 텍스트 세션 저장
+- **대화 기록**: 비로그인 상태에서도 브라우저 localStorage에 텍스트 세션 저장. Gemma 4 31B 우선의 제목·요약 자동 생성 및 저장을 제공(제공자 실패 시 대체 경로 사용)
 - **용어집**: 메인 대화 화면이 아니라 Interview 설정에서 관리
 
-Interview의 Live Translate는 발화별 session/context로 격리되어 이전 발화가 다음 번역 행으로 이어지지 않습니다. 선택된 target set에서 source 언어를 제외해 번역하며, 기본 KO ↔ EN 흐름에서는 반대 언어가 추가 클릭 없이 보입니다. Live Translate preview가 늦거나 실패해도 final transcript 기준 번역을 보장하고, 기술 질문에는 현재 output 언어의 추천 답변을 독립적으로 생성합니다.
+Interview의 Live Translate는 발화별 session/context로 격리되어 이전 발화가 다음 번역 행으로 이어지지 않습니다. 선택된 target set에서 source 언어를 제외해 번역하며, 기본 KO ↔ EN 흐름에서는 반대 언어가 추가 클릭 없이 보입니다. Live Translate preview와 final `/api/translate`는 별개 경로이고, 확정 전사의 source 언어로 추천 답변을 생성한 뒤 선택된 target 언어로 자동 번역합니다. **언어 자동 감지의 레거시 모델/404 문제는 아직 미수정이며 [#85](https://github.com/skerishKang/global-classroom/issues/85)에서 추적합니다.**
 
 ## 사용 시나리오(수업 1시간)
 
@@ -293,7 +297,7 @@ sequenceDiagram
 - Google OAuth(GIS)
 - Google Drive/Docs/Classroom API
 
-현재 Firebase 회원가입/로그인은 그대로 유지합니다. Padiem 공용 계정/SSO로의 단계적 전환은 [Issue #20](../../issues/20)에서 별도로 진행하며, 이메일 일치만으로 기존 계정을 자동 병합하지 않습니다.
+현재 Firebase 회원가입/로그인은 그대로 유지합니다. Padiem 공용 계정/SSO 연계는 [Issue #20](https://github.com/skerishKang/global-classroom/issues/20)에 **미래/보류**된 사항이며, 이메일 일치만으로 기존 계정을 자동 병합하지 않습니다.
 
 ## 설정(프로필 메뉴)
 
@@ -476,10 +480,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-screenshots.
 
 ## 현재 상태 / 향후 후보
 
-최근 Interview 핵심 작업인 [#22](../../issues/22), [#23](../../issues/23), [#24](../../issues/24), [#53](../../issues/53), [#62](../../issues/62), [#63](../../issues/63)은 완료되었습니다.
+Interview 핵심 작업 [#22](https://github.com/skerishKang/global-classroom/issues/22), [#23](https://github.com/skerishKang/global-classroom/issues/23), [#24](https://github.com/skerishKang/global-classroom/issues/24), [#53](https://github.com/skerishKang/global-classroom/issues/53), [#62](https://github.com/skerishKang/global-classroom/issues/62), [#63](https://github.com/skerishKang/global-classroom/issues/63), [#66](https://github.com/skerishKang/global-classroom/issues/66), [#70](https://github.com/skerishKang/global-classroom/issues/70), [#72](https://github.com/skerishKang/global-classroom/issues/72), [#74](https://github.com/skerishKang/global-classroom/issues/74), [#76](https://github.com/skerishKang/global-classroom/issues/76), [#78](https://github.com/skerishKang/global-classroom/issues/78), [#80](https://github.com/skerishKang/global-classroom/issues/80), [#82](https://github.com/skerishKang/global-classroom/issues/82)는 완료되었습니다.
 
-- [#66](../../issues/66) — **COMPLETED**. 내보내기 `alert`를 actionable result surface로 교체하고 Drive/Docs destination link를 명확히 노출
-- [#20](../../issues/20) — **DEFERRED / FUTURE**. Padiem 공용 계정/Portal/SSO 및 shared Google connector 연계는 현재 구현 대상이 아닙니다.
+- [#84](https://github.com/skerishKang/global-classroom/issues/84) — **OPEN / P1**. Production 번역/답변 504 지연 및 모델 폴백 제한 검증
+- [#85](https://github.com/skerishKang/global-classroom/issues/85) — **OPEN / P1**. 구형 자동 언어 감지 모델과 404/500 폴백 결함 정리
+- [#20](https://github.com/skerishKang/global-classroom/issues/20) — **DEFERRED / FUTURE**. Padiem 공용 계정/Portal/SSO 및 shared Google connector 연계는 현재 구현 대상이 아닙니다.
 
 새 작업은 Production 증거나 owner 요구를 확인한 뒤 focused issue로 만든 다음 구현합니다.
 
