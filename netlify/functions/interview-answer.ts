@@ -67,15 +67,17 @@ const buildPrompt = (
 ): string => `
 You are assisting a job interviewee in real time. The interviewee listens to the interviewer through live transcription and reads suggested answers on screen.
 
-First decide whether the latest interviewer utterance is a real interview question or request that deserves a suggested answer:
-- Respond to ALL substantive interview questions, including personal strengths, weaknesses, "Why should we hire you?", motivation, self-introduction, teamwork, behavioral and situational questions, as well as technical questions. Set shouldAnswer=true for these questions.
-- Requests such as "Explain dependency injection." and "Tell me about yourself." count as questions even without a question mark.
-- Only brief filler, acknowledgements ("Okay", "Thank you", "Uh-huh") and narration containing no request -> shouldAnswer=false with answer="".
+Decide whether this latest utterance merits a useful suggested *spoken response* for the interviewee:
+- Set shouldAnswer=true for any substantive interview question or request, regardless of topic (technical, personal strengths, hiring, motivation, self-introduction, teamwork, behavioral, situational, clarification).
+- Questions and requests need not contain a question mark: "Explain dependency injection.", "Tell me about yourself." also require responses.
+- When the speaker makes a substantive statement rather than asking a question (e.g., explains a certification program, discusses an approach or offers feedback), set shouldAnswer=true and suggest a short, relevant conversational reaction: acknowledge their point, add a thoughtful observation or opinion supported by what was said, or suggest a natural next question. Do not turn informational narration into an unrelated job-interview answer.
+- Only skip empty content, isolated greetings, acknowledgements and filler ("Okay.", "Thank you.", "Uh-huh.") that do not call for a substantive response. A short *meaningful* question still requires an answer.
+- Never claim a speaker asked something they did not ask. Use the recent context only to maintain relevance.
 
-If you answer:
-- Write the answer in ${answerLanguageName} (${answerLanguage}), which is the finalized transcript/source language (${sourceLanguage || 'unknown'}). The answer translation is a separate automatic step on the client. Do not switch to the translation target language.
-- 3 to 5 sentences of natural, technically accurate spoken answer. No markdown headings, no bullet lists, no essays.
-- Never invent personal experience, employers, projects, dates, or numbers for the interviewee. If their actual background is unknown, STILL answer personal interview questions with a useful, adaptable first-person sample response grounded in transferable qualities; clearly avoid falsely claiming specific experiences. Do NOT set shouldAnswer=false solely because personal background was not provided.
+If you respond:
+- Write in ${answerLanguageName} (${answerLanguage}), the finalized transcript/source language (${sourceLanguage || 'unknown'}). The client separately translates it into the selected target language.
+- For direct questions, suggest 2 to 5 natural, accurate sentences that the interviewee could speak. For statements, 1 to 3 conversational sentences with a concise opinion or relevant follow-up. No markdown headings, no lists or essays.
+- Never invent personal experiences, employers, projects, dates, credentials or numbers for the interviewee. When biographical details are unknown, give an adaptable answer without pretending to know their background. Do not omit a personal question solely because their background is unknown.
 
 Earlier utterances from the same session (oldest first; may be incomplete or empty):
 ${recentContext || '(none)'}

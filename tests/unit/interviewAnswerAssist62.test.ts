@@ -128,6 +128,25 @@ describe('#62 interview answer assist endpoint', () => {
     expect(JSON.parse(koreanQuestion.body).language).toBe('ko');
   });
 
+  test('#78 substantive statements request a contextual opinion instead of silent suppression', async () => {
+    groqReply('{"shouldAnswer":true,"answer":"That practical certification approach makes sense."}');
+    const response = await handler(postEvent(
+      {
+        text: 'Mercor Academy awards certification after completing projects.',
+        answerLanguage: 'en',
+        sourceLanguage: 'en',
+        recentContext: ['Mercor training is free and self-paced.'],
+      },
+      { 'x-user-api-key': 'k' },
+    ));
+    expect(response.statusCode).toBe(200);
+    expect(JSON.parse(response.body)).toMatchObject({ shouldAnswer: true, language: 'en' });
+    expect(promptOf()).toContain('substantive statement');
+    expect(promptOf()).toContain('short, relevant conversational reaction');
+    expect(promptOf()).toContain('Mercor training is free and self-paced.');
+    expect(promptOf()).toContain('Mercor Academy awards certification');
+  });
+
   test('the answer language is the endpoint contract, not a model choice', async () => {
     // A model that reports its own language cannot move the answer off the
     // requested output language.
