@@ -48,18 +48,15 @@ export type InterviewAnswerPayload = {
     /**
      * The language the answer was actually requested in, echoed back by the
      * endpoint. The model never gets to choose it (#62): the answer follows
-     * the interviewer's current OUTPUT/translation language.
+     * the finalized transcript/source language (#70).
      */
     language: string;
 };
 
 /**
- * `answerLanguage` is the interview OUTPUT language — the language the
- * interviewee is reading translations in — while `sourceLanguage` is only the
- * language the interviewer spoke. The two are deliberately different in the
- * main use case (English question, Korean output, Korean spoken answer), so
- * the prompt states the output language explicitly and forbids mirroring the
- * interviewer's language.
+ * `answerLanguage` is the finalized transcript/source language (#70),
+ * independent of the current translation target. The client separately
+ * translates the suggested answer into the selected output language.
  */
 const buildPrompt = (
     question: string,
@@ -70,15 +67,15 @@ const buildPrompt = (
 ): string => `
 You are assisting a job interviewee in real time. The interviewee listens to the interviewer through live transcription and reads suggested answers on screen.
 
-First decide whether the latest interviewer utterance is a technical interview question or request that deserves a suggested answer:
-- Imperative technical requests count as questions even without a question mark, e.g. "Explain dependency injection." or "Tell me how garbage collection works."
-- Small talk, acknowledgements and filler such as "Okay.", "Thank you.", "Uh-huh." -> shouldAnswer=false and answer="".
-- Pure narration with no technical ask -> shouldAnswer=false and answer="".
+First decide whether the latest interviewer utterance is a real interview question or request that deserves a suggested answer:
+- Respond to ALL substantive interview questions, including personal strengths, weaknesses, "Why should we hire you?", motivation, self-introduction, teamwork, behavioral and situational questions, as well as technical questions. Set shouldAnswer=true for these questions.
+- Requests such as "Explain dependency injection." and "Tell me about yourself." count as questions even without a question mark.
+- Only brief filler, acknowledgements ("Okay", "Thank you", "Uh-huh") and narration containing no request -> shouldAnswer=false with answer="".
 
 If you answer:
-- Write the answer in ${answerLanguageName} (${answerLanguage}). This is the language the interviewee reads translations in and the language they will speak the answer in. It is NOT the interviewer's language (${sourceLanguage || 'unknown'}), even when the interviewer spoke a different language.
+- Write the answer in ${answerLanguageName} (${answerLanguage}), which is the finalized transcript/source language (${sourceLanguage || 'unknown'}). The answer translation is a separate automatic step on the client. Do not switch to the translation target language.
 - 3 to 5 sentences of natural, technically accurate spoken answer. No markdown headings, no bullet lists, no essays.
-- Never invent personal experience, employers, projects, dates or numbers for the interviewee. If the question asks about the interviewee's own background and the context below does not provide it, give the general shape of a strong answer instead, or set shouldAnswer=false.
+- Never invent personal experience, employers, projects, dates, or numbers for the interviewee. If their actual background is unknown, STILL answer personal interview questions with a useful, adaptable first-person sample response grounded in transferable qualities; clearly avoid falsely claiming specific experiences. Do NOT set shouldAnswer=false solely because personal background was not provided.
 
 Earlier utterances from the same session (oldest first; may be incomplete or empty):
 ${recentContext || '(none)'}
@@ -147,8 +144,8 @@ export const handler = async (event: any) => {
     const oversize = enforceTextLimit(question, MAX_ANSWER_QUESTION_CHARS, 'text');
     if (oversize) return oversize;
 
-    // The answer language is the interview OUTPUT language the client already
-    // resolved for this utterance (#62). Only the base code is stored; a
+    // The answer language is the transcript/source language the client already
+    // resolved for this utterance (#70). Only the base code is stored; a
     // region tag from a transcriber must not leak into the answer language.
     const answerLanguage = (typeof body.answerLanguage === 'string' ? body.answerLanguage : '')
         .trim()

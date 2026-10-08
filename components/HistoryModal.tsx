@@ -1,4 +1,5 @@
 import React from 'react';
+import { sessionPreviewTitle } from '../utils/sessionMetadata';
 
 interface HistoryModalProps {
     isOpen: boolean;
@@ -13,6 +14,10 @@ interface HistoryModalProps {
     driveRestoreMessage: string;
     handleRestoreFromDrive: (includeAudio: boolean) => void;
     sessions: any[];
+    metadataActiveId?: string;
+    metadataErrors?: Record<string, true>;
+    metadataDone?: number;
+    metadataTotal?: number;
     selectedLocalSessionId: string;
     setSelectedLocalSessionId: (id: string) => void;
     handleLoadSessionFromLocal: () => void;
@@ -33,6 +38,10 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
     driveRestoreMessage,
     handleRestoreFromDrive,
     sessions,
+    metadataActiveId,
+    metadataErrors = {},
+    metadataDone = 0,
+    metadataTotal = 0,
     selectedLocalSessionId,
     setSelectedLocalSessionId,
     handleLoadSessionFromLocal,
@@ -139,6 +148,11 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                             <div>
                                 <div className="text-xs text-gray-500">이 브라우저에 자동 저장된 대화: <span className="font-bold text-gray-800">{sessions.length}</span></div>
                                 <div className="mt-0.5 text-[10px] text-gray-400">로그인 없이 저장됩니다. 브라우저 사이트 데이터를 삭제하면 함께 삭제됩니다.</div>
+                                {metadataTotal > 0 && (
+                                    <div data-testid="history-metadata-progress" className="mt-1 text-[10px] font-medium text-indigo-600">
+                                        AI 제목·요약 자동 정리: {metadataDone}/{metadataTotal}개 완료
+                                    </div>
+                                )}
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
@@ -166,7 +180,6 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                                 {sessions
                                     .slice()
                                     .sort((a, b) => Number(b.updatedAt || b.createdAt) - Number(a.updatedAt || a.createdAt))
-                                    .slice(0, 20)
                                     .map((s) => (
                                         <button
                                             key={s.id}
@@ -178,7 +191,14 @@ const HistoryModal: React.FC<HistoryModalProps> = ({
                                         >
                                             <div className="flex items-center justify-between gap-3">
                                                 <div className="min-w-0">
-                                                    <div className="text-sm font-bold text-gray-800 truncate">{s.title || '대화'}</div>
+                                                    <div className="text-sm font-bold text-gray-800 truncate">{sessionPreviewTitle(s)}</div>
+                                                    {s.summary ? (
+                                                        <div data-testid="history-session-summary" className="mt-1 line-clamp-2 text-xs leading-relaxed text-gray-600">{s.summary}</div>
+                                                    ) : metadataActiveId === s.id ? (
+                                                        <div className="mt-1 text-xs text-indigo-500">AI 제목·요약 작성 중…</div>
+                                                    ) : metadataErrors[s.id] ? (
+                                                        <div className="mt-1 text-xs text-rose-600">AI 요약 실패 · 다음 접속 시 재시도</div>
+                                                    ) : null}
                                                     <div className="text-xs text-gray-400 truncate">
                                                         {new Date(Number(s.updatedAt || s.createdAt)).toLocaleString()} · {Array.isArray(s.items) ? s.items.length : 0}개
                                                     </div>

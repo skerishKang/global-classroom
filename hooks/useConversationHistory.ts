@@ -9,6 +9,7 @@ import {
     SaveSessionsFailureReason,
 } from '../utils/localStorage';
 import { HISTORY_RENDER_STEP } from '../constants';
+import { sessionPreviewTitle } from '../utils/sessionMetadata';
 
 interface UseConversationHistoryProps {
     // Called when persisting sessions fails so the app can surface it (#39).
@@ -89,14 +90,16 @@ export function useConversationHistory({ onSaveFailure }: UseConversationHistory
 
         const now = Date.now();
         const titleCandidate = history.length > 0
-            ? String(history[0].original || '').trim().slice(0, 24)
+            ? sessionPreviewTitle({ title: '새 대화', items: history })
             : undefined;
 
         setSessions((prev) => {
             const idx = prev.findIndex((s) => s.id === currentSessionId);
             if (idx >= 0) {
                 const prevSession = prev[idx];
-                const nextTitle = prevSession.title || titleCandidate || '새 대화';
+                const nextTitle = !prevSession.title || prevSession.title === '새 대화'
+                    ? (titleCandidate || '새 대화')
+                    : prevSession.title;
                 const nextSession: ConversationSession = {
                     ...prevSession,
                     updatedAt: now,

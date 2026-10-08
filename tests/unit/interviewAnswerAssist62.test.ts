@@ -90,14 +90,14 @@ describe('#62 interview answer assist endpoint', () => {
     expect(huge.statusCode).toBe(413);
   });
 
-  test('answers in the requested output language, never the interviewer language', async () => {
-    // English question, Korean output => Korean answer.
-    groqReply('{"shouldAnswer":true,"answer":"의존성은 생성자로 주입합니다."}');
+  test('answers in the finalized source language without switching to output language (#70/#76)', async () => {
+    // English question, English source-language answer.
+    groqReply('{"shouldAnswer":true,"answer":"Pass dependencies through the constructor."}');
     const englishQuestion = await handler(postEvent(
       {
         text: 'Explain dependency injection.',
-        answerLanguage: 'ko',
-        answerLanguageName: '한국어 (Korean)',
+        answerLanguage: 'en',
+        answerLanguageName: 'English',
         sourceLanguage: 'en',
       },
       { 'x-user-api-key': 'user-key' },
@@ -105,26 +105,27 @@ describe('#62 interview answer assist endpoint', () => {
     expect(englishQuestion.statusCode).toBe(200);
     expect(JSON.parse(englishQuestion.body)).toEqual({
       shouldAnswer: true,
-      answer: '의존성은 생성자로 주입합니다.',
-      language: 'ko',
+      answer: 'Pass dependencies through the constructor.',
+      language: 'en',
     });
-    // The prompt names the output language and forbids mirroring the source.
+    // The prompt preserves the source language and includes behavioral questions.
     const prompt = promptOf();
-    expect(prompt).toContain('한국어 (Korean) (ko)');
-    expect(prompt).toMatch(/NOT the interviewer'?s language \(en\)/);
+    expect(prompt).toContain('English (en)');
+    expect(prompt).toContain('personal strengths');
+    expect(prompt).toContain('shouldAnswer=true');
 
-    // Korean question, English output => English answer.
-    groqReply('{"shouldAnswer":true,"answer":"Pass dependencies through the constructor."}');
+    // Korean question, Korean source-language answer.
+    groqReply('{"shouldAnswer":true,"answer":"의존성은 생성자로 주입합니다."}');
     const koreanQuestion = await handler(postEvent(
       {
         text: '의존성 주입을 설명해 주세요.',
-        answerLanguage: 'en',
-        answerLanguageName: 'English',
+        answerLanguage: 'ko',
+        answerLanguageName: '한국어 (Korean)',
         sourceLanguage: 'ko',
       },
       { 'x-user-api-key': 'user-key' },
     ));
-    expect(JSON.parse(koreanQuestion.body).language).toBe('en');
+    expect(JSON.parse(koreanQuestion.body).language).toBe('ko');
   });
 
   test('the answer language is the endpoint contract, not a model choice', async () => {

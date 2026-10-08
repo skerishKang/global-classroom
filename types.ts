@@ -89,6 +89,8 @@ export interface ConversationSession {
   updatedAt: number;
   items: ConversationItem[];
   title?: string;
+  /** Cached one- or two-sentence AI description of this saved session. */
+  summary?: string;
 }
 
 export interface VoiceOption {

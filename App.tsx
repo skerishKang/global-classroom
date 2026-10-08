@@ -42,6 +42,7 @@ import ClassroomModal from './components/ClassroomModal';
 import ExportResultSurface from './components/ExportResultSurface';
 import VisionNotificationModal from './components/VisionNotificationModal';
 import SummaryModal from './components/SummaryModal';
+import { useSessionMetadata } from './hooks/useSessionMetadata';
 import AppHeader from './components/AppHeader';
 import LanguageSelector from './components/LanguageSelector';
 import ConversationList from './components/ConversationList';
@@ -301,6 +302,14 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
         console.warn('Quota exhausted detail:', detail);
       }
     }
+  });
+
+  const { metadataActiveId, metadataErrors, metadataDone, metadataTotal } = useSessionMetadata({
+    sessions,
+    setSessions,
+    currentSessionId,
+    isSessionsReady,
+    postApi,
   });
 
   // --- Live Sharing ---
@@ -1263,6 +1272,10 @@ setHistory((prev) => [...prev, newItem]);
         driveRestoreMessage={driveRestoreMessage}
         handleRestoreFromDrive={handleRestoreFromDrive}
         sessions={sessions}
+        metadataActiveId={metadataActiveId}
+        metadataErrors={metadataErrors}
+        metadataDone={metadataDone}
+        metadataTotal={metadataTotal}
         selectedLocalSessionId={selectedLocalSessionId}
         setSelectedLocalSessionId={setSelectedLocalSessionId}
         handleLoadSessionFromLocal={handleLoadSessionFromLocal}
