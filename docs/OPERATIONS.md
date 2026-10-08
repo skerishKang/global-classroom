@@ -20,7 +20,7 @@ Global Classroom의 코드, UI/UX, Interview runtime, Netlify Functions, 제품�
 ## 현재 이슈 상태
 
 ```text
-ACTIVE_PRODUCT_ISSUES=0
+ACTIVE_PRODUCT_ISSUES=#84,#85
 OPEN_DEFERRED_ISSUE=#20
 ```
 
@@ -28,11 +28,25 @@ OPEN_DEFERRED_ISSUE=#20
 - #21~#24 — Interview 초기 UX/runtime tracker와 child issues 완료.
 - #53 — final voice translation guarantee 완료.
 - #58/#59 — normal voice resilience와 Interview empty-state visual 완료.
-- #62 — technical interview answer assist + on-demand answer translation 완료.
+- #62/#70/#78/#80 — Interview 답변 생성, source 언어 답변 + 자동 번역, 직접 입력/의미 있는 설명 지원, 짧은 구어체 답변 완료.
 - #63 — 새 utterance의 opposite translation 자동 선택 완료.
+- #72/#74 — 답변 기본 접힘, 스마트 자동 스크롤 완료.
+- #76 — 저장된 대화 자동 제목·요약 완료.
+- #82 — 이미지 업로드·붙여넣기·화면 캡처·카메라 이미지의 Interview 연결 완료.
 - #66 — 완료. Drive/Docs/Classroom export의 blocking alert를 actionable result surface로 교체하고 Drive/Docs destination link를 명확히 노출.
+- #84 — **OPEN/P1**, Production 최종 번역 504/모델 대체 지연 및 한도/시간 제한 검증.
+- #85 — **OPEN/P1**, `/api/detect-language` 구형 모델/404·500 오류 및 잘못된 fallback 수정 필요.
 
 새 제품 작업은 stale tracker 순서가 아니라 **현재 Production 증거, 사용자 문제 또는 owner의 명시적 제품 요구**에서 focused issue를 새로 만든 뒤 진행합니다. 완료된 이슈를 진행 중인 roadmap처럼 재사용하지 않습니다.
+
+## AI 모델/폴백 authority
+
+[**MODEL_ROUTES.md**](MODEL_ROUTES.md)가 현재 활성 기능별 모델 이름·순서, 출처 소스 파일, 구형 언어 감지 모델의 분리 및 향후 변경 기준을 소유합니다.
+
+- 최종 번역 및 추천 답변은 **동일한 승인된 7개 모델 순서**(GPT-OSS 20B → GPT-OSS 120B → Qwen 3.8 27B → Gemma 4 26B A4B → Gemma 4 31B → Gemini 3.5 Flash-Lite → Gemini 3.1 Flash-Lite)를 사용합니다.
+- 음성 Live/이미지 인식/TTS/히스토리 요약은 **각 기능의 별도 라우트**입니다. 구형 언어 감지에 등록된 Llama 70B/8B나 Gemini 2.0을 7개 최종 번역 모델 구성으로 잘못 설명하지 않습니다.
+- **CURRENT**: `/api/detect-language`는 아직 레거시 모델과 404 처리 결함이 남아 있고, `/api/translate`도 504 지연이 확인됐습니다. **TARGET**: #85는 감지 경로 현대화, #84는 시간제한·모델 대체 안정성 복구입니다.
+- 모델 설정 변경은 이 문서를 먼저 정합화하고, 런타임 코드는 **별도 focused Issue/PR + exact-head E2E + exact-main Production 검증** 후 반영합니다. **문서나 이슈의 모델 나열을 Production 변경으로 오인하지 않습니다.**
 
 ## Padiem shared-platform boundary
 
