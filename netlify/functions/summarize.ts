@@ -9,7 +9,7 @@ import {
 } from './_aiGuards';
 
 // History summaries use the owner's chosen Gemma order (#76).
-const SUMMARY_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'];
+const SUMMARY_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite'];
 
 export const handler = async (event: any) => {
     if (event.httpMethod !== 'POST') {

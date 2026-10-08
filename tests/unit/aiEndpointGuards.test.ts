@@ -153,6 +153,16 @@ describe('#76 Gemma saved-session metadata endpoint', () => {
       .toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
   });
 
+  test('a third, existing Flash-Lite fallback prevents lost history when both Gemma attempts fail', async () => {
+    mocks.generateContent.mockRejectedValueOnce(new Error('31B unavailable'))
+      .mockRejectedValueOnce(new Error('26B timeout'))
+      .mockResolvedValueOnce({ text: '{"title":"Interview practice","summary":"Practiced common interview questions."}' });
+    const response = parseResponse(await sessionMetadataHandler(makeEvent({ history: '[1] Why should we hire you?' })));
+    expect(response.statusCode).toBe(200);
+    expect(mocks.generateContent.mock.calls.map(([request]) => request.model))
+      .toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite']);
+  });
+
   test('rejects empty or oversized transcript before AI is called', async () => {
     expect((await sessionMetadataHandler(makeEvent({ history: '' }))).statusCode).toBe(400);
     expect((await sessionMetadataHandler(makeEvent({ history: 'x'.repeat(40_001) }))).statusCode).toBe(413);

@@ -15,7 +15,7 @@ const session = (items: ReturnType<typeof item>[], title = '새 대화', summary
 
 describe('#76 saved-session title and summary contracts', () => {
   test('Gemma 31B is first, 26B A4B is only the fallback', () => {
-    expect(SESSION_METADATA_MODELS).toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it']);
+    expect(SESSION_METADATA_MODELS).toEqual(['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite']);
   });
   test('all nonempty unsummarized sessions are eligible, including prior saved records', () => {
     expect(needsSessionMetadata(session([item(1, 'Mercor certification details')]))).toBe(true);

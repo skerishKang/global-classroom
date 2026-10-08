@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { errorResponse, enforceTextLimit, jsonResponse, readJsonBody, safeErrorDetail } from './_aiGuards';
 
-export const SESSION_METADATA_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'] as const;
+export const SESSION_METADATA_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite'] as const;
 export const MAX_SESSION_METADATA_INPUT = 40_000;
 
 export function parseSessionMetadata(raw: string): { title: string; summary: string } | null {
