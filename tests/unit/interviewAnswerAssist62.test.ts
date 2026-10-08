@@ -128,6 +128,32 @@ describe('#62 interview answer assist endpoint', () => {
     expect(JSON.parse(koreanQuestion.body).language).toBe('ko');
   });
 
+  test('#80 answers are short, speakable and conversational, not textbook-style', async () => {
+    groqReply('{"shouldAnswer":true,"answer":"I\'d use isotonic when the validation set is large, but it can overfit on noisy data."}');
+    const result = await handler(postEvent(
+      {
+        text: 'When would you prefer isotonic regression over Platt scaling for calibration, and what overfitting risk does isotonic introduce?',
+        answerLanguage: 'en',
+        answerLanguageName: 'English',
+        sourceLanguage: 'en',
+      },
+      { 'x-user-api-key': 'user-key' },
+    ));
+    expect(result.statusCode).toBe(200);
+    expect(JSON.parse(result.body).shouldAnswer).toBe(true);
+    const prompt = promptOf();
+    expect(prompt).toContain('LIVE SPOKEN INTERVIEW CUE, NOT a textbook or essay');
+    expect(prompt).toContain('2 SHORT sentences');
+    expect(prompt).toContain('25–55 English words');
+    expect(prompt).toContain('at most one practical check');
+    expect(prompt).toContain('1–2 short conversational sentences');
+    expect(prompt).toContain('read this aloud comfortably');
+    expect(prompt).toContain('Never invent personal experiences');
+    expect(prompt).toContain('separate holdout set');
+    expect(prompt).toContain('When would you prefer isotonic regression');
+    expect(mocks.groqCreate.mock.calls[0][0].model).toBe('openai/gpt-oss-20b');
+  });
+
   test('#78 substantive statements request a contextual opinion instead of silent suppression', async () => {
     groqReply('{"shouldAnswer":true,"answer":"That practical certification approach makes sense."}');
     const response = await handler(postEvent(
