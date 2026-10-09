@@ -82,6 +82,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
     const lastScrollTopRef = useRef(0);
 
     const setFollowingLatest = (value: boolean) => {
+        if (followingLatestRef.current === value) return;
         followingLatestRef.current = value;
         setIsFollowingLatest(value);
     };
@@ -101,6 +102,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
         const hasConversationContent = history.length > 0 || Boolean(currentTurnText) || Boolean(currentTurnTranslation);
         if (!interviewMode || !followingLatestRef.current || !hasConversationContent) return;
         const frame = window.requestAnimationFrame(() => {
+            // A wheel/touch user action can pause following AFTER the frame
+            // was scheduled but BEFORE it runs. Never steal that scroll back.
+            if (!followingLatestRef.current) return;
             const container = historyRef.current;
             if (!container) return;
             container.scrollTop = container.scrollHeight;
@@ -110,6 +114,16 @@ const ConversationList: React.FC<ConversationListProps> = ({
         return () => window.cancelAnimationFrame(frame);
     }, [history, currentTurnText, currentTurnTranslation, historyRef, interviewMode]);
 
+    const handleHistoryWheel = (event: React.WheelEvent<HTMLDivElement>) => {
+        const container = historyRef.current;
+        // Pause immediately on upward wheel intent, even when native scroll
+        // events arrive later or a "Latest" smooth-scroll is still in flight.
+        if (interviewMode && event.deltaY < 0 && container &&
+            container.scrollHeight > container.clientHeight + 4) {
+            setFollowingLatest(false);
+        }
+    };
+
     const handleHistoryScroll = () => {
         const container = historyRef.current;
         if (!container || !interviewMode) return;
@@ -117,6 +131,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
         const currentTop = container.scrollTop;
         const distanceFromBottom = container.scrollHeight - currentTop - container.clientHeight;
         const movedUp = currentTop < lastScrollTopRef.current - 2;
+        const movedDown = currentTop > lastScrollTopRef.current + 2;
         lastScrollTopRef.current = currentTop;
 
         if (movedUp) {
@@ -124,7 +139,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
             return;
         }
 
-        if (distanceFromBottom <= 64) {
+        if (distanceFromBottom <= 64 && (followingLatestRef.current || movedDown)) {
             setFollowingLatest(true);
             setPendingNewRows(0);
         }
@@ -135,7 +150,9 @@ const ConversationList: React.FC<ConversationListProps> = ({
         if (!container) return;
         setFollowingLatest(true);
         setPendingNewRows(0);
-        container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+        // Do not keep a smooth-scrolling animation alive: an immediate wheel
+        // reversal should never compete with it.
+        container.scrollTo({ top: container.scrollHeight, behavior: 'auto' });
     };
 
     const toggleAnswerRow = (itemId: string) => {
@@ -166,6 +183,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
             <div
                 ref={historyRef}
                 onScroll={handleHistoryScroll}
+                onWheelCapture={handleHistoryWheel}
                 data-testid="conversation-scroll"
                 data-following-latest={interviewMode ? String(isFollowingLatest) : undefined}
                 style={interviewMode ? { overflowAnchor: 'none', scrollBehavior: 'auto' } : undefined}
