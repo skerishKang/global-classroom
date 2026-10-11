@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useRef, useState } from 'react';
+import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Visualizer from './Visualizer';
 import { MicIcon, CopyIcon } from './Icons';
 import { ConversationItem, TranslationMap, ConnectionStatus } from '../types';
@@ -80,12 +80,51 @@ const ConversationList: React.FC<ConversationListProps> = ({
     const previousHistoryLengthRef = useRef(history.length);
     const followingLatestRef = useRef(true);
     const lastScrollTopRef = useRef(0);
+    // Keep the React tree bounded during long interviews. All rows stay in
+    // history/storage; this only limits the DOM rendered in Interview mode.
+    const INTERVIEW_PAGE_SIZE = 60;
+    const [olderRowCount, setOlderRowCount] = useState(0);
+    const [pausedHistoryEnd, setPausedHistoryEnd] = useState<number | null>(null);
+    const prependAnchorRef = useRef<{ height: number; top: number } | null>(null);
+    const visibleEnd = interviewMode && pausedHistoryEnd !== null && history.length > INTERVIEW_PAGE_SIZE
+        ? Math.min(pausedHistoryEnd, history.length)
+        : history.length;
+    const visibleStart = interviewMode ? Math.max(0, visibleEnd - INTERVIEW_PAGE_SIZE - olderRowCount) : 0;
+    const visibleHistory = interviewMode ? history.slice(visibleStart, visibleEnd) : history;
 
     const setFollowingLatest = (value: boolean) => {
         if (followingLatestRef.current === value) return;
         followingLatestRef.current = value;
         setIsFollowingLatest(value);
+        if (interviewMode) {
+            if (value) {
+                setPausedHistoryEnd(null);
+                setOlderRowCount(0);
+            } else if (history.length > INTERVIEW_PAGE_SIZE) {
+                // New finals remain saved but do not displace rows being read.
+                setPausedHistoryEnd(history.length);
+            }
+        }
     };
+
+    const showEarlierRows = () => {
+        const container = historyRef.current;
+        if (container) {
+            prependAnchorRef.current = { height: container.scrollHeight, top: container.scrollTop };
+        }
+        setFollowingLatest(false);
+        setOlderRowCount((count) => count + INTERVIEW_PAGE_SIZE);
+    };
+
+    useLayoutEffect(() => {
+        const anchor = prependAnchorRef.current;
+        if (!anchor) return;
+        prependAnchorRef.current = null;
+        const container = historyRef.current;
+        if (!container) return;
+        container.scrollTop = anchor.top + container.scrollHeight - anchor.height;
+        lastScrollTopRef.current = container.scrollTop;
+    }, [olderRowCount, historyRef]);
 
     useEffect(() => {
         const previousLength = previousHistoryLengthRef.current;
@@ -112,7 +151,7 @@ const ConversationList: React.FC<ConversationListProps> = ({
             setPendingNewRows(0);
         });
         return () => window.cancelAnimationFrame(frame);
-    }, [history, currentTurnText, currentTurnTranslation, historyRef, interviewMode]);
+    }, [history, currentTurnText, currentTurnTranslation, historyRef, interviewMode, pausedHistoryEnd, olderRowCount]);
 
     const handleHistoryWheel = (event: React.WheelEvent<HTMLDivElement>) => {
         const container = historyRef.current;
@@ -334,7 +373,19 @@ const ConversationList: React.FC<ConversationListProps> = ({
                         </div>
                     )}
 
-                    {history.map((item) => {
+                    {interviewMode && visibleStart > 0 && (
+                        <button
+                            type="button"
+                            data-testid="interview-show-earlier"
+                            onClick={showEarlierRows}
+                            className="self-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50"
+                        >
+                            {uiLangCode === 'ko'
+                                ? `이전 대화 ${Math.min(INTERVIEW_PAGE_SIZE, visibleStart)}개 더 보기`
+                                : `Show ${Math.min(INTERVIEW_PAGE_SIZE, visibleStart)} earlier turns`}
+                        </button>
+                    )}
+                    {visibleHistory.map((item) => {
                         const isEditing = editingItemId === item.id;
                         const isEditingOriginal = isEditing && editingField === 'original';
                         const isEditingTranslated = isEditing && editingField === 'translated';
