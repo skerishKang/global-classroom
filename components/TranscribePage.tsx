@@ -123,11 +123,16 @@ export default function TranscribePage() {
     words: rawWords, editedLines: exportLines, text: fullText,
   }, null, 2);
 
+  const primaryButtonClass = 'rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-all duration-150 hover:bg-indigo-700 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-indigo-600 disabled:hover:shadow-sm';
+  const secondaryButtonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-all duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:bg-white disabled:hover:text-slate-700';
+  const exportButtonClass = 'rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition-all duration-150 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:border-slate-200 disabled:hover:bg-white disabled:hover:text-slate-700';
+  const segmentPlayButtonClass = 'rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700 tabular-nums transition-colors duration-150 hover:bg-indigo-100 hover:text-indigo-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-slate-100 disabled:hover:text-slate-700';
+
   return (
     <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-slate-50 text-slate-900">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
         <div className="flex flex-wrap items-center gap-4">
-          <a href="/classroom" className="text-lg font-extrabold tracking-tight text-indigo-700">PADIEM AI</a>
+          <a href="/classroom" className="rounded text-lg font-extrabold tracking-tight text-indigo-700 transition-colors hover:text-indigo-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">PADIEM AI</a>
           <ServiceNav active="transcribe" />
         </div>
         <span className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600">Gemini STT</span>
@@ -153,9 +158,9 @@ export default function TranscribePage() {
 
         <div className="mb-4 flex gap-2" role="tablist" aria-label="전사 입력 방식">
           <button type="button" role="tab" aria-selected={tab === 'live'} onClick={() => setTab('live')}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === 'live' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>실시간 전사</button>
+            className={`rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ${tab === 'live' ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700'}`}>실시간 전사</button>
           <button type="button" role="tab" aria-selected={tab === 'file'} onClick={() => setTab('file')}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold ${tab === 'file' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-600'}`}>파일 전사</button>
+            className={`rounded-lg px-4 py-2 text-sm font-semibold shadow-sm transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ${tab === 'file' ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-white text-slate-600 hover:bg-indigo-50 hover:text-indigo-700'}`}>파일 전사</button>
         </div>
 
         <section className="rounded-xl border border-slate-200 bg-white p-4 sm:p-5">
@@ -164,12 +169,12 @@ export default function TranscribePage() {
               <div className="flex flex-wrap items-center gap-3">
                 <button type="button" onClick={() => live.status === 'idle' ? void live.start() : live.stop()}
                   disabled={live.status === 'connecting'}
-                  className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                  className={primaryButtonClass}>
                   {live.status === 'recording' || live.status === 'error' ? '녹음 종료 및 저장' : live.status === 'connecting' ? '연결 중…' : '마이크 녹음 시작'}
                 </button>
                 <span className="text-sm text-slate-500">{live.status === 'recording' ? '● 녹음 중' : live.status === 'error' ? '연결 오류' : '대기'}</span>
-                {live.recordedBlob && <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => { const url = URL.createObjectURL(live.recordedBlob!); const a = document.createElement('a'); a.href = url; a.download = 'transcribe-recording.webm'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>원본 녹음 다운로드</button>}
-                {live.recordedBlob && <button type="button" className="rounded-lg border px-3 py-2 text-sm" onClick={() => void transcribeFile(live.recordedBlob!)}>녹음 정밀 분석</button>}
+                {live.recordedBlob && <button type="button" className={secondaryButtonClass} onClick={() => { const url = URL.createObjectURL(live.recordedBlob!); const a = document.createElement('a'); a.href = url; a.download = 'transcribe-recording.webm'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }}>원본 녹음 다운로드</button>}
+                {live.recordedBlob && <button type="button" className={secondaryButtonClass} onClick={() => void transcribeFile(live.recordedBlob!)}>녹음 정밀 분석</button>}
               </div>
               <p className="mt-3 text-xs text-slate-500">실시간 자막에는 화자 ID·정밀 타임스탬프가 없습니다. 원본 녹음을 정밀 분석하면 추가할 수 있습니다.</p>
               {live.error && <p className="mt-2 text-sm text-red-700" role="alert">{live.error}</p>}
@@ -180,10 +185,10 @@ export default function TranscribePage() {
               <label className="block flex-1 text-sm">
                 <span className="mb-2 block font-semibold">MP3·WAV·WebM 파일 선택 (최대 4MB)</span>
                 <input type="file" accept=".mp3,.wav,.webm,.m4a,audio/*" onChange={(e) => { setFile(e.target.files?.[0] || null); setError(''); }}
-                  className="w-full rounded-lg border border-slate-200 p-2 text-sm" />
+                  className="w-full cursor-pointer rounded-lg border border-slate-200 p-2 text-sm transition-colors hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 file:cursor-pointer" />
               </label>
               <button type="button" disabled={!file || processing} onClick={() => file && void transcribeFile(file)}
-                className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-bold text-white disabled:opacity-50">
+                className={primaryButtonClass}>
                 {processing ? '전사 처리 중…' : '정밀 전사 시작'}
               </button>
             </div>
@@ -200,11 +205,11 @@ export default function TranscribePage() {
           <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-lg font-bold">전사 결과 {exportLines.length ? `(${exportLines.length}구간)` : ''}</h2>
             <div className="flex flex-wrap gap-2">
-              <button type="button" disabled={!exportLines.length} className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-40"
+              <button type="button" disabled={!exportLines.length} className={exportButtonClass}
                 onClick={() => download('transcript-timed.txt', exportTimed)}>시간 포함 TXT</button>
-              <button type="button" disabled={!exportLines.length} className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-40"
+              <button type="button" disabled={!exportLines.length} className={exportButtonClass}
                 onClick={() => download('transcript-draft.md', exportLines.map(l => `**${l.speaker}:** ${l.text}`).join('\n\n'), 'text/markdown')}>제출 형식 초안</button>
-              <button type="button" disabled={!exportLines.length} className="rounded-md border px-3 py-1.5 text-xs disabled:opacity-40"
+              <button type="button" disabled={!exportLines.length} className={exportButtonClass}
                 onClick={() => download('transcript.json', exportJson, 'application/json')}>JSON</button>
             </div>
           </div>
@@ -219,7 +224,7 @@ export default function TranscribePage() {
           {tab === 'file' && lines.map((line, index) => (
             <div key={index} className="mb-3 rounded-lg border border-slate-100 p-3">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <button type="button" className="rounded-md bg-slate-100 px-2 py-1 text-xs tabular-nums"
+                <button type="button" className={segmentPlayButtonClass}
                   disabled={line.start === null || !sourceUrl} onClick={() => { if (audioRef.current && line.start !== null) { audioRef.current.currentTime = line.start; void audioRef.current.play(); } }}>
                   {fmt(line.start)} – {fmt(line.end)} ▶
                 </button>

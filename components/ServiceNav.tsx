@@ -16,8 +16,8 @@ export default function ServiceNav({ active }: { active: ServicePage }) {
           key={page.id}
           href={page.href}
           aria-current={active === page.id ? 'page' : undefined}
-          className={`inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600 ${
-            active === page.id ? 'bg-indigo-600 text-white shadow-sm' : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700'
+          className={`inline-flex min-h-9 items-center justify-center rounded-lg px-3 text-xs font-semibold transition-all duration-150 motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-600 focus-visible:ring-offset-2 ${
+            active === page.id ? 'bg-indigo-600 text-white shadow-sm hover:bg-indigo-700 hover:shadow-md' : 'bg-slate-100 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 hover:shadow-sm'
           }`}
         >
           {page.label}
