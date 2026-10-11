@@ -414,7 +414,10 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
         async resume() {}
         async close() {}
         createMediaStreamSource() {
-          return { connect: () => {} };
+          return { connect: () => {}, disconnect: () => {} };
+        }
+        createGain() {
+          return { gain: { value: 1 }, connect: () => {}, disconnect: () => {} };
         }
         createScriptProcessor() {
           const node = {
@@ -1119,7 +1122,8 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
         createAnalyser() {
           return { fftSize: 256, frequencyBinCount: 128, connect: () => {}, disconnect: () => {}, getByteFrequencyData: () => {} };
         }
-        createMediaStreamSource() { return { connect: () => {} }; }
+        createMediaStreamSource() { return { connect: () => {}, disconnect: () => {} }; }
+        createGain() { return { gain: { value: 1 }, connect: () => {}, disconnect: () => {} }; }
         createScriptProcessor() { return { onaudioprocess: null, connect: () => {}, disconnect: () => {} }; }
         createBuffer() { return { getChannelData: () => new Float32Array(1) }; }
         createBufferSource() { return { connect: () => {}, start: () => {}, stop: () => {}, onended: null }; }

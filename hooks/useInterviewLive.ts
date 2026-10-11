@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { GoogleGenAI } from '@google/genai';
-import { arrayBufferToBase64, float32ToInt16 } from '../utils/audioUtils';
+import { arrayBufferToBase64 } from '../utils/audioUtils';
+import { startInterviewAudioCapture, type InterviewAudioCapture } from '../utils/interviewAudioCapture';
 import {
   InterviewTranslationSessions,
   type TranslationMedia,
@@ -110,7 +111,7 @@ export function useInterviewLive({
   const groqCycleTimerRef = useRef<number | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const inputContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const captureRef = useRef<InterviewAudioCapture | null>(null);
   const transcribeSessionRef = useRef<any>(null);
   const translationRef = useRef<InterviewTranslationSessions | null>(null);
   const targetsRef = useRef<readonly TranslationTarget[]>(translationTargets);
@@ -173,13 +174,9 @@ export function useInterviewLive({
     groqStreamRef.current = null;
     groqChunksRef.current = [];
 
-    if (processorRef.current) {
-      try {
-        processorRef.current.disconnect();
-      } catch {
-        // no-op
-      }
-      processorRef.current = null;
+    if (captureRef.current) {
+      try { captureRef.current.stop(); } catch { /* already disconnected */ }
+      captureRef.current = null;
     }
 
     streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -573,6 +570,10 @@ export function useInterviewLive({
           autoGainControl: true,
         },
       });
+      if (!desiredRef.current || fallbackStartedRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       streamRef.current = stream;
 
       const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
@@ -580,30 +581,31 @@ export function useInterviewLive({
       inputContextRef.current = inputContext;
       await inputContext.resume();
 
-      const source = inputContext.createMediaStreamSource(stream);
-      const processor = inputContext.createScriptProcessor(1024, 1, 1);
-      processorRef.current = processor;
-
-      processor.onaudioprocess = (event) => {
+      // #87: the browser audio thread owns the PCM conversion. React updates,
+      // scrolling and synchronous session persistence no longer run inside a
+      // ScriptProcessor audio callback. Legacy capture is a browser fallback.
+      const capture = await startInterviewAudioCapture(inputContext, stream, (pcm16) => {
         if (!desiredRef.current) return;
-        const floatData = event.inputBuffer.getChannelData(0);
-        const pcm16 = float32ToInt16(floatData);
         const media: TranslationMedia = {
-          data: arrayBufferToBase64(pcm16.buffer),
+          data: arrayBufferToBase64(pcm16),
           mimeType: 'audio/pcm;rate=16000',
         };
-
         try {
           transcribeSessionRef.current?.sendRealtimeInput?.({ media });
         } catch {
-          // onerror/onclose own the fatal path
+          // onerror/onclose own the fatal path.
         }
-
         translationRef.current?.feedAudio(media);
-      };
-
-      source.connect(processor);
-      processor.connect(inputContext.destination);
+      });
+      if (!desiredRef.current || fallbackStartedRef.current) {
+        capture.stop();
+        cleanup();
+        return;
+      }
+      captureRef.current = capture;
+      if (capture.mode === 'legacy') {
+        onWarning?.('이 브라우저는 AudioWorklet을 지원하지 않아 기본 오디오 입력 방식을 사용합니다.');
+      }
       setBackend('gemini');
       setStatus('live');
     } catch (error) {
