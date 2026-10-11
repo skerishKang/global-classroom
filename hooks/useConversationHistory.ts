@@ -24,6 +24,12 @@ export function useConversationHistory({ onSaveFailure }: UseConversationHistory
     const [isSessionsReady, setIsSessionsReady] = useState(false);
     const [isOutputOnly, setIsOutputOnly] = useState(false);
     const isHydratingHistoryRef = useRef(false);
+    // Keep rapid transcription/translation/answer updates off the synchronous
+    // localStorage write path; flush on page hide or hook teardown (#87).
+    const pendingSessionsSaveRef = useRef<ConversationSession[] | null>(null);
+    const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const historyUpdatedForSaveRef = useRef(false);
+    const lastPersistedSessionIdRef = useRef('');
     // Latest-callback ref: the app may pass an inline arrow, and the save
     // effect must not re-run (and re-save) just because its identity changed.
     const onSaveFailureRef = useRef(onSaveFailure);
@@ -93,6 +99,9 @@ export function useConversationHistory({ onSaveFailure }: UseConversationHistory
             ? sessionPreviewTitle({ title: '새 대화', items: history })
             : undefined;
 
+        // Identify high-frequency transcript/translation updates so only these
+        // are debounced. Session creation/deletion remains immediate.
+        historyUpdatedForSaveRef.current = true;
         setSessions((prev) => {
             const idx = prev.findIndex((s) => s.id === currentSessionId);
             if (idx >= 0) {
@@ -128,29 +137,67 @@ export function useConversationHistory({ onSaveFailure }: UseConversationHistory
         onSaveFailureRef.current = onSaveFailure;
     }, [onSaveFailure]);
 
-    useEffect(() => {
-        if (!isSessionsReady) return;
-
-        // Bound local growth: prune the oldest inactive sessions first; the
-        // current session is never removed by retention (#39).
-        const pruned = pruneSessionsForRetention(sessions, currentSessionId);
-        if (pruned !== sessions) {
-            // Functional update so concurrent session updates are preserved;
-            // the resulting state change triggers the save below.
-            setSessions(prev => pruneSessionsForRetention(prev, currentSessionId));
-            return;
+    const flushSessionsSave = useCallback(() => {
+        if (saveTimerRef.current !== null) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
         }
-
-        const result = saveSessions(sessions);
+        const snapshot = pendingSessionsSaveRef.current;
+        pendingSessionsSaveRef.current = null;
+        if (!snapshot) return;
+        const result = saveSessions(snapshot);
         if (result.ok === false) {
             console.error('Failed to persist conversation sessions', result.reason);
-            // Surface the failure at most once per interval so repeated state
-            // updates cannot flood the user with toasts (#39).
             if (saveFailureGateRef.current?.shouldNotify(result.reason)) {
                 onSaveFailureRef.current?.(result.reason);
             }
         }
-    }, [sessions, isSessionsReady, currentSessionId]);
+    }, []);
+
+    // Always flush pending transcripts when the tab is backgrounded/closed.
+    // Register once, not once per history change.
+    useEffect(() => {
+        if (typeof window === 'undefined') return;
+        const onVisibility = () => {
+            if (document.visibilityState === 'hidden') flushSessionsSave();
+        };
+        window.addEventListener('pagehide', flushSessionsSave);
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => {
+            window.removeEventListener('pagehide', flushSessionsSave);
+            document.removeEventListener('visibilitychange', onVisibility);
+            flushSessionsSave();
+        };
+    }, [flushSessionsSave]);
+
+    useEffect(() => {
+        if (!isSessionsReady) return;
+
+        const pruned = pruneSessionsForRetention(sessions, currentSessionId);
+        if (pruned !== sessions) {
+            setSessions(prev => pruneSessionsForRetention(prev, currentSessionId));
+            return;
+        }
+
+        // Synchronous JSON.stringify + localStorage writes can delay main-thread
+        // UI and Live audio delivery as a session grows. Coalesce fast updates.
+        // Explicit session switching/creating still saves immediately (#39).
+        pendingSessionsSaveRef.current = sessions;
+        const shouldDebounce = historyUpdatedForSaveRef.current &&
+            lastPersistedSessionIdRef.current === currentSessionId;
+        historyUpdatedForSaveRef.current = false;
+        lastPersistedSessionIdRef.current = currentSessionId;
+
+        if (saveTimerRef.current !== null) {
+            clearTimeout(saveTimerRef.current);
+            saveTimerRef.current = null;
+        }
+        if (shouldDebounce) {
+            saveTimerRef.current = setTimeout(flushSessionsSave, 750);
+        } else {
+            flushSessionsSave();
+        }
+    }, [sessions, isSessionsReady, currentSessionId, flushSessionsSave]);
 
     // 3. Methods
     const handleNewConversation = useCallback(() => {
