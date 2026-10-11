@@ -6,7 +6,7 @@ export type LiveLine = { id: string; text: string; receivedAt: number };
 const MODEL = 'gemini-3.5-transcribe-live';
 const ROTATE_AFTER_MS = 9 * 60_000 + 20_000;
 
-export function useTranscribeRecorder() {
+export function useTranscribeRecorder(account: '1' | '2') {
   const [status, setStatus] = useState<'idle' | 'connecting' | 'recording' | 'error'>('idle');
   const [lines, setLines] = useState<LiveLine[]>([]);
   const [interim, setInterim] = useState('');
@@ -45,10 +45,10 @@ export function useTranscribeRecorder() {
       const tokenResponse = await fetch('/api/live-token', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: MODEL }),
+        body: JSON.stringify({ model: MODEL, account }),
       });
       const tokenData = await tokenResponse.json().catch(() => ({}));
-      if (!tokenResponse.ok || !tokenData.token) throw new Error(tokenData.detail || '임시 인증 토큰을 발급하지 못했습니다.');
+      if (!tokenResponse.ok || !tokenData.token) throw new Error(tokenData.error || tokenData.detail || '임시 인증 토큰을 발급하지 못했습니다.');
       if (!desired.current || sequence.current !== seq) return;
       const ai = new GoogleGenAI({ apiKey: tokenData.token, httpOptions: { apiVersion: 'v1alpha' } });
       const live = await ai.live.connect({
@@ -92,7 +92,7 @@ export function useTranscribeRecorder() {
         setStatus('error');
       }
     }
-  }, [releaseSession]);
+  }, [account, releaseSession]);
 
   const stop = useCallback(() => {
     desired.current = false;
