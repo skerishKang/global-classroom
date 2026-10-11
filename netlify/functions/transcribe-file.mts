@@ -53,7 +53,7 @@ export function extractTranscription(response: any) {
     }
   }
   // Return plain text honestly when the model doesn't supply structured annotations.
-  const text = typeof response?.text === 'string'
+  const text = typeof response?.text === 'string' && response.text.trim()
     ? response.text
     : segments.map((segment) => segment.text).join(' ');
   return { text, words: segments };
@@ -98,7 +98,7 @@ export default async (req: Request) => {
     const response = await client.models.generateContent({
       model: MODEL,
       contents: [{ fileData: { fileUri: uploaded.uri, mimeType: uploaded.mimeType || mimeType } }],
-      config: { audioTranscriptionConfig: { mode: 'VERBATIM', diarization: true, wordTimestamp: true } } as any,
+      config: { audioTranscriptionConfig: { diarization: true, wordTimestamp: true } },
     });
     const normalized = extractTranscription(response);
     if (!normalized.text.trim() && !normalized.words.length) {
@@ -119,4 +119,7 @@ export default async (req: Request) => {
   }
 };
 
-export const config = { path: '/api/transcribe-file' };
+export const config = {
+  path: '/api/transcribe-file',
+  rateLimit: { windowSize: 60, windowLimit: 2, aggregateBy: ['ip', 'domain'] },
+};
