@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { getTranscribeKey, parseTranscribeAccount } from './_transcribeAccounts';
 import {
     enforceBodySize,
     errorResponse,
@@ -18,16 +19,6 @@ export const handler = async (event: any) => {
     };
   }
 
-  const userApiKey = event.headers['x-user-api-key'];
-  const apiKey = userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) {
-    return {
-      statusCode: 500,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ error: 'API 키가 설정되지 않았습니다.' }),
-    };
-  }
-
   const tooLarge = enforceBodySize(event, MAX_LIVE_TOKEN_BODY_BYTES);
   if (tooLarge) return tooLarge;
 
@@ -40,6 +31,17 @@ export const handler = async (event: any) => {
   if (!isAllowedString(model, ALLOWED_LIVE_MODELS)) {
     return errorResponse(400, '지원하지 않는 모델입니다.');
   }
+
+  // The new Transcribe page explicitly sends account; older Classroom/Interview
+  // callers omit it and retain their original x-user-api-key/default behavior.
+  const useTranscribeAccount = model === 'gemini-3.5-transcribe-live' &&
+    Object.prototype.hasOwnProperty.call(body, 'account');
+  const account = useTranscribeAccount ? parseTranscribeAccount(body.account) : null;
+  if (useTranscribeAccount && !account) return errorResponse(400, '계정 선택이 올바르지 않습니다.');
+  const userApiKey = event.headers['x-user-api-key'];
+  const apiKey = useTranscribeAccount ? getTranscribeKey(account!) :
+    (userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY);
+  if (!apiKey) return errorResponse(503, useTranscribeAccount ? '선택한 계정에 API 키가 없습니다.' : 'API 키가 설정되지 않았습니다.');
 
   try {
     const client = new GoogleGenAI({ apiKey });

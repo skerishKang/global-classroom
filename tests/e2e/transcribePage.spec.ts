@@ -1,5 +1,13 @@
 import { expect, test } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/transcribe-accounts', (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ accounts: { '1': true, '2': false }, defaultAccount: '1' }),
+  }));
+});
+
 test('three service tabs navigate to the transcription page', async ({ page }) => {
   await page.goto('/transcribe');
   await expect(page.getByRole('navigation', { name: '서비스 메뉴' })).toBeVisible();
@@ -94,4 +102,42 @@ test('three top-level service pages retain their navigation', async ({ page }) =
     await expect(nav.getByRole('link', { name: active, exact: true }))
       .toHaveAttribute('aria-current', 'page');
   }
+});
+
+
+test('account 2 stays disabled until Netlify reports its key is configured', async ({ page }) => {
+  let accountTwoEnabled = false;
+  await page.route('**/api/transcribe-accounts', (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ accounts: { '1': true, '2': accountTwoEnabled }, defaultAccount: '1' }),
+  }));
+  await page.goto('/transcribe');
+  const accountOne = page.getByRole('button', { name: /계정 1/ });
+  const accountTwo = page.getByRole('button', { name: /계정 2/ });
+  await expect(accountOne).toHaveAttribute('aria-pressed', 'true');
+  await expect(accountOne).toBeEnabled();
+  await expect(accountTwo).toBeDisabled();
+  await expect(accountTwo).toContainText('미연결');
+
+  accountTwoEnabled = true;
+  await page.getByRole('button', { name: '연결 상태 확인' }).click();
+  await expect(accountTwo).toBeEnabled();
+  await accountTwo.click();
+  await expect(accountTwo).toHaveAttribute('aria-pressed', 'true');
+  await expect(accountOne).toHaveAttribute('aria-pressed', 'false');
+
+  let sentAccount = '';
+  await page.route('**/api/transcribe-file', async (route) => {
+    const data = route.request().postData() || '';
+    sentAccount = data.includes('account') && data.includes('2') ? '2' : 'wrong';
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      text: '검증', words: [{ speaker: 'spk_1', text: '검증', start: 0, end: 1 }],
+    }) });
+  });
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'sample.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from([0x49, 0x44, 0x33]),
+  });
+  await page.getByRole('button', { name: '정밀 전사 시작' }).click();
+  await expect(page.getByRole('textbox', { name: '전사 구간 1' })).toHaveValue('검증');
+  expect(sentAccount).toBe('2');
 });

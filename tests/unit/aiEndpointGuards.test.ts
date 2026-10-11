@@ -529,3 +529,36 @@ describe('#36 transcribe logging', () => {
     expect(GROQ_STT_MAX_AUDIO_BYTES).toBe(3 * 1024 * 1024);
   });
 });
+
+
+describe('Transcribe-specific Live token account routing', () => {
+  test('legacy Interview and Classroom live token requests preserve their default/BYOK path', async () => {
+    const event = makeEvent({ model: 'gemini-3.5-transcribe-live' });
+    event.headers['x-user-api-key'] = 'existing-user-key';
+    const response = parseResponse(await liveTokenHandler(event));
+    expect(response.statusCode).toBe(200);
+    expect(mocks.authTokensCreate).toHaveBeenCalledTimes(1);
+  });
+
+  test('explicit account 2 fails closed when its key has not been registered', async () => {
+    delete process.env.GEMINI_API_KEY_ACCOUNT_2;
+    const response = parseResponse(await liveTokenHandler(makeEvent({
+      model: 'gemini-3.5-transcribe-live', account: '2',
+    })));
+    expect(response.statusCode).toBe(503);
+    expect(mocks.authTokensCreate).not.toHaveBeenCalled();
+  });
+
+  test('explicit account 2 uses its own configured key path', async () => {
+    process.env.GEMINI_API_KEY_ACCOUNT_2 = 'account-2-test-only';
+    try {
+      const response = parseResponse(await liveTokenHandler(makeEvent({
+        model: 'gemini-3.5-transcribe-live', account: '2',
+      })));
+      expect(response.statusCode).toBe(200);
+      expect(mocks.authTokensCreate).toHaveBeenCalledTimes(1);
+    } finally {
+      delete process.env.GEMINI_API_KEY_ACCOUNT_2;
+    }
+  });
+});

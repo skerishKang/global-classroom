@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { getTranscribeKey, parseTranscribeAccount } from './_transcribeAccounts';
 
 const MODEL = 'gemini-3.5-transcribe';
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -62,21 +63,23 @@ export function extractTranscription(response: any) {
 export default async (req: Request) => {
   if (req.method !== 'POST') return json(405, { error: 'POST만 지원합니다.' });
 
-  const env = (globalThis as any).Netlify?.env;
-  const apiKey = env?.get?.('GEMINI_API_KEY') || env?.get?.('API_KEY') ||
-    process.env.GEMINI_API_KEY || process.env.API_KEY;
-  if (!apiKey) return json(503, { error: '서버에 Gemini API 키가 설정되지 않았습니다.' });
-
   const declaredLength = Number(req.headers.get('content-length') || '0');
   if (declaredLength > MAX_FILE_BYTES + 8192) {
     return json(413, { error: '파일 전사는 현재 4MB 이하로 제한됩니다.' });
   }
 
   let file: File | null = null;
+  let apiKey = '';
   try {
     const data = await req.formData();
     const candidate = data.get('audio');
     if (candidate instanceof File) file = candidate;
+    const account = parseTranscribeAccount(data.get('account'));
+    if (!account) return json(400, { error: '계정 선택이 올바르지 않습니다.' });
+    const key = getTranscribeKey(account);
+    if (!key) return json(503, { error: `계정 ${account}에 Gemini API 키가 등록되지 않았습니다.` });
+    // Key is validated inside the request and never sent to the client.
+    apiKey = key;
   } catch {
     return json(400, { error: '음성 파일을 읽을 수 없습니다.' });
   }

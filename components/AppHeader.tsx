@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrandLogo } from './BrandLogo';
+import ServiceBrand from './ServiceBrand';
 import ServiceNav from './ServiceNav';
 import { ExportIcon, SparklesIcon, SpeakerIcon } from './Icons';
 import { VoiceOption, TranslationMap } from '../types';
@@ -66,13 +66,10 @@ const AppHeader: React.FC<AppHeaderProps> = ({
     return (
         <header className="bg-white/80 backdrop-blur-md px-3 py-1.5 shadow-sm z-40 border-b border-gray-100 shrink-0">
             <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-3">
-                    <BrandLogo />
-                    <div className="min-w-0 cursor-pointer group transition-all" title="실시간 AI 통역 서비스">
-                        <h1 className="text-xl font-black text-gray-900 tracking-tight leading-none uppercase group-hover:text-indigo-600 transition-colors">{interviewMode ? (uiLangCode === 'ko' ? 'AI 인터뷰 통역' : 'AI INTERVIEW INTERPRETER') : t.appTitle}</h1>
-                        <p className="text-[10px] text-gray-400 font-bold tracking-widest mt-1 uppercase group-hover:text-indigo-400 transition-colors">{t.subtitle}</p>
-                    </div>
-                </div>
+                <ServiceBrand
+                    title={interviewMode ? (uiLangCode === 'ko' ? 'AI 인터뷰 통역' : 'AI INTERVIEW INTERPRETER') : t.appTitle}
+                    subtitle={t.subtitle}
+                />
 
                 <div className="flex items-center gap-2">
                     <div className="flex items-center px-2 py-1 bg-white/50 rounded-full border border-gray-100 hover:border-indigo-200 transition-all shrink-0 h-9">

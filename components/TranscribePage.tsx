@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ServiceNav from './ServiceNav';
+import ServiceBrand from './ServiceBrand';
 import { useTranscribeRecorder } from '../hooks/useTranscribeRecorder';
 
 type TranscriptLine = { speaker: string; text: string; start: number | null; end: number | null };
@@ -16,7 +17,7 @@ const fmt = (seconds: number | null) => {
 const quotaDay = () => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'America/Los_Angeles', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date());
-const counterKey = () => `padiem-transcribe-attempts-${quotaDay()}`;
+const counterKey = (account: '1' | '2') => `padiem-transcribe-attempts-${account}-${quotaDay()}`;
 
 function groupWords(words: ApiWord[]): TranscriptLine[] {
   const lines: TranscriptLine[] = [];
@@ -48,7 +49,11 @@ function download(name: string, content: string, type = 'text/plain') {
 }
 
 export default function TranscribePage() {
-  const live = useTranscribeRecorder();
+  const [account, setAccount] = useState<'1' | '2'>('1');
+  const [accountAvailability, setAccountAvailability] = useState({ '1': true, '2': false });
+  const [accountsLoading, setAccountsLoading] = useState(true);
+  const [accountStatusError, setAccountStatusError] = useState('');
+  const live = useTranscribeRecorder(account);
   const [tab, setTab] = useState<'live' | 'file'>('file');
   const [file, setFile] = useState<File | null>(null);
   const [sourceUrl, setSourceUrl] = useState('');
@@ -57,8 +62,32 @@ export default function TranscribePage() {
   const [lines, setLines] = useState<TranscriptLine[]>([]);
   const [fullText, setFullText] = useState('');
   const [rawWords, setRawWords] = useState<ApiWord[]>([]);
-  const [attempts, setAttempts] = useState(() => Number(localStorage.getItem(counterKey()) || 0));
+  const [attempts, setAttempts] = useState(() => Number(localStorage.getItem(counterKey('1')) || 0));
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  async function refreshAccounts() {
+    setAccountsLoading(true);
+    setAccountStatusError('');
+    try {
+      const response = await fetch('/api/transcribe-accounts', { cache: 'no-store' });
+      if (!response.ok) throw new Error('계정 상태를 확인할 수 없습니다.');
+      const result = await response.json();
+      const available = { '1': result.accounts?.['1'] === true, '2': result.accounts?.['2'] === true };
+      setAccountAvailability(available);
+      setAccount((previous) => available[previous] ? previous : '1');
+    } catch {
+      // Fail closed for account 2 when the server cannot verify its configuration.
+      setAccountAvailability({ '1': true, '2': false });
+      setAccount('1');
+      setAccountStatusError('계정 설정을 확인할 수 없어 계정 2를 사용할 수 없습니다.');
+    } finally {
+      setAccountsLoading(false);
+    }
+  }
+
+  useEffect(() => { void refreshAccounts(); }, []);
+  useEffect(() => { setAttempts(Number(localStorage.getItem(counterKey(account)) || 0)); }, [account]);
+  const accountChangeBlocked = live.status !== 'idle' || processing;
 
   useEffect(() => {
     const source = tab === 'live' ? live.recordedBlob : file;
@@ -92,9 +121,10 @@ export default function TranscribePage() {
     setFullText('');
     const form = new FormData();
     form.append('audio', audio, audio instanceof File ? audio.name : 'recording.webm');
+    form.append('account', account);
     // This is a browser-local request counter, NOT Google's authoritative project quota.
-    const updated = Number(localStorage.getItem(counterKey()) || 0) + 1;
-    localStorage.setItem(counterKey(), String(updated));
+    const updated = Number(localStorage.getItem(counterKey(account)) || 0) + 1;
+    localStorage.setItem(counterKey(account), String(updated));
     setAttempts(updated);
     try {
       const response = await fetch('/api/transcribe-file', { method: 'POST', body: form });
@@ -130,12 +160,34 @@ export default function TranscribePage() {
 
   return (
     <div className="flex h-screen h-[100dvh] flex-col overflow-hidden bg-slate-50 text-slate-900">
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white px-4 py-3 sm:px-6">
-        <div className="flex flex-wrap items-center gap-4">
-          <a href="/classroom" className="rounded text-lg font-extrabold tracking-tight text-indigo-700 transition-colors hover:text-indigo-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500">PADIEM AI</a>
-          <ServiceNav active="transcribe" />
+      <header className="bg-white/80 backdrop-blur-md px-3 py-1.5 shadow-sm z-40 border-b border-gray-100 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
+          <ServiceBrand title="AI 전사" subtitle="실시간 AI 음성 기록" />
+          <span className="rounded-full border border-indigo-100 bg-indigo-50 px-3 py-1.5 text-[11px] font-bold text-indigo-700">Gemini STT</span>
         </div>
-        <span className="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600">Gemini STT</span>
+        <div className="pb-2"><ServiceNav active="transcribe" /></div>
+        <div className="flex flex-wrap items-center gap-2 pb-1" role="group" aria-label="전사 API 계정 선택">
+          <span className="text-[10px] font-bold text-gray-500">Google API 계정</span>
+          {(['1', '2'] as const).map((id) => (
+            <button key={id} type="button" aria-pressed={account === id}
+              onClick={() => setAccount(id)}
+              disabled={!accountAvailability[id] || accountChangeBlocked}
+              title={!accountAvailability[id] ? 'Netlify API 키 미등록' : accountChangeBlocked ? '작업 중에는 계정을 변경할 수 없습니다.' : '계정 선택'}
+              className={account === id
+                ? 'min-h-8 rounded-full border border-indigo-600 bg-indigo-600 px-3 text-[11px] font-bold text-white transition-colors hover:bg-indigo-700 focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-45'
+                : 'min-h-8 rounded-full border border-gray-200 bg-white px-3 text-[11px] font-bold text-gray-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-white'}>
+              계정 {id}{!accountAvailability[id] ? ' · 미연결' : account === id ? ' · 사용 중' : ''}
+            </button>
+          ))}
+          <button type="button" onClick={() => void refreshAccounts()} disabled={accountsLoading || accountChangeBlocked}
+            className="min-h-8 rounded-full border border-gray-200 bg-white px-3 text-[11px] font-bold text-gray-600 transition-colors hover:border-indigo-300 hover:bg-indigo-50 focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-45">
+            {accountsLoading ? '확인 중…' : '연결 상태 확인'}
+          </button>
+          <span className="text-[10px] text-gray-400">
+            {!accountAvailability['2'] ? '계정 2는 Netlify에 키를 등록한 후 활성화됩니다.' : '키 등록 확인됨 · 실제 사용 가능 여부는 요청 시 확인'}
+          </span>
+        </div>
+        {accountStatusError && <p role="status" className="text-xs text-amber-700">{accountStatusError}</p>}
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 overflow-y-auto px-4 py-6 sm:px-6">
@@ -168,7 +220,7 @@ export default function TranscribePage() {
             <div>
               <div className="flex flex-wrap items-center gap-3">
                 <button type="button" onClick={() => live.status === 'idle' ? void live.start() : live.stop()}
-                  disabled={live.status === 'connecting'}
+                  disabled={live.status === 'connecting' || !accountAvailability[account]}
                   className={primaryButtonClass}>
                   {live.status === 'recording' || live.status === 'error' ? '녹음 종료 및 저장' : live.status === 'connecting' ? '연결 중…' : '마이크 녹음 시작'}
                 </button>
@@ -187,7 +239,7 @@ export default function TranscribePage() {
                 <input type="file" accept=".mp3,.wav,.webm,.m4a,audio/*" onChange={(e) => { setFile(e.target.files?.[0] || null); setError(''); }}
                   className="w-full cursor-pointer rounded-lg border border-slate-200 p-2 text-sm transition-colors hover:border-indigo-300 hover:bg-indigo-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 file:cursor-pointer" />
               </label>
-              <button type="button" disabled={!file || processing} onClick={() => file && void transcribeFile(file)}
+              <button type="button" disabled={!file || processing || !accountAvailability[account]} onClick={() => file && void transcribeFile(file)}
                 className={primaryButtonClass}>
                 {processing ? '전사 처리 중…' : '정밀 전사 시작'}
               </button>
