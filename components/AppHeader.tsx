@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrandLogo } from './BrandLogo';
+import ServiceNav from './ServiceNav';
 import { ExportIcon, SparklesIcon, SpeakerIcon } from './Icons';
 import { VoiceOption, TranslationMap } from '../types';
 import { VOICE_OPTIONS, SUPPORTED_LANGUAGES } from '../constants';
@@ -74,20 +75,6 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                 </div>
 
                 <div className="flex items-center gap-2">
-                    <button
-                        type="button"
-                        onClick={onToggleInterviewMode}
-                        className={`h-9 rounded-full px-3 text-[11px] font-black transition-all ${
-                            interviewMode
-                                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                                : 'bg-indigo-50 text-indigo-700 border border-indigo-100 hover:bg-indigo-100'
-                        }`}
-                        title={interviewMode ? (uiLangCode === 'ko' ? 'Global Classroom으로 돌아가기' : 'Return to Global Classroom') : (uiLangCode === 'ko' ? 'AI 인터뷰 통역 열기' : 'Open AI Interview Interpreter')}
-                    >
-                        {interviewMode
-                            ? (uiLangCode === 'ko' ? '← GLOBAL CLASSROOM' : '← GLOBAL CLASSROOM')
-                            : (uiLangCode === 'ko' ? '인터뷰 통역 열기' : 'OPEN INTERVIEW')}
-                    </button>
                     <div className="flex items-center px-2 py-1 bg-white/50 rounded-full border border-gray-100 hover:border-indigo-200 transition-all shrink-0 h-9">
                         <select
                             value={uiLangCode}
@@ -253,6 +240,7 @@ const AppHeader: React.FC<AppHeaderProps> = ({
                 </div>
             </div>
 
+            <div className="pb-2"><ServiceNav active={interviewMode ? 'interview' : 'classroom'} /></div>
             <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar">
                 <div
                     className="flex items-center bg-gray-50 rounded-full px-2 py-1 border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-all group shrink-0 cursor-pointer hover:shadow-sm"

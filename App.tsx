@@ -45,6 +45,7 @@ import VisionNotificationModal from './components/VisionNotificationModal';
 import SummaryModal from './components/SummaryModal';
 import { useSessionMetadata } from './hooks/useSessionMetadata';
 import AppHeader from './components/AppHeader';
+import TranscribePage from './components/TranscribePage';
 import LanguageSelector from './components/LanguageSelector';
 import ConversationList from './components/ConversationList';
 import BottomControls from './components/BottomControls';
@@ -100,10 +101,10 @@ import {
 const INTERVIEW_FINAL_TRANSLATION_GRACE_MS = 900;
 
 export default function App() {
-  const interviewModeRequested =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).get('mode') === 'interview';
-
+  const pathname = typeof window === 'undefined' ? '/' : window.location.pathname;
+  if (pathname === '/transcribe') return <TranscribePage />;
+  const interviewModeRequested = pathname === '/interview' ||
+    (pathname === '/' && new URLSearchParams(window.location.search).get('mode') === 'interview');
   return <ClassroomApp interviewMode={interviewModeRequested} />;
 }
 
