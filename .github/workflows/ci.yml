@@ -1,0 +1,49 @@
+name: CI
+
+# Exact-head gate for the Global Classroom product (#98).
+# The same four steps the local actor ran by hand now run on a GitHub-hosted
+# runner for the pull request HEAD that would actually be merged.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A newer push to the same PR supersedes the previous verification instead of
+# queueing another runner. Two commits never share a check group.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the gate reads the repository and nothing else. No secrets are
+# referenced here, and no provider/model call is made.
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout exact head
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          # Node 22 matches the Netlify build image (noble) and local development.
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      - name: TypeScript
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      - name: Production build
+        run: npm run build
