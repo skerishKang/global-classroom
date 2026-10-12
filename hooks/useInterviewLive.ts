@@ -9,10 +9,12 @@ import {
 } from '../utils/interviewTranslationSessions';
 import type { TranslationTarget } from '../utils/interviewTranslationRouter';
 import {
+  LIVE_AUDIO_HANDOFF_FRAMES,
   LIVE_SESSION_ROTATE_MS,
   LIVE_TRANSCRIBE_MODEL,
   LIVE_VAD_SILENCE_MS,
   TRANSCRIPT_TURN_STALL_MS,
+  createAudioHandoffBuffer,
   createTranscriptTurnBuffer,
   resolveRecognitionLanguage,
   shouldCutGroqChunk,
@@ -136,6 +138,10 @@ export function useInterviewLive({
   // the turn boundary instead of each chunk creating its own final row.
   const turnBufferRef = useRef(createTranscriptTurnBuffer());
   const transcribeGenerationRef = useRef(0);
+  // #87: microphone frames captured while a session rotation is in flight.
+  const transcribeHandoffRef = useRef(createAudioHandoffBuffer<TranslationMedia>(
+    LIVE_AUDIO_HANDOFF_FRAMES,
+  ));
   const transcribeRotateTimerRef = useRef<number | null>(null);
   const turnStallTimerRef = useRef<number | null>(null);
   const lastTurnChunkAtRef = useRef(0);
@@ -272,6 +278,9 @@ export function useInterviewLive({
     }
     transcribeSessionRef.current = null;
     turnBufferRef.current.reset();
+    // A stop while a rotation is in flight must not keep capturing frames or
+    // replay them into a session that no longer exists.
+    transcribeHandoffRef.current.reset();
 
     setTranslatePreviewAvailable(false);
     setBackend('idle');
@@ -684,6 +693,11 @@ export function useInterviewLive({
     if (!desiredRef.current || fallbackStartedRef.current) return;
     const previous = transcribeSessionRef.current;
 
+    // Capture starts BEFORE anything is invalidated: from this frame onward the
+    // microphone belongs to neither session until the new one is installed.
+    const handoff = transcribeHandoffRef.current;
+    handoff.start();
+
     // A rotation boundary can land mid-sentence; keep the transcript already
     // captured instead of dropping it together with the outgoing session.
     const pendingBeforeRotation = turnBufferRef.current.finishTurn();
@@ -702,6 +716,7 @@ export function useInterviewLive({
     try {
       const next = await connectTranscribeSession();
       if (!desiredRef.current || fallbackStartedRef.current) {
+        handoff.reset();
         try {
           next?.close?.();
         } catch {
@@ -710,6 +725,23 @@ export function useInterviewLive({
         return;
       }
       transcribeSessionRef.current = next;
+
+      // Replay the gap in arrival order so an utterance that straddled the
+      // rotation reaches the new session from its first sample. This loop is
+      // synchronous, so no frame can slip between release() and the sends.
+      for (const media of handoff.release()) {
+        try {
+          next?.sendRealtimeInput?.({ media });
+        } catch {
+          // onerror/onclose own the fatal path.
+        }
+      }
+      if (handoff.droppedFrames > 0) {
+        handlersRef.current.onWarning?.(
+          `세션 갱신 중 일부 오디오를 확보하지 못했습니다 (${handoff.droppedFrames} 프레임).`,
+        );
+      }
+
       scheduleTranscribeRotation();
       try {
         previous?.close?.();
@@ -717,6 +749,7 @@ export function useInterviewLive({
         // no-op
       }
     } catch (error) {
+      handoff.reset();
       beginFallback(
         `Gemini 실시간 전사 세션 갱신 실패: ${error instanceof Error ? error.message : String(error)}`,
       );
@@ -810,10 +843,18 @@ export function useInterviewLive({
           data: arrayBufferToBase64(pcm16),
           mimeType: 'audio/pcm;rate=16000',
         };
-        try {
-          transcribeSessionRef.current?.sendRealtimeInput?.({ media });
-        } catch {
-          // onerror/onclose own the fatal path.
+        // #87: while a rotation is in flight the outgoing session is already
+        // invalidated, so sending to it would transcribe this frame and discard
+        // the result. Capture it and replay into the incoming session instead.
+        // The translation lane is untouched: it rotates synchronously.
+        if (transcribeHandoffRef.current.capturing) {
+          transcribeHandoffRef.current.push(media);
+        } else {
+          try {
+            transcribeSessionRef.current?.sendRealtimeInput?.({ media });
+          } catch {
+            // onerror/onclose own the fatal path.
+          }
         }
         translationRef.current?.feedAudio(media);
       });
