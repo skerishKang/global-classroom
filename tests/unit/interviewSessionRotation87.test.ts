@@ -79,12 +79,22 @@ vi.mock('@google/genai', () => ({
         const session: any = {
           kind: model,
           frames: [] as string[],
+          /** `audioStreamEnd` calls, counted separately so they cannot masquerade as audio. */
+          endSignals: 0,
           closed: false,
           callbacks: options.callbacks || {},
-          sendRealtimeInput: (input: { media?: { data?: string } }) => {
+          sendRealtimeInput: (input: { media?: { data?: string }; audioStreamEnd?: boolean }) => {
+            if (input?.audioStreamEnd) {
+              session.endSignals += 1;
+              return;
+            }
             session.frames.push(String(input?.media?.data ?? ''));
           },
           close: () => { session.closed = true; },
+          /** The provider finalising audio it already holds: one message, one tail. */
+          emitTail: (text: string) => session.callbacks.onmessage({
+            serverContent: { inputTranscription: { text, finished: true } },
+          }),
         };
         net.transcribeSessions.push(session);
         if (net.gate) await net.gate;
@@ -124,7 +134,9 @@ import { useInterviewLive } from '../../hooks/useInterviewLive';
 import {
   LIVE_AUDIO_HANDOFF_FRAMES,
   LIVE_SESSION_ROTATE_MS,
+  LIVE_TAIL_FLUSH_DRAIN_MS,
   createAudioHandoffBuffer,
+  flushLiveTranscriptTail,
 } from '../../utils/liveTranscriptTurn';
 
 type Scheduled = { id: number; fn: () => void; ms: number };
@@ -297,7 +309,21 @@ describe('#87 audio continuity across the rotation gap', () => {
 
     const incoming = net.transcribeSessions[1];
     expect(incoming.frames).toEqual([gap1, gap2]);
+
+    // #87: the retired session is told the stream ended, so its socket stays open
+    // for the bounded drain instead of being closed with audio still inside it.
+    expect(outgoing.endSignals).toBe(1);
+    expect(outgoing.frames).toEqual([frameFor('pre0')]);
+    expect(outgoing.closed).toBe(false);
+
+    // The tail it then finalises becomes a row, and only now does it close.
+    outgoing.emitTail('…under a very tight deadline.');
     expect(outgoing.closed).toBe(true);
+    expect(finalRows.map((row) => row.text)).toEqual(['…under a very tight deadline.']);
+
+    // A second chunk from the same retired session must not create a second row.
+    outgoing.emitTail('…under a very tight deadline.');
+    expect(finalRows).toHaveLength(1);
   });
 
   test('nothing is delivered twice across the boundary', async () => {
@@ -338,7 +364,10 @@ describe('#87 audio continuity across the rotation gap', () => {
 
     expect(finalRows.map((row) => row.text)).toEqual(['Could you tell me which']);
     expect(net.transcribeSessions[1].frames).toEqual([tail]);
+    // No microphone frame reached the retired session, and it was signalled rather
+    // than silently closed.
     expect(outgoing.frames).toEqual([]);
+    expect(outgoing.endSignals).toBe(1);
   });
 
   test('a rotation that fails releases the capture path and warns truthfully', async () => {
@@ -406,5 +435,222 @@ describe('#87 handoff buffer semantics', () => {
     // 2048 samples at 16kHz is 128ms per frame, so 40 frames is ~5.1s.
     expect(LIVE_AUDIO_HANDOFF_FRAMES * 128).toBeGreaterThanOrEqual(5_000);
     expect(LIVE_AUDIO_HANDOFF_FRAMES * 128).toBeLessThan(LIVE_SESSION_ROTATE_MS);
+  });
+});
+
+/** A clock the test drives, so a drain deadline is assertable without waiting. */
+function manualTimers() {
+  const queued: Array<{ delay: number; run: () => void }> = [];
+  return {
+    queued,
+    setTimer: (callback: () => void, ms: number) => {
+      const entry = { delay: ms, run: callback };
+      queued.push(entry);
+      return entry as unknown as ReturnType<typeof setTimeout>;
+    },
+    clearTimer: (handle: unknown) => {
+      const index = queued.indexOf(handle as { delay: number; run: () => void });
+      if (index >= 0) queued.splice(index, 1);
+    },
+    fireAll: () => queued.splice(0).forEach((entry) => entry.run()),
+  };
+}
+
+function fakeSession(input?: { throws?: boolean }) {
+  const state = { signals: [] as unknown[], closes: 0 };
+  return {
+    state,
+    session: {
+      sendRealtimeInput: (signal: unknown) => {
+        if (input?.throws) throw new Error('socket already gone');
+        state.signals.push(signal);
+      },
+      close: () => { state.closes += 1; },
+    },
+  };
+}
+
+describe('#87 tail flush mechanics', () => {
+  test('the outgoing session is told the stream ended, and only that', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession();
+    flushLiveTranscriptTail(session, {
+      onSettled: () => {},
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    expect(state.signals).toEqual([{ audioStreamEnd: true }]);
+    expect(state.closes).toBe(0);
+  });
+
+  test('the first non-empty tail settles it once and closes exactly once', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession();
+    const settled: Array<string | null> = [];
+    const flush = flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+
+    // An empty hypothesis is not a finalised tail.
+    expect(flush.accept('')).toBe(false);
+    expect(flush.accept('   ')).toBe(false);
+    expect(state.closes).toBe(0);
+
+    const tail = 'and only after that did I start investigating the root cause.';
+    expect(flush.accept(tail)).toBe(true);
+    // A backend that re-sends the same turn cannot emit the tail twice.
+    expect(flush.accept(tail)).toBe(false);
+
+    expect(settled).toEqual([tail]);
+    expect(state.closes).toBe(1);
+    expect(timers.queued).toHaveLength(0);
+  });
+
+  test('a session that never answers is closed on the bounded deadline', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession();
+    const settled: Array<string | null> = [];
+    flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    expect(timers.queued.map((entry) => entry.delay)).toEqual([LIVE_TAIL_FLUSH_DRAIN_MS]);
+    timers.fireAll();
+    // `null` still reports: teardown must commit what the session already said.
+    expect(settled).toEqual([null]);
+    expect(state.closes).toBe(1);
+    timers.fireAll();
+    expect(state.closes).toBe(1);
+  });
+
+  test('cancelling the wait keeps the words that were already captured', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession();
+    const settled: Array<string | null> = [];
+    const flush = flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    flush.cancel();
+    expect(settled).toEqual([null]);
+    expect(state.closes).toBe(1);
+    expect(flush.accept('late')).toBe(false);
+    expect(state.closes).toBe(1);
+  });
+
+  test('a session that cannot be signalled is closed instead of left open', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession({ throws: true });
+    const settled: Array<string | null> = [];
+    flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    expect(settled).toEqual([null]);
+    expect(state.closes).toBe(1);
+    expect(timers.queued).toHaveLength(0);
+  });
+
+  test('nothing is armed when there is no session to flush', () => {
+    const flush = flushLiveTranscriptTail(null, {
+      onSettled: () => { throw new Error('a null session must not report'); },
+    });
+    expect(flush.armed).toBe(false);
+    expect(flush.accept('x')).toBe(false);
+    flush.cancel();
+  });
+
+  test('the drain window covers the measured provider flush latency but stays short', () => {
+    // Live provider, one 28.7s utterance: the tail chunk arrived 261ms after
+    // `audioStreamEnd`. Teardown must not be pinned by a dead socket.
+    expect(LIVE_TAIL_FLUSH_DRAIN_MS).toBeGreaterThanOrEqual(4 * 261);
+    expect(LIVE_TAIL_FLUSH_DRAIN_MS).toBeLessThan(2_000);
+  });
+});
+
+describe('#87 tail flush on mute and teardown', () => {
+  test('muting right after a sentence flushes its tail instead of losing it', async () => {
+    const hook = await startMic();
+    const session = net.transcribeSessions[0];
+
+    // Provider form for an unfinished turn: the chunk carries its trailing space.
+    session.callbacks.onmessage({
+      serverContent: {
+        inputTranscription: { text: 'Then I rolled the service back to the previous stable ', finished: false },
+      },
+    });
+    expect(finalRows).toEqual([]);
+
+    hook.current.stop();
+    await settle();
+    expect(session.endSignals).toBe(1);
+    // Before the fix this text was dropped by `turnBuffer.reset()` and the socket
+    // closed without a finalisation signal (measured 51/64 words recovered).
+    expect(session.closed).toBe(false);
+
+    session.emitTail('build.');
+    expect(finalRows.map((row) => row.text)).toEqual([
+      'Then I rolled the service back to the previous stable build.',
+    ]);
+    expect(session.closed).toBe(true);
+  });
+
+  test('a tail that never arrives still commits what the session already said', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const hook = await startMic();
+      const session = net.transcribeSessions[0];
+      session.callbacks.onmessage({
+        serverContent: { inputTranscription: { text: 'under a very tight deadline', finished: false } },
+      });
+
+      hook.current.stop();
+      await vi.advanceTimersByTimeAsync(LIVE_TAIL_FLUSH_DRAIN_MS - 1);
+      expect(finalRows).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+
+      expect(finalRows.map((row) => row.text)).toEqual(['under a very tight deadline']);
+      expect(session.closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test('a retired session cannot write into the next session turn', async () => {
+    const hook = await startMic();
+    const retired = net.transcribeSessions[0];
+    hook.current.stop();
+    await settle();
+    await hook.current.start();
+    await settle();
+    expect(net.transcribeSessions).toHaveLength(2);
+
+    // Its flush already settled at the restart, so a late chunk from that
+    // generation must not surface as a row or leak into the live turn.
+    retired.emitTail('stale tail from a closed session');
+    expect(finalRows).toEqual([]);
+
+    const live = net.transcribeSessions[1];
+    live.callbacks.onmessage({
+      serverContent: { inputTranscription: { text: 'What I did first', finished: false } },
+    });
+    live.callbacks.onmessage({
+      serverContent: { inputTranscription: { text: ' was to look at the history', finished: true } },
+    });
+    expect(finalRows.map((row) => row.text)).toEqual(['What I did first was to look at the history']);
+  });
+
+  test('stopping twice does not leave two sessions draining', async () => {
+    const hook = await startMic();
+    const session = net.transcribeSessions[0];
+    hook.current.stop();
+    hook.current.stop();
+    await settle();
+    expect(session.endSignals).toBe(1);
   });
 });

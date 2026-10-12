@@ -115,6 +115,104 @@ export function createAudioHandoffBuffer<T>(maxFrames: number): AudioHandoffBuff
  */
 export const LIVE_AUDIO_HANDOFF_FRAMES = 40;
 
+/**
+ * Finalise the audio a retired Live session still holds (#87).
+ *
+ * Gemini's activity detection closes a turn only after it has *received* enough
+ * silence. A microphone stream that simply stops — a mute, a teardown, or the
+ * outgoing half of a rotation — never delivers that silence, so the tail of the
+ * sentence stays cached inside the session and dies with the socket. Measured
+ * against the live provider on one 28.7s utterance: stopping the stream with no
+ * signal transcribed 51/64 ground-truth words and lost the whole final clause,
+ * while the identical audio plus `audioStreamEnd` transcribed 62/64 with the
+ * final chunk 261ms later.
+ *
+ * The drain window is deliberately generous against that 261ms observation but
+ * bounded: a socket that never answers must not pin the teardown path.
+ */
+export const LIVE_TAIL_FLUSH_DRAIN_MS = 1_200;
+
+export type LiveTranscribeSessionLike = {
+  sendRealtimeInput?: (input: { audioStreamEnd: boolean }) => unknown;
+  close?: () => unknown;
+};
+
+export type LiveTailFlush = {
+  /** True while the flush has not settled, so callers can skip redundant work. */
+  readonly armed: boolean;
+  /**
+   * Feed one `inputTranscription` chunk observed on the draining session. The
+   * first non-empty chunk settles it; later chunks are ignored so a backend that
+   * emits cumulative hypotheses cannot emit the same tail twice.
+   */
+  accept(chunkText?: string | null): boolean;
+  /**
+   * Stop waiting for a tail (restart, fallback) and close the session. Anything
+   * already captured is still reported: cancelling the wait must not discard words
+   * the provider was given, or muting and immediately un-muting would re-open the
+   * exact loss this flush exists to close.
+   */
+  cancel(): void;
+};
+
+export function flushLiveTranscriptTail(
+  session: LiveTranscribeSessionLike | null,
+  {
+    onSettled,
+    deadlineMs = LIVE_TAIL_FLUSH_DRAIN_MS,
+    setTimer = (callback: () => void, ms: number) => setTimeout(callback, ms),
+    clearTimer = (id: ReturnType<typeof setTimeout>) => clearTimeout(id),
+  }: {
+    onSettled: (text: string | null) => void;
+    deadlineMs?: number;
+    setTimer?: (callback: () => void, ms: number) => ReturnType<typeof setTimeout>;
+    clearTimer?: (id: ReturnType<typeof setTimeout>) => void;
+  },
+): LiveTailFlush {
+  if (!session) {
+    return { armed: false, accept: () => false, cancel: () => {} };
+  }
+
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | null = setTimer(() => finish(null), deadlineMs);
+
+  function finish(text: string | null) {
+    if (settled) return;
+    settled = true;
+    if (timer !== null) {
+      clearTimer(timer);
+      timer = null;
+    }
+    try {
+      session!.close?.();
+    } catch {
+      // The socket is going away either way.
+    }
+    onSettled(text && text.trim() ? text : null);
+  }
+
+  try {
+    session.sendRealtimeInput?.({ audioStreamEnd: true });
+  } catch {
+    finish(null);
+  }
+
+  return {
+    get armed() {
+      return !settled;
+    },
+    accept(chunkText) {
+      if (settled || !chunkText || !String(chunkText).trim()) return false;
+      finish(String(chunkText));
+      return true;
+    },
+    cancel() {
+      finish(null);
+    },
+  };
+}
+
+
 export type TranscriptTurnBuffer = {
   /** Transcript merged for the turn that is still open. */
   readonly pending: string;
