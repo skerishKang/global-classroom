@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   generateContent: vi.fn(),
   authTokensCreate: vi.fn(),
   groqCreate: vi.fn(),
+  googleCtorOptions: [] as any[],
 }));
 
 vi.mock('@google/genai', async (importOriginal) => {
@@ -16,6 +17,9 @@ vi.mock('@google/genai', async (importOriginal) => {
   class GoogleGenAI {
     models = { generateContent: mocks.generateContent };
     authTokens = { create: mocks.authTokensCreate };
+    constructor(options: any) {
+      mocks.googleCtorOptions.push(options);
+    }
   }
   return { ...actual, GoogleGenAI };
 });
@@ -80,6 +84,7 @@ const repeat = (length: number): string => 'a'.repeat(length);
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.googleCtorOptions.length = 0;
   // Fake env key: providers are stubbed, so this never leaves the process.
   process.env.GEMINI_API_KEY = 'test-env-key';
   delete process.env.API_KEY;
@@ -363,6 +368,104 @@ describe('#36 malformed JSON policy', () => {
     expect(res.statusCode).toBe(400);
     expect(mocks.generateContent).not.toHaveBeenCalled();
     expect(mocks.authTokensCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('#85 detector model pool', () => {
+  test('detects with the approved flash-lite pool and falls through an unavailable model', async () => {
+    // The 404 that killed Production detection: the loop must try the next model.
+    mocks.generateContent
+      .mockRejectedValueOnce(new Error('404 model_not_found'))
+      .mockResolvedValueOnce({ text: JSON.stringify({ code: 'ja', confidence: 0.91 }) });
+
+    const res = parseResponse(
+      await detectHandler(makeEvent({ text: 'こんにちは、よろしくお願いします。' })),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json.code).toBe('ja');
+    expect(res.json.confidence).toBe(0.91);
+    expect(res.json.provider).toBe('gemini');
+    expect(mocks.generateContent.mock.calls.map(([request]) => request.model)).toEqual([
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+    ]);
+  });
+
+  test('unusable model output is never reported as an "en" success', async () => {
+    // Broken JSON, then an unsupported code: neither may become a 200 "en".
+    mocks.generateContent
+      .mockResolvedValueOnce({ text: 'Sure! The language here is Korean.' })
+      .mockResolvedValueOnce({ text: JSON.stringify({ code: 'xx', confidence: 0.9 }) });
+
+    const res = parseResponse(await detectHandler(makeEvent({ text: '안녕하세요' })));
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json.code).toBeUndefined();
+    expect(mocks.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  test('a missing confidence is unusable output, not a 0-confidence success', async () => {
+    mocks.generateContent
+      .mockResolvedValueOnce({ text: JSON.stringify({ code: 'ko' }) })
+      .mockResolvedValueOnce({ text: JSON.stringify({ code: 'ko', confidence: 0.8 }) });
+
+    const res = parseResponse(await detectHandler(makeEvent({ text: '안녕하세요' })));
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json.code).toBe('ko');
+    expect(res.json.confidence).toBe(0.8);
+    expect(mocks.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  test('an exhausted pool fails explicitly instead of pretending to detect', async () => {
+    mocks.generateContent.mockRejectedValue(new Error('429 RESOURCE_EXHAUSTED'));
+
+    const res = parseResponse(await detectHandler(makeEvent({ text: 'bonjour tout le monde' })));
+
+    expect(res.statusCode).toBe(500);
+    expect(res.json.code).toBeUndefined();
+    expect(mocks.generateContent).toHaveBeenCalledTimes(2);
+  });
+
+  test('the detector client is latency-bounded with no retry stacking', async () => {
+    mocks.generateContent.mockResolvedValue({ text: JSON.stringify({ code: 'en', confidence: 0.9 }) });
+
+    await detectHandler(makeEvent({ text: 'hello' }));
+
+    // The Google SDK requires a request timeout of at least 10 seconds, so the
+    // detector stays bounded by the candidate count rather than by retries.
+    const options = mocks.googleCtorOptions[0];
+    expect(options?.httpOptions?.timeout).toBeGreaterThanOrEqual(10_000);
+    expect(options?.httpOptions?.retryOptions?.attempts).toBe(1);
+    expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  test('without a Google credential the detector fails before any provider call', async () => {
+    delete process.env.GEMINI_API_KEY;
+    process.env.GROQ_API_KEY = 'test-groq-key';
+
+    const res = parseResponse(await detectHandler(makeEvent({ text: 'hello' })));
+
+    expect(res.statusCode).toBe(500);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+    expect(mocks.groqCreate).not.toHaveBeenCalled();
+  });
+
+  test('the retired legacy detector routes are gone from source', () => {
+    const source = readSource('netlify/functions/detect-language.ts');
+
+    for (const retired of [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'gemini-2.0-flash',
+      'gemini-2.5-flash-lite',
+    ]) {
+      expect(source, retired).not.toContain(retired);
+    }
+
+    expect(source).toContain("'gemini-3.5-flash-lite'");
+    expect(source).toContain("'gemini-3.1-flash-lite'");
   });
 });
 

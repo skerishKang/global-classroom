@@ -36,23 +36,23 @@
 
 각 경로의 모델/정책은 동일하지 않다. **위 5개 모델은 최종 텍스트 번역·답변의 라우트**이며, Live, Vision, TTS, 히스토리의 모델까지 그 5개로 일괄 교체하는 지시가 아니다.
 
-## 3. 언어 자동 감지: 구형 모델이 남아 있는 별도 결함
+## 3. 언어 자동 감지: 승인 카탈로그의 저지연 부분집합
 
-현재 `netlify/functions/detect-language.ts`는 아래 **레거시 구현(AS-IS)**을 사용한다. **이 4개를 제품의 최신 모델 목록으로 설명하면 안 된다.**
+[#85](https://github.com/skerishKang/global-classroom/issues/85)에서 `netlify/functions/detect-language.ts`의 레거시 감지 전용 라우트를 폐기하고, 승인된 카탈로그의 **저지연 부분집합**으로 교체했다.
 
 ```text
-현재 /api/detect-language (아직 변경되지 않음):
-  Gemini 2.5 Flash-Lite
-  → Gemini 2.0 Flash
-  → Groq Llama 3.3 70B Versatile
-  → Groq Llama 3.1 8B Instant
+/api/detect-language (구현된 후보 순서):
+  Gemini 3.5 Flash-Lite   (gemini-3.5-flash-lite)
+  → Gemini 3.1 Flash-Lite (gemini-3.1-flash-lite)
 ```
 
-- Production에서 `llama-3.3-70b-versatile`에 **404 model_not_found**, `/api/detect-language`에 **HTTP 500**이 확인되었다.
-- 코드상 **429를 제외한 모델 오류에서 다음 후보로 진행하지 않는 `break`**가 있다. 따라서 다음 Llama 8B가 등록돼도 실제로 도달하지 못할 수 있다.
-- Live 전사의 언어 메타데이터와, Browser SpeechRecognition/Groq Whisper fallback의 `/api/detect-language` 호출은 구별한다.
-- **TO-BE / 구현 전:** [#85](https://github.com/skerishKang/global-classroom/issues/85)에서 더 이상 접근 불가능한/구형 감지 전용 모델을 현재 **승인된 5개 모델 카탈로그 내의 검증된 저지연 후보**로 교체하고, 404/429/5xx/timeout/유효하지 않은 모델 응답에 안전하게 폴백한다. 감지 모델의 **정확한 최적 순서와 범위는 측정 후 #85 구현에서 결정**한다. 이 문서 변경만으로 감지 모델이 이미 교체된 것은 아니다.
-- Llama 자체가 언어 감지를 못하는 것은 아니며, **현재 특정 모델/키 접근 불가와 실패 처리 코드**가 문제다. Llama를 최신 7개 번역·답변 모델에 포함된 것으로 해석하지 않는다.
+- **폐기된 라우트:** `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`. 이들은 승인 카탈로그가 아니었고, 70B는 Production에서 **404 model_not_found**를 반환했다.
+- **실패 처리 수정:** 429만 다음 후보로 진행하고 나머지 오류에서는 멈추던 `break`를 제거했다. 이제 **404 / 429 / 5xx / timeout / 사용 불가 응답이 모두 다음 후보로 폴백**한다.
+- **잘못된 `en` 성공 제거:** 지원하지 않는 코드, 깨진 JSON, confidence 누락은 **모델 실패**로 처리한다. 이전 구현은 이런 응답도 `code: "en"` 200으로 반환해 잘못된 언어를 성공처럼 보고했다.
+- **지연 상한:** 후보별 Google 클라이언트 timeout 10초(기존 #36 기준의 최소값) + 총 예산 18초. 후보가 둘이라 최악값은 약 20초로, #84에서 관측된 504 임계 아래에 머문다.
+- Live 전사의 언어 메타데이터와 Browser SpeechRecognition/Groq Whisper fallback의 `/api/detect-language` 호출은 계속 구별한다.
+- 감지 전용 텍스트 휴리스틱 경로는 이번 범위에 넣지 않았다(#85에서 선택 사항).
+- **반영 상태:** 이 문서와 소스는 #85 PR로 함께 병합된다. Production은 **main 병합 → Netlify 자동 배포** 시점부터 위 두 후보를 사용하며, 그 전까지는 폐기된 4개 라우트가 그대로 동작한다.
 
 ## 4. 장애·우선순위 및 검증 게이트
 
