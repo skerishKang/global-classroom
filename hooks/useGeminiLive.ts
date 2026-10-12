@@ -2,6 +2,14 @@ import { useState, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
 import { ConnectionStatus, Language } from '../types';
 import { float32ToInt16, arrayBufferToBase64, base64ToUint8Array, decodeAudioData, pcm16Base64ToWavBlob } from '../utils/audioUtils';
+import {
+    LIVE_TRANSCRIBE_MODEL,
+    LIVE_VAD_SILENCE_MS,
+    mergeLiveTranscriptChunk,
+    shouldCutGroqChunk,
+    startSpeechSilenceProbe,
+    type SpeechSilenceProbe,
+} from '../utils/liveTranscriptTurn';
 
 interface UseGeminiLiveProps {
     langInput: Language;
@@ -11,25 +19,19 @@ interface UseGeminiLiveProps {
     settings: { recordOriginalEnabled: boolean };
 }
 
-export const GLOBAL_TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live';
+export const GLOBAL_TRANSCRIBE_MODEL = LIVE_TRANSCRIBE_MODEL;
 export const MAX_FALLBACK_PCM_BYTES = 2_500_000;
 
-export function mergeLiveTranscriptChunk(previous: string, incoming: string) {
-    if (!incoming) return previous;
-    if (!previous) return incoming;
-    // Some Live backends emit cumulative hypotheses while others emit deltas.
-    // Accept both without duplicating an already-seen prefix/suffix.
-    if (incoming.startsWith(previous)) return incoming;
-    if (previous.endsWith(incoming)) return previous;
-    return previous + incoming;
-}
+// #87: the chunk merge and the Live turn boundary are shared with Interview mode so
+// the two transcription paths cannot drift apart again.
+export { mergeLiveTranscriptChunk };
 
 export function buildGlobalTranscribeConfig(languageCode: string) {
     return {
         responseModalities: [Modality.TEXT],
         realtimeInputConfig: {
             automaticActivityDetection: {
-                silenceDurationMs: 650,
+                silenceDurationMs: LIVE_VAD_SILENCE_MS,
             },
         },
         inputAudioTranscription: {
@@ -86,6 +88,9 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
     const fallbackChunksRef = useRef<Blob[]>([]);
     const fallbackCycleTimerRef = useRef<number | null>(null);
     const fallbackActiveRef = useRef(false);
+    // #87: the Groq fallback cuts at a speech pause instead of a fixed clock.
+    const fallbackProbeRef = useRef<SpeechSilenceProbe | null>(null);
+    const fallbackCycleStartedAtRef = useRef(0);
 
     const cleanupAudio = useCallback(() => {
         if (browserRestartTimerRef.current) {
@@ -100,7 +105,7 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
         browserRecognitionRef.current = null;
 
         if (fallbackCycleTimerRef.current) {
-            window.clearTimeout(fallbackCycleTimerRef.current);
+            window.clearInterval(fallbackCycleTimerRef.current);
             fallbackCycleTimerRef.current = null;
         }
         try {
@@ -111,6 +116,8 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             // no-op
         }
         fallbackRecorderRef.current = null;
+        fallbackProbeRef.current?.stop();
+        fallbackProbeRef.current = null;
         fallbackStreamRef.current?.getTracks().forEach(track => track.stop());
         fallbackStreamRef.current = null;
         fallbackChunksRef.current = [];
@@ -237,6 +244,8 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             }
 
             fallbackStreamRef.current = stream;
+            fallbackProbeRef.current?.stop();
+            fallbackProbeRef.current = startSpeechSilenceProbe(stream);
             startOriginalRecording(stream);
             const mimeType = [
                 'audio/webm;codecs=opus',
@@ -259,9 +268,11 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
 
             recorder.onstop = async () => {
                 if (fallbackCycleTimerRef.current) {
-                    window.clearTimeout(fallbackCycleTimerRef.current);
+                    window.clearInterval(fallbackCycleTimerRef.current);
                     fallbackCycleTimerRef.current = null;
                 }
+                fallbackProbeRef.current?.stop();
+                fallbackProbeRef.current = null;
 
                 const blob = new Blob(fallbackChunksRef.current, {
                     type: recorder.mimeType || mimeType || 'audio/webm',
@@ -286,12 +297,22 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                 }
             };
 
+            // #87: a fixed 5500ms stop cut speech mid-sentence. Cut at a real pause
+            // once a minimum window is captured, with a bounded maximum instead.
+            fallbackCycleStartedAtRef.current = Date.now();
             recorder.start(250);
-            fallbackCycleTimerRef.current = window.setTimeout(() => {
-                if (fallbackRecorderRef.current?.state === 'recording') {
+            fallbackCycleTimerRef.current = window.setInterval(() => {
+                if (fallbackRecorderRef.current?.state !== 'recording') return;
+                const now = Date.now();
+                if (
+                    shouldCutGroqChunk({
+                        elapsedMs: now - fallbackCycleStartedAtRef.current,
+                        silenceMs: fallbackProbeRef.current?.silenceMs() ?? 0,
+                    })
+                ) {
                     fallbackRecorderRef.current.stop();
                 }
-            }, 5500);
+            }, 150);
         } catch (error) {
             fallbackStreamRef.current?.getTracks().forEach(track => track.stop());
             fallbackStreamRef.current = null;

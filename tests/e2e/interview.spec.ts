@@ -459,7 +459,16 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
             if (socket.role !== 'transcribe' || socket.readyState !== 1) continue;
             const text = socket.turn.trim();
             if (!text) continue;
-            socket.emit({ serverContent: { inputTranscription: { text } } });
+            // Google documents input_transcription as the finalized speech segment and
+            // finished/turnComplete as the turn boundary. #87 commits one row per
+            // Live turn, so the mock emits the same shape the provider sends (and
+            // the shape the normal-mode harness already uses).
+            socket.emit({
+              serverContent: {
+                inputTranscription: { text, finished: true },
+                turnComplete: true,
+              },
+            });
             socket.turn = '';
           }
         },
@@ -1158,7 +1167,13 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
       answerMock.finalize = (text: string, languageCode: string) => {
         for (const socket of sockets) {
           if (socket.model.includes('transcribe')) {
-            socket.emit({ serverContent: { inputTranscription: { text, languageCode } } });
+            // Finalized segment + Live turn boundary, as documented (#87).
+            socket.emit({
+              serverContent: {
+                inputTranscription: { text, languageCode, finished: true },
+                turnComplete: true,
+              },
+            });
           }
         }
       };

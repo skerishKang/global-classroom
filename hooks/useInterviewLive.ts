@@ -8,6 +8,18 @@ import {
   type TranslationSessionRequest,
 } from '../utils/interviewTranslationSessions';
 import type { TranslationTarget } from '../utils/interviewTranslationRouter';
+import {
+  LIVE_SESSION_ROTATE_MS,
+  LIVE_TRANSCRIBE_MODEL,
+  LIVE_VAD_SILENCE_MS,
+  TRANSCRIPT_TURN_STALL_MS,
+  createTranscriptTurnBuffer,
+  resolveRecognitionLanguage,
+  shouldCutGroqChunk,
+  shouldFlushStalledTurn,
+  startSpeechSilenceProbe,
+  type SpeechSilenceProbe,
+} from '../utils/liveTranscriptTurn';
 
 export type InterviewLiveStatus = 'idle' | 'connecting' | 'live' | 'error';
 
@@ -37,9 +49,15 @@ type UseInterviewLiveOptions = {
   detectLanguage?: (text: string) => Promise<string | undefined>;
   onWarning?: (message: string) => void;
   onFatalError?: (message: string) => void;
+  /**
+   * Explicit source-language hint for the fallback transcribers. Browser
+   * SpeechRecognition has no language identity, so it must never rely on the
+   * browser locale alone (#87).
+   */
+  sourceLanguageHint?: string;
 };
 
-const TRANSCRIBE_MODEL = 'gemini-3.5-transcribe-live';
+const TRANSCRIBE_MODEL = LIVE_TRANSCRIBE_MODEL;
 const TRANSLATE_MODEL = 'gemini-3.5-live-translate-preview';
 const DEFAULT_TRANSLATION_TARGETS: readonly TranslationTarget[] = ['en', 'ko'];
 
@@ -96,6 +114,7 @@ export function useInterviewLive({
   detectLanguage,
   onWarning,
   onFatalError,
+  sourceLanguageHint,
 }: UseInterviewLiveOptions) {
   const [status, setStatus] = useState<InterviewLiveStatus>('idle');
   const [translatePreviewAvailable, setTranslatePreviewAvailable] = useState(false);
@@ -113,17 +132,61 @@ export function useInterviewLive({
   const inputContextRef = useRef<AudioContext | null>(null);
   const captureRef = useRef<InterviewAudioCapture | null>(null);
   const transcribeSessionRef = useRef<any>(null);
+  // #87: one Live turn is one row. Chunks merge into an open turn and commit at
+  // the turn boundary instead of each chunk creating its own final row.
+  const turnBufferRef = useRef(createTranscriptTurnBuffer());
+  const transcribeGenerationRef = useRef(0);
+  const transcribeRotateTimerRef = useRef<number | null>(null);
+  const turnStallTimerRef = useRef<number | null>(null);
+  const lastTurnChunkAtRef = useRef(0);
+  const groqProbeRef = useRef<SpeechSilenceProbe | null>(null);
+  const groqCycleStartedAtRef = useRef(0);
+  const observedSourceLanguageRef = useRef<string | undefined>(undefined);
   const translationRef = useRef<InterviewTranslationSessions | null>(null);
   const targetsRef = useRef<readonly TranslationTarget[]>(translationTargets);
   targetsRef.current = translationTargets;
 
   // Callbacks are read through a ref so the session lifecycle can be created
   // once per start() without being rebuilt when a caller re-renders.
-  const handlersRef = useRef({ onFinalTranscript, onUtteranceStart, onLiveTranslation, onWarning });
-  handlersRef.current = { onFinalTranscript, onUtteranceStart, onLiveTranslation, onWarning };
+  const handlersRef = useRef({
+    onInterimTranscript,
+    onFinalTranscript,
+    onUtteranceStart,
+    onLiveTranslation,
+    onWarning,
+  });
+  handlersRef.current = {
+    onInterimTranscript,
+    onFinalTranscript,
+    onUtteranceStart,
+    onLiveTranslation,
+    onWarning,
+  };
 
   const detectLanguageRef = useRef(detectLanguage);
   detectLanguageRef.current = detectLanguage;
+
+  const sourceLanguageHintRef = useRef(sourceLanguageHint);
+  sourceLanguageHintRef.current = sourceLanguageHint;
+
+  const glossaryTermsRef = useRef(glossaryTerms);
+  glossaryTermsRef.current = glossaryTerms;
+
+  /**
+   * #87: the Groq fallback cuts a chunk at a real speech pause instead of a
+   * fixed clock, so a long sentence is not truncated mid-word. A lightweight RMS
+   * probe is the only signal available on a MediaRecorder stream.
+   */
+  const stopGroqSilenceProbe = useCallback(() => {
+    const probe = groqProbeRef.current;
+    groqProbeRef.current = null;
+    probe?.stop();
+  }, []);
+
+  const startGroqSilenceProbe = useCallback((stream: MediaStream) => {
+    stopGroqSilenceProbe();
+    groqProbeRef.current = startSpeechSilenceProbe(stream);
+  }, [stopGroqSilenceProbe]);
 
   /**
    * Fallback transcribers deliver no language identity, so the finalized
@@ -158,9 +221,10 @@ export function useInterviewLive({
     browserRecognitionRef.current = null;
 
     if (groqCycleTimerRef.current) {
-      window.clearTimeout(groqCycleTimerRef.current);
+      window.clearInterval(groqCycleTimerRef.current);
       groqCycleTimerRef.current = null;
     }
+    stopGroqSilenceProbe();
     try {
       if (groqRecorderRef.current?.state === 'recording') {
         groqRecorderRef.current.stop();
@@ -190,16 +254,28 @@ export function useInterviewLive({
     translationRef.current?.stop();
     translationRef.current = null;
 
+    if (transcribeRotateTimerRef.current) {
+      window.clearTimeout(transcribeRotateTimerRef.current);
+      transcribeRotateTimerRef.current = null;
+    }
+    if (turnStallTimerRef.current) {
+      window.clearTimeout(turnStallTimerRef.current);
+      turnStallTimerRef.current = null;
+    }
+    // Invalidate the outbound session before closing it so its onclose callback
+    // is not mistaken for a real provider failure.
+    transcribeGenerationRef.current += 1;
     try {
       transcribeSessionRef.current?.close?.();
     } catch {
       // no-op
     }
     transcribeSessionRef.current = null;
+    turnBufferRef.current.reset();
 
     setTranslatePreviewAvailable(false);
     setBackend('idle');
-  }, []);
+  }, [stopGroqSilenceProbe]);
 
   const stop = useCallback(() => {
     desiredRef.current = false;
@@ -242,6 +318,7 @@ export function useInterviewLive({
 
       groqStreamRef.current = stream;
       groqChunksRef.current = [];
+      startGroqSilenceProbe(stream);
       const mimeType = [
         'audio/webm;codecs=opus',
         'audio/webm',
@@ -294,12 +371,22 @@ export function useInterviewLive({
         }
       };
 
+      // #87: a fixed 5500ms stop cut speech mid-sentence. Cut at a real pause
+      // once a minimum window is captured, with a bounded maximum instead.
+      groqCycleStartedAtRef.current = Date.now();
       recorder.start(250);
-      groqCycleTimerRef.current = window.setTimeout(() => {
-        if (groqRecorderRef.current?.state === 'recording') {
+      groqCycleTimerRef.current = window.setInterval(() => {
+        if (groqRecorderRef.current?.state !== 'recording') return;
+        const now = Date.now();
+        if (
+          shouldCutGroqChunk({
+            elapsedMs: now - groqCycleStartedAtRef.current,
+            silenceMs: groqProbeRef.current?.silenceMs() ?? 0,
+          })
+        ) {
           groqRecorderRef.current.stop();
         }
-      }, 5500);
+      }, 150);
     } catch (error) {
       groqStreamRef.current?.getTracks().forEach((track) => track.stop());
       groqStreamRef.current = null;
@@ -327,7 +414,14 @@ export function useInterviewLive({
       const recognition = new SpeechRecognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = navigator.language || 'ko-KR';
+      // #87: an English interview must not be bound to the browser locale.
+      // Prefer the explicit hint, then the source language actually observed on
+      // this microphone, and only then the browser locale.
+      recognition.lang = resolveRecognitionLanguage({
+        hint: sourceLanguageHintRef.current,
+        observed: observedSourceLanguageRef.current,
+        navigatorLanguage: navigator.language,
+      });
       let finalized = '';
 
       recognition.onstart = () => {
@@ -348,9 +442,10 @@ export function useInterviewLive({
               // The browser transcriber has no language identity; resolve it
               // authoritatively before the row's routing is decided.
               const utteranceId = `browser-${Date.now()}`;
-              void resolveLanguageCode(committed).then((languageCode) =>
-                handlersRef.current.onFinalTranscript(committed, utteranceId, languageCode)
-              );
+              void resolveLanguageCode(committed).then((languageCode) => {
+                if (languageCode) observedSourceLanguageRef.current = languageCode;
+                handlersRef.current.onFinalTranscript(committed, utteranceId, languageCode);
+              });
             }
           } else {
             interim += text;
@@ -412,7 +507,8 @@ export function useInterviewLive({
         responseModalities: ['AUDIO'],
         realtimeInputConfig: {
           automaticActivityDetection: {
-            silenceDurationMs: 650,
+            // #87: one shared activity-detection window for both Live paths.
+            silenceDurationMs: LIVE_VAD_SILENCE_MS,
           },
         },
         inputAudioTranscription: {},
@@ -455,6 +551,182 @@ export function useInterviewLive({
     };
   }, []);
 
+  /**
+   * #87: the Interview microphone owns exactly one Live transcription session.
+   * Creating it here (instead of inline in start()) also lets it be rotated
+   * before the provider's session limit, so a long interview is not permanently
+   * dropped to browser speech recognition.
+   */
+  const connectTranscribeSession = useCallback(async () => {
+    const generation = transcribeGenerationRef.current;
+    const isCurrentSession = () =>
+      desiredRef.current && generation === transcribeGenerationRef.current;
+
+    /** One final row per turn: the turn boundary and the stall safety net share it. */
+    const commitPendingTurn = () => {
+      if (turnStallTimerRef.current) {
+        window.clearTimeout(turnStallTimerRef.current);
+        turnStallTimerRef.current = null;
+      }
+      const committedTranscript = turnBufferRef.current.finishTurn();
+      if (!committedTranscript) return;
+
+      // The authoritative transcript boundary is the translation context
+      // boundary: the finished utterance keeps its own session so its
+      // translation can never carry an earlier one.
+      handlersRef.current.onFinalTranscript(
+        committedTranscript,
+        translationRef.current?.activeUtteranceId || '',
+        observedSourceLanguageRef.current,
+      );
+      translationRef.current?.rotate();
+    };
+
+    const scheduleStallFlush = () => {
+      if (turnStallTimerRef.current) window.clearTimeout(turnStallTimerRef.current);
+      turnStallTimerRef.current = window.setTimeout(() => {
+        turnStallTimerRef.current = null;
+        if (!isCurrentSession()) return;
+        const sinceLastChunkMs = Date.now() - lastTurnChunkAtRef.current;
+        if (
+          !shouldFlushStalledTurn({
+            hasPending: Boolean(turnBufferRef.current.pending),
+            sinceLastChunkMs,
+          })
+        ) {
+          return;
+        }
+        commitPendingTurn();
+      // The timer only checks the predicate below, which owns the threshold, so
+      // it is scheduled slightly later than the threshold itself.
+      }, TRANSCRIPT_TURN_STALL_MS + 250);
+    };
+
+    const token = await fetchLiveToken(TRANSCRIBE_MODEL);
+    const ai = new GoogleGenAI({ apiKey: token, httpOptions: { apiVersion: 'v1alpha' } });
+    const session = await ai.live.connect({
+      model: TRANSCRIBE_MODEL,
+      config: {
+        responseModalities: ['TEXT'],
+        realtimeInputConfig: {
+          automaticActivityDetection: {
+            // #87: 650ms ended the turn on ordinary 0.7-1.5s thinking pauses.
+            silenceDurationMs: LIVE_VAD_SILENCE_MS,
+          },
+        },
+        inputAudioTranscription: {
+          languageCodes: [],
+          customVocabulary: Array.from(new Set([
+            ...CUSTOM_VOCABULARY,
+            ...glossaryTermsRef.current,
+          ])).slice(0, 100),
+          mode: 'VERBATIM',
+        },
+      } as any,
+      callbacks: {
+        onopen: () => {},
+        onmessage: (message: any) => {
+          if (!isCurrentSession()) return;
+          const content = message?.serverContent;
+          const interim = content?.interimInputTranscription?.text;
+          const finalChunk = content?.inputTranscription;
+          // Authoritative source-language identity when the transcriber emits it.
+          const finalLanguageCode = finalChunk?.languageCode;
+
+          if (finalLanguageCode) observedSourceLanguageRef.current = String(finalLanguageCode);
+          if (interim) handlersRef.current.onInterimTranscript(String(interim).trim());
+          if (finalChunk?.text) {
+            turnBufferRef.current.merge(String(finalChunk.text));
+            lastTurnChunkAtRef.current = Date.now();
+          }
+
+          // #87: one Live turn is one row. Committing every `inputTranscription`
+          // chunk (the previous behaviour) split a single sentence into several
+          // partial rows and rotated the Live Translate session mid-sentence.
+          const turnFinished = Boolean(
+            finalChunk?.finished || content?.turnComplete || content?.generationComplete,
+          );
+          if (turnFinished) {
+            commitPendingTurn();
+            return;
+          }
+          // The boundary has not arrived yet: keep the turn open, but never hold
+          // a stalled turn forever (see TRANSCRIPT_TURN_STALL_MS).
+          if (turnBufferRef.current.pending) scheduleStallFlush();
+        },
+        onerror: (error: any) => {
+          if (!isCurrentSession()) return;
+          const message = error?.message || String(error);
+          beginFallback(`Gemini 실시간 전사 오류: ${message}`);
+        },
+        onclose: (event: any) => {
+          if (!isCurrentSession()) return;
+          beginFallback(`Gemini 실시간 전사 연결이 종료되었습니다: ${event?.reason || 'connection closed'}`);
+        },
+      },
+    } as any);
+
+    return session;
+  }, [beginFallback]);
+
+  const rotateTranscribeSessionRef = useRef<() => void>(() => {});
+
+  const scheduleTranscribeRotation = useCallback(() => {
+    if (transcribeRotateTimerRef.current) {
+      window.clearTimeout(transcribeRotateTimerRef.current);
+    }
+    transcribeRotateTimerRef.current = window.setTimeout(() => {
+      rotateTranscribeSessionRef.current();
+    }, LIVE_SESSION_ROTATE_MS);
+  }, []);
+
+  const rotateTranscribeSession = useCallback(async () => {
+    if (!desiredRef.current || fallbackStartedRef.current) return;
+    const previous = transcribeSessionRef.current;
+
+    // A rotation boundary can land mid-sentence; keep the transcript already
+    // captured instead of dropping it together with the outgoing session.
+    const pendingBeforeRotation = turnBufferRef.current.finishTurn();
+    if (pendingBeforeRotation) {
+      handlersRef.current.onFinalTranscript(
+        pendingBeforeRotation,
+        translationRef.current?.activeUtteranceId || '',
+        observedSourceLanguageRef.current,
+      );
+      translationRef.current?.rotate();
+    }
+
+    // Invalidate the outgoing session before it closes so its onclose cannot be
+    // mistaken for a real provider failure (#87).
+    transcribeGenerationRef.current += 1;
+    try {
+      const next = await connectTranscribeSession();
+      if (!desiredRef.current || fallbackStartedRef.current) {
+        try {
+          next?.close?.();
+        } catch {
+          // no-op
+        }
+        return;
+      }
+      transcribeSessionRef.current = next;
+      scheduleTranscribeRotation();
+      try {
+        previous?.close?.();
+      } catch {
+        // no-op
+      }
+    } catch (error) {
+      beginFallback(
+        `Gemini 실시간 전사 세션 갱신 실패: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }, [beginFallback, connectTranscribeSession, scheduleTranscribeRotation]);
+
+  rotateTranscribeSessionRef.current = () => {
+    void rotateTranscribeSession();
+  };
+
   const start = useCallback(async () => {
     if (desiredRef.current) return;
     desiredRef.current = true;
@@ -464,64 +736,12 @@ export function useInterviewLive({
     cleanup();
 
     try {
-      const transcribeToken = await fetchLiveToken(TRANSCRIBE_MODEL);
-      if (!desiredRef.current) return;
-
-      const transcribeAi = new GoogleGenAI({ apiKey: transcribeToken, httpOptions: { apiVersion: 'v1alpha' } });
-      const transcribeSession = await transcribeAi.live.connect({
-        model: TRANSCRIBE_MODEL,
-        config: {
-          responseModalities: ['TEXT'],
-          realtimeInputConfig: {
-            automaticActivityDetection: {
-              silenceDurationMs: 650,
-            },
-          },
-          inputAudioTranscription: {
-            languageCodes: [],
-            customVocabulary: Array.from(new Set([
-              ...CUSTOM_VOCABULARY,
-              ...glossaryTerms,
-            ])).slice(0, 100),
-            mode: 'VERBATIM',
-          },
-        } as any,
-        callbacks: {
-          onopen: () => {},
-          onmessage: (message: any) => {
-            const content = message?.serverContent;
-            const interim = content?.interimInputTranscription?.text;
-            const finalText = content?.inputTranscription?.text;
-            // Authoritative source-language identity when the transcriber emits it.
-            const finalLanguageCode = content?.inputTranscription?.languageCode;
-
-            if (interim) {
-              onInterimTranscript(String(interim).trim());
-            }
-            if (finalText) {
-              const committedTranscript = String(finalText).trim();
-              if (committedTranscript) {
-                // The authoritative transcript boundary is the translation
-                // context boundary: the finished utterance keeps its own session
-                // so its translation can never carry an earlier one.
-                const utteranceId = translationRef.current?.activeUtteranceId || '';
-                handlersRef.current.onFinalTranscript(committedTranscript, utteranceId, finalLanguageCode);
-                translationRef.current?.rotate();
-              }
-            }
-          },
-          onerror: (error: any) => {
-            if (!desiredRef.current) return;
-            const message = error?.message || String(error);
-            beginFallback(`Gemini 실시간 전사 오류: ${message}`);
-          },
-          onclose: (event: any) => {
-            if (!desiredRef.current) return;
-            beginFallback(`Gemini 실시간 전사 연결이 종료되었습니다: ${event?.reason || 'connection closed'}`);
-          },
-        },
-      } as any);
-      transcribeSessionRef.current = transcribeSession;
+      transcribeSessionRef.current = await connectTranscribeSession();
+      if (!desiredRef.current) {
+        cleanup();
+        return;
+      }
+      scheduleTranscribeRotation();
 
       // Translation preview is optional. Failure here must never take down authoritative transcription.
       try {
@@ -619,10 +839,10 @@ export function useInterviewLive({
   }, [
     beginFallback,
     cleanup,
+    connectTranscribeSession,
     connectTranslationSession,
-    glossaryTerms,
-    onInterimTranscript,
     onWarning,
+    scheduleTranscribeRotation,
   ]);
 
   return {
