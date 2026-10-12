@@ -6,6 +6,7 @@ import {
   MAX_FALLBACK_PCM_BYTES,
   buildGlobalTranscribeConfig,
 } from '../../hooks/useGeminiLive';
+import { LIVE_VAD_SILENCE_MS } from '../../utils/liveTranscriptTurn';
 
 describe('#58 Global Classroom voice transcription contract', () => {
   test('uses the dedicated Gemini 3.5 live transcription model', () => {
@@ -17,7 +18,8 @@ describe('#58 Global Classroom voice transcription contract', () => {
       responseModalities: ['TEXT'],
       realtimeInputConfig: {
         automaticActivityDetection: {
-          silenceDurationMs: 650,
+          // #87: one shared activity-detection window for every Live path.
+          silenceDurationMs: LIVE_VAD_SILENCE_MS,
         },
       },
       inputAudioTranscription: {

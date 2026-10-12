@@ -34,7 +34,23 @@ self.addEventListener('fetch', (event) => {
           }
           return response;
         })
-        .catch(() => caches.match(request))
+        .catch(async () => {
+          // #87: 네비게이션 실패 시 반드시 Response를 돌려준다.
+          // (?mode=interview 처럼 쿼리가 붙은 URL은 미리 캐시한 '/'와 다른
+          // 요청이라, 이전에는 undefined가 respondWith로 전달되어
+          // "TypeError: Failed to fetch"로 화면 전체가 실패했다.)
+          const cached = await caches.match(request, { ignoreSearch: true });
+          if (cached) return cached;
+          const shell = await caches.match('/');
+          if (shell) return shell;
+          return new Response(
+            '<!doctype html><meta charset="utf-8"><title>오프라인</title><p>네트워크에 연결할 수 없습니다. 연결 후 다시 시도해 주세요.</p>',
+            {
+              status: 503,
+              headers: { 'Content-Type': 'text/html; charset=utf-8' },
+            }
+          );
+        })
     );
     return;
   }
