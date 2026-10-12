@@ -233,7 +233,31 @@ describe('#62 interview answer assist endpoint', () => {
     ));
     expect(res.statusCode).toBe(200);
     expect(mocks.groqCreate.mock.calls[1]?.[0]?.model).toBe('openai/gpt-oss-120b');
-    expect(mocks.generateContent.mock.calls[0]?.[0]?.model).toBe('gemma-4-26b-a4b-it');
+    expect(mocks.generateContent.mock.calls[0]?.[0]?.model).toBe('gemini-3.5-flash-lite');
+  });
+
+  test('answer pool order matches the owner-approved translation order', async () => {
+    mocks.groqCreate.mockRejectedValue(new Error('route unavailable'));
+    // Every route fails until the last one, so the whole pool is observable.
+    mocks.generateContent
+      .mockRejectedValueOnce(new Error('flash-lite 3.5 unavailable'))
+      .mockResolvedValueOnce({ text: '{"shouldAnswer":true,"answer":"ok"}' });
+
+    const res = await handler(postEvent(
+      { text: 'Explain GC.', answerLanguage: 'ko' },
+      { 'x-user-api-key': 'k' },
+    ));
+
+    expect(res.statusCode).toBe(200);
+    expect(mocks.groqCreate.mock.calls.map(([request]) => request.model)).toEqual([
+      'openai/gpt-oss-20b',
+      'openai/gpt-oss-120b',
+      'qwen/qwen3.8-27b',
+    ]);
+    expect(mocks.generateContent.mock.calls.map(([request]) => request.model)).toEqual([
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+    ]);
   });
 
   test('fails closed on malformed or empty model output', async () => {

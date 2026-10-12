@@ -288,7 +288,32 @@ describe('#36 model allowlists', () => {
     );
     expect(res.statusCode).toBe(200);
     expect(res.json.translated).toBe('translated');
-    expect(mocks.generateContent.mock.calls[0][0].model).toBe('gemma-4-26b-a4b-it');
+    expect(mocks.generateContent.mock.calls[0][0].model).toBe('gemini-3.5-flash-lite');
+  });
+
+  test('translate pool order is the owner-approved order, with Gemma 4 removed', async () => {
+    process.env.GROQ_API_KEY = 'test-groq-key';
+    mocks.groqCreate.mockRejectedValue(new Error('route unavailable'));
+    // Every route fails until the last one, so the whole pool is observable.
+    mocks.generateContent
+      .mockRejectedValueOnce(new Error('flash-lite 3.5 unavailable'))
+      .mockResolvedValueOnce({ text: 'translated' });
+
+    const res = parseResponse(
+      await translateHandler(makeEvent({ text: 'Hello', from: 'English', to: 'French' })),
+    );
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json.translated).toBe('translated');
+    expect(mocks.groqCreate.mock.calls.map(([request]) => request.model)).toEqual([
+      'openai/gpt-oss-20b',
+      'openai/gpt-oss-120b',
+      'qwen/qwen3.8-27b',
+    ]);
+    expect(mocks.generateContent.mock.calls.map(([request]) => request.model)).toEqual([
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+    ]);
   });
 });
 

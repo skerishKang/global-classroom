@@ -26,9 +26,9 @@ const GROQ_MODELS = [
 ];
 
 // Google-family fallbacks after Groq, same order as translate.ts.
+// Owner instruction (2026-10-12): same pool as translation - the three Groq
+// routes plus these two Gemini Flash-Lite fallbacks, with the Gemma 4 entries removed.
 const GOOGLE_MODELS = [
-    'gemma-4-26b-a4b-it',
-    'gemma-4-31b-it',
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
 ];
