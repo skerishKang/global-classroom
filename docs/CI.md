@@ -24,7 +24,7 @@ npm run build      vite build + postbuild
 - Node 22 (`actions/setup-node`, Netlify 빌드 이미지 noble과 동일 메이저), npm 캐시 사용.
 - `permissions: contents: read`만 부여하고 secret을 참조하지 않는다.
 - **실 provider 호출이나 유료 모델 테스트를 넣지 않는다.** 키 없이 통과해야 하는 게이트다.
-- job timeout 15분. 전체 실행 시간은 PR에 측정값으로 기록한다.
+- job timeout 15분. 실측 실행 시간(2026-10-12, ubuntu-latest): PR 실행 **36초**, main push 실행 **38초**.
 
 ## 3. 실패했을 때 확인할 위치
 
@@ -61,7 +61,9 @@ PR HEAD의 verify PASS + exact head 확인
 → Production smoke
 ```
 
-required check 등록 여부는 저장소 설정 상태를 따른다. **`verify`가 required로 등록되지 않았다면 원격은 검사만 실행하고 병합을 차단하지 않는다** — 그 상태를 병합 차단 성공으로 보고하지 않는다.
+required check는 Repository Ruleset **`main-verify-gate`** (id `24930109`, `enforcement=active`, target = 기본 브랜치)로 등록돼 있고, required context는 **`verify`**이다. 이 ruleset에는 `required_status_checks`만 넣었고 `pull_request`/`non_fast_forward` 규칙은 넣지 않았다(최소 구성).
+
+병합 차단은 실제로 확인했다: 일회용 프로브 PR(#100, 병합하지 않고 종료)에서 `verify`가 **FAILURE**로 끝나자 GitHub이 그 PR의 `mergeStateStatus`를 **BLOCKED**로 보고했다. 차단이 필요 없어지면 Settings → Rules에서 이 ruleset을 비활성화하면 된다.
 
 ## 7. Netlify와의 관계
 
