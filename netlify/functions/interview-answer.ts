@@ -5,8 +5,15 @@ import {
     enforceTextLimit,
     jsonResponse,
     readJsonBody,
-    safeErrorDetail,
 } from './_aiGuards';
+import {
+    ProviderTelemetry,
+    createProviderBudget,
+    runWithDeadline,
+    type AttemptOutcome,
+    type ProviderName,
+    type SkipReason,
+} from './_providerBudget';
 
 // Speed-first model routing, identical in order and reasoning settings to the
 // interview translation route in translate.ts (#62). The interviewee reads
@@ -32,6 +39,28 @@ const GOOGLE_MODELS = [
     'gemini-3.5-flash-lite',
     'gemini-3.1-flash-lite',
 ];
+
+// --- Latency budget (#84 follow-up: the same ceiling the answer route lacked) --
+//
+// Measured on Production before this change: three normal requests answered in
+// 1.42s, 1.64s and 2.62s from the first Groq route. 6s per Groq candidate is
+// ~2.3x that observed worst case, and it is the largest cap that still lets all
+// three Groq routes plus one reserved Google attempt fit inside the total. A 7s
+// cap would have pushed the third candidate out of the schedule entirely, which
+// removes approved fallback rather than bounding latency.
+export const ANSWER_TOTAL_BUDGET_MS = 24_000;
+export const ANSWER_GROQ_MODEL_TIMEOUT_MS = 6_000;
+export const ANSWER_GOOGLE_MODEL_TIMEOUT_MS = 10_000;
+export const ANSWER_GOOGLE_RESERVE_MS = ANSWER_GOOGLE_MODEL_TIMEOUT_MS;
+export const ANSWER_MIN_USEFUL_ATTEMPT_MS = 1_200;
+
+const answerBudget = createProviderBudget({
+    totalBudgetMs: ANSWER_TOTAL_BUDGET_MS,
+    groqModelTimeoutMs: ANSWER_GROQ_MODEL_TIMEOUT_MS,
+    googleModelTimeoutMs: ANSWER_GOOGLE_MODEL_TIMEOUT_MS,
+    googleReserveMs: ANSWER_GOOGLE_RESERVE_MS,
+    minUsefulAttemptMs: ANSWER_MIN_USEFUL_ATTEMPT_MS,
+});
 
 // Bounds derived from real usage: a single interviewer utterance plus a few
 // earlier turns. The client (utils/interviewAnswer.ts) already bounds its
@@ -177,56 +206,106 @@ export const handler = async (event: any) => {
     const recentContext = contextTurns.join('\n---\n').slice(0, MAX_ANSWER_CONTEXT_CHARS);
 
     const prompt = buildPrompt(question, recentContext, answerLanguage, answerLanguageName, sourceLanguage);
-    let lastDetail = '';
+    const telemetry = new ProviderTelemetry('interview-answer', () => Date.now());
+    let lastDetail: AttemptOutcome | SkipReason = 'unknown';
 
-    const buildResult = (raw: string) => {
-        if (!raw.trim()) throw new Error('empty answer payload');
-        // Fail-closed: a malformed provider result is reported as "no
-        // answer", never as a hallucinated or partial answer (#62).
-        return parseAnswerPayload(raw, answerLanguage);
+    // A blank provider payload is a failed candidate, never a success. Anything
+    // else goes through the fail-closed parser, which turns malformed or
+    // no-answer output into `shouldAnswer: false` — the existing #62 contract,
+    // preserved unchanged: the interviewee sees no suggestion, not garbage.
+    const toPayload = (raw: string) => (raw.trim() ? parseAnswerPayload(raw, answerLanguage) : null);
+
+    const serve = (payload: InterviewAnswerPayload, provider: ProviderName, model: string) => {
+        console.info(telemetry.summary({ statusCode: 200, provider, model }));
+        return jsonResponse(200, payload);
     };
 
     // 1) Groq first: lowest latency for the interview path.
     if (groqApiKey) {
-        const groq = new Groq({ apiKey: groqApiKey });
+        // maxRetries 0: retrying inside one route doubles the latency of a model
+        // that already failed, while the next route is a genuine fallback.
+        const groq = new Groq({ apiKey: groqApiKey, maxRetries: 0 });
+
         for (const route of GROQ_MODELS) {
-            try {
-                const request: any = {
-                    model: route.id,
-                    messages: [{ role: 'user', content: prompt }],
-                    temperature: 0.1,
-                    max_tokens: 2048,
-                    reasoning_effort: route.reasoningEffort,
-                    response_format: { type: 'json_object' },
-                };
-                if (route.reasoningEffort !== 'none') {
-                    request.reasoning_format = 'hidden';
-                }
-                const response = await groq.chat.completions.create(request);
-                return jsonResponse(200, buildResult(response.choices?.[0]?.message?.content?.trim() || ''));
-            } catch (error) {
-                lastDetail = safeErrorDetail(error);
-                console.error(`interview-answer: Groq ${route.id} failed:`, lastDetail);
+            const plan = answerBudget.planAttempt({
+                provider: 'groq',
+                elapsedMs: telemetry.elapsedMs,
+                googleCandidatesRemaining: googleApiKey ? GOOGLE_MODELS.length : 0,
+            });
+            if (plan.state === 'skip') {
+                telemetry.skipped('groq', route.id, plan.reason);
+                lastDetail = plan.reason;
+                break;
             }
+
+            const request: any = {
+                model: route.id,
+                messages: [{ role: 'user', content: prompt }],
+                temperature: 0.1,
+                max_tokens: 2048,
+                reasoning_effort: route.reasoningEffort,
+                response_format: { type: 'json_object' },
+            };
+            if (route.reasoningEffort !== 'none') {
+                request.reasoning_format = 'hidden';
+            }
+
+            const attempt = await runWithDeadline({
+                label: 'interview-answer',
+                provider: 'groq',
+                model: route.id,
+                timeoutMs: plan.timeoutMs,
+                telemetry,
+                run: (signal) => groq.chat.completions
+                    .create(request, { signal, timeout: plan.timeoutMs, maxRetries: 0 })
+                    .then((response) => toPayload(response.choices?.[0]?.message?.content?.trim() || '')),
+            });
+
+            if (attempt.state === 'ok') return serve(attempt.value, 'groq', route.id);
+            lastDetail = attempt.outcome;
         }
     }
 
     // 2) Google-family fallbacks after the Groq pool.
     if (googleApiKey) {
-        const ai = new GoogleGenAI({ apiKey: googleApiKey });
-        for (const model of GOOGLE_MODELS) {
-            try {
-                const response = await ai.models.generateContent({
+        for (const [index, model] of GOOGLE_MODELS.entries()) {
+            const plan = answerBudget.planAttempt({
+                provider: 'google',
+                elapsedMs: telemetry.elapsedMs,
+                googleCandidatesRemaining: GOOGLE_MODELS.length - index,
+            });
+            if (plan.state === 'skip') {
+                telemetry.skipped('google', model, plan.reason);
+                lastDetail = plan.reason;
+                break;
+            }
+
+            // The Google client takes its bound at construction, so one client per
+            // attempt keeps each candidate inside the time this request can still
+            // pay for. attempts:1 disables in-client retry for the same reason.
+            const ai = new GoogleGenAI({
+                apiKey: googleApiKey,
+                httpOptions: { timeout: plan.timeoutMs, retryOptions: { attempts: 1 } },
+            });
+
+            const attempt = await runWithDeadline({
+                label: 'interview-answer',
+                provider: 'google',
+                model,
+                timeoutMs: plan.timeoutMs,
+                telemetry,
+                run: (signal) => ai.models.generateContent({
                     model,
                     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                });
-                return jsonResponse(200, buildResult(response.text?.trim() || ''));
-            } catch (error) {
-                lastDetail = safeErrorDetail(error);
-                console.error(`interview-answer: Google ${model} failed:`, lastDetail);
-            }
+                    config: { abortSignal: signal },
+                }).then((response) => toPayload(response.text?.trim() || '')),
+            });
+
+            if (attempt.state === 'ok') return serve(attempt.value, 'google', model);
+            lastDetail = attempt.outcome;
         }
     }
 
-    return errorResponse(502, '답변 생성에 실패했습니다.', lastDetail ? { detail: lastDetail } : undefined);
+    console.info(telemetry.summary({ statusCode: 502, provider: null, model: null }));
+    return errorResponse(502, '답변 생성에 실패했습니다.', { detail: lastDetail });
 };
