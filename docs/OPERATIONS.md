@@ -102,6 +102,8 @@ fresh main
 
 새 head에서는 이전 PASS를 자동 carry-over하지 않습니다.
 
+원격 게이트는 `.github/workflows/ci.yml`이 담당합니다(실행 조건·항목·시간·실패 확인 위치는 [`docs/CI.md`](CI.md)). 자동 검사가 실패하면 병합하지 않습니다.
+
 ## Production / Netlify
 
 현재 Production은 Git-connected Netlify 배포를 사용합니다.
