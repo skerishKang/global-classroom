@@ -26,12 +26,10 @@ const GROQ_MODELS: GroqRoute[] = [
   { id: 'qwen/qwen3.8-27b', reasoningEffort: 'none' },     // ~450+ t/s, strong multilingual
 ];
 
-// Google-family fallbacks after Groq.
-// Gemma 4 26B A4B is placed first because only ~4B parameters are active per token,
-// making it the speed-oriented Gemma 4 choice. Gemini Flash-Lite models are final fallbacks.
+// Google-family fallbacks after Groq, in the owner-approved order.
+// Owner instruction (2026-10-12): the pool is the three Groq routes plus these
+// two Gemini Flash-Lite fallbacks; the Gemma 4 entries were removed from it.
 const GOOGLE_MODELS = [
-  'gemma-4-26b-a4b-it',
-  'gemma-4-31b-it',
   'gemini-3.5-flash-lite',
   'gemini-3.1-flash-lite',
 ];
