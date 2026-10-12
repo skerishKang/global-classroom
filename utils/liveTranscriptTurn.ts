@@ -38,6 +38,83 @@ export function mergeLiveTranscriptChunk(previous: string, incoming: string): st
   return previous + incoming;
 }
 
+/**
+ * Captures microphone frames while the Live transcription session is being
+ * swapped (#87).
+ *
+ * Rotating a session means `await`ing a fresh ephemeral token and a new
+ * WebSocket. The outgoing session is invalidated *before* that await, because an
+ * old session's callbacks must never be mistaken for a provider failure — so any
+ * frame handed to it during the gap is transcribed and then thrown away, and the
+ * incoming session never saw the start of the sentence. Buffering the gap and
+ * replaying it into the new session is what keeps a long utterance that straddles
+ * the rotation boundary intact.
+ *
+ * The buffer is bounded on purpose. A stalled connect must degrade into a
+ * measurable, reportable loss rather than unbounded memory growth, so overflow is
+ * counted and never silent.
+ */
+export type AudioHandoffBuffer<T> = {
+  /** True while a rotation is in flight and frames are being captured. */
+  readonly capturing: boolean;
+  /** Frames currently held, oldest first. */
+  readonly size: number;
+  /** Frames discarded because the cap was reached. Must stay observable. */
+  readonly droppedFrames: number;
+  start(): void;
+  /**
+   * Capture one frame. Returns true when it was buffered (so the caller must not
+   * also send it), and false when the cap was reached and it was dropped.
+   */
+  push(frame: T): boolean;
+  /** Hand every captured frame to the caller in arrival order and stop capturing. */
+  release(): T[];
+  /** Abandon everything captured (teardown, or a rotation that will not be used). */
+  reset(): void;
+};
+
+export function createAudioHandoffBuffer<T>(maxFrames: number): AudioHandoffBuffer<T> {
+  let frames: T[] = [];
+  let capturing = false;
+  let dropped = 0;
+
+  return {
+    get capturing() { return capturing; },
+    get size() { return frames.length; },
+    get droppedFrames() { return dropped; },
+    start() {
+      capturing = true;
+    },
+    push(frame: T) {
+      if (!capturing) return false;
+      if (frames.length >= maxFrames) {
+        dropped += 1;
+        return false;
+      }
+      frames.push(frame);
+      return true;
+    },
+    release() {
+      const pending = frames;
+      frames = [];
+      capturing = false;
+      return pending;
+    },
+    reset() {
+      frames = [];
+      capturing = false;
+    },
+  };
+}
+
+/**
+ * One microphone frame is 2048 samples (both the AudioWorklet and the legacy
+ * ScriptProcessor path), i.e. 128ms at the 16kHz the Live API expects. 40 frames
+ * therefore cover ~5.1s of connect latency, which is far beyond a normal token
+ * fetch plus WebSocket handshake while staying a bounded amount of memory.
+ */
+export const LIVE_AUDIO_HANDOFF_FRAMES = 40;
+
 export type TranscriptTurnBuffer = {
   /** Transcript merged for the turn that is still open. */
   readonly pending: string;
