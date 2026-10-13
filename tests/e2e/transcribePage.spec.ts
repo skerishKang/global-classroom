@@ -52,27 +52,43 @@ test('top navigation and action buttons provide hover feedback without changing 
   const background = (locator: import('@playwright/test').Locator) =>
     locator.evaluate((element) => getComputedStyle(element).backgroundColor);
 
+  // Tailwind v4 wraps every `hover:`/`group-hover:` utility in
+  // `@media (hover: hover)`. A pointer device must therefore show feedback on
+  // hover, while a touch-only device must keep its idle colour because it never
+  // receives a hover state at all. Assert the contract that matches the device
+  // instead of assuming a mouse on every Playwright project.
+  const hoverSupported = await page.evaluate(() => window.matchMedia('(hover: hover)').matches);
+  const expectHoverFeedback = async (
+    locator: import('@playwright/test').Locator,
+    idle: string,
+  ) => {
+    await locator.hover();
+    if (hoverSupported) {
+      await expect.poll(() => background(locator)).not.toBe(idle);
+    } else {
+      expect(await background(locator)).toBe(idle);
+    }
+  };
+
   const nav = page.getByRole('link', { name: '인터뷰' });
   const navIdle = await background(nav);
-  await nav.hover();
-  await expect.poll(() => background(nav)).not.toBe(navIdle);
+  await expectHoverFeedback(nav, navIdle);
 
   const activeNav = page.getByRole('link', { name: '전사', exact: true });
   await page.getByRole('heading', { name: '정밀 음성 전사' }).hover();
   const activeIdle = await background(activeNav);
-  await activeNav.hover();
-  await expect.poll(() => background(activeNav)).not.toBe(activeIdle);
+  await expectHoverFeedback(activeNav, activeIdle);
 
   const liveTab = page.getByRole('tab', { name: '실시간 전사' });
   await page.getByRole('heading', { name: '정밀 음성 전사' }).hover();
   const tabIdle = await background(liveTab);
-  await liveTab.hover();
-  await expect.poll(() => background(liveTab)).not.toBe(tabIdle);
+  await expectHoverFeedback(liveTab, tabIdle);
 
   const submit = page.getByRole('button', { name: '정밀 전사 시작' });
   await expect(submit).toBeDisabled();
   const disabledBg = await background(submit);
   await submit.hover({ force: true });
+  // A disabled control never changes appearance, on any input device.
   await expect.poll(() => background(submit)).toBe(disabledBg);
 
   await page.locator('input[type="file"]').setInputFiles({
@@ -80,16 +96,14 @@ test('top navigation and action buttons provide hover feedback without changing 
   });
   await page.getByRole('heading', { name: '정밀 음성 전사' }).hover();
   const enabledBg = await background(submit);
-  await submit.hover();
-  await expect.poll(() => background(submit)).not.toBe(enabledBg);
+  await expectHoverFeedback(submit, enabledBg);
   await submit.click();
 
   const exportButton = page.getByRole('button', { name: 'JSON' });
   await expect(exportButton).toBeEnabled();
   await page.getByRole('heading', { name: '정밀 음성 전사' }).hover();
   const exportIdle = await background(exportButton);
-  await exportButton.hover();
-  await expect.poll(() => background(exportButton)).not.toBe(exportIdle);
+  await expectHoverFeedback(exportButton, exportIdle);
 });
 
 test('three top-level service pages retain their navigation', async ({ page }) => {

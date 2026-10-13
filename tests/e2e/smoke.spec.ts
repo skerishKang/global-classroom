@@ -134,7 +134,14 @@ test('카메라 촬영 후 즉시 닫히고 텍스트 없음도 토스트 표시
   const cameraClose = page.getByRole('button', { name: '카메라 닫기' });
   await expect(cameraClose).toBeVisible({ timeout: 10000 });
 
-  await page.getByRole('button', { name: '촬영', exact: true }).click();
+  // The stubbed getUserMedia stream has no real media pipeline, so the browser
+  // never emits `loadedmetadata`; the app gates its shutter on that event. Fire
+  // it the way a real camera stream would, then the shutter must become usable.
+  const shutter = page.getByRole('button', { name: '촬영', exact: true });
+  await expect(shutter).toBeDisabled();
+  await page.locator('video').evaluate((video) => video.dispatchEvent(new Event('loadedmetadata')));
+  await expect(shutter).toBeEnabled();
+  await shutter.click();
 
   await expect(page.getByText('촬영 완료')).toBeVisible({ timeout: 10000 });
   await expect(page.getByRole('button', { name: '원래 페이지로 돌아가기' })).toBeVisible({ timeout: 10000 });
