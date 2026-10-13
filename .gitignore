@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Keep service credentials and generated Netlify state out of git.
+.env
+.env.*
+!.env.example
+.netlify/
+
 playwright-report/
 test-results/
 
