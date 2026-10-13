@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Checkout exact head
+      - name: Checkout tested PR merge candidate (or main push)
         uses: actions/checkout@v4
 
       - name: Set up Node
