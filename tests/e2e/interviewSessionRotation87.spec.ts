@@ -311,4 +311,45 @@ test.describe('Interview Live session rotation (#87)', () => {
     await expect(rows).toHaveCount(2);
     await expect(rows.nth(1)).toContainText('Still transcribing clearly.');
   });
+
+  test('#84 prioritizes the live interview over background saved-session AI metadata', async ({ page }) => {
+    await page.addInitScript(installRotationHarness);
+    await page.addInitScript(() => {
+      localStorage.setItem('global_class_settings', JSON.stringify({
+        driveBackupMode: 'manual', audioCacheEnabled: true, recordOriginalEnabled: true,
+        interviewTargets: ['ko', 'en'],
+      }));
+      if (localStorage.getItem('global_classroom_sessions')) return;
+      localStorage.setItem('global_classroom_sessions', JSON.stringify(
+        Array.from({ length: 8 }, (_, index) => ({
+          id: `metadata-${index}`, title: '새 대화', createdAt: 100 + index,
+          updatedAt: 100 + index,
+          items: [{ id: `m-${index}`, original: `Background conversation ${index} about interviewing`,
+            translated: '', isTranslating: false, timestamp: 100 + index }],
+        })),
+      ));
+    });
+
+    let requests = 0;
+    await page.route('**/api/session-metadata', async (route) => {
+      requests += 1;
+      // Give the mic time to connect while the first low-priority job is in flight.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        title: 'Indexed preparation', summary: 'A saved conversation about interview preparation.',
+      }) }).catch(() => {});
+    });
+
+    await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
+    await expect.poll(() => requests).toBeGreaterThan(0);
+    await page.getByTitle(/마이크 켜기/).first().click();
+    await expect(page.getByTitle(/마이크 끄기/).first()).toBeVisible({ timeout: 10000 });
+
+    const runningAtMicStart = requests;
+    await page.waitForTimeout(1_100);
+    expect(requests, 'no new indexing request may begin while the mic is live').toBe(runningAtMicStart);
+
+    await page.getByTitle(/마이크 끄기/).first().click();
+    await expect.poll(() => requests, { timeout: 12000 }).toBeGreaterThan(runningAtMicStart);
+  });
 });

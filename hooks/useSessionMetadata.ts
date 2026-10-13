@@ -8,7 +8,9 @@ interface Params {
   setSessions: Dispatch<SetStateAction<ConversationSession[]>>;
   currentSessionId: string;
   isSessionsReady: boolean;
-  postApi: <T>(endpoint: string, body: any) => Promise<T>;
+  postApi: <T>(endpoint: string, body: any, options?: { signal?: AbortSignal }) => Promise<T>;
+  /** Suspend nonessential model calls when a real-time interview is connecting or live. */
+  suspended?: boolean;
 }
 
 /**
@@ -20,10 +22,11 @@ interface Params {
  * untouched. Successful sessions are never sent again, even after reload.
  */
 export function useSessionMetadata({
-  sessions, setSessions, currentSessionId, isSessionsReady, postApi,
+  sessions, setSessions, currentSessionId, isSessionsReady, postApi, suspended = false,
 }: Params) {
   const attemptedRef = useRef<Set<string>>(new Set());
   const runningRef = useRef(false);
+  const controllerRef = useRef<AbortController | null>(null);
   const apiRef = useRef(postApi);
   apiRef.current = postApi;
   const [eligibleCurrentId, setEligibleCurrentId] = useState<string>('');
@@ -35,14 +38,18 @@ export function useSessionMetadata({
   const currentLastUpdate = current?.updatedAt || 0;
 
   useEffect(() => {
-    setEligibleCurrentId('');
-    if (!isSessionsReady || !current || currentCount < 2 || !needsSessionMetadata(current)) return;
-    const timer = window.setTimeout(() => setEligibleCurrentId(currentSessionId), 18_000);
-    return () => window.clearTimeout(timer);
-  }, [currentSessionId, isSessionsReady, currentCount, currentLastUpdate]);
+    if (suspended) controllerRef.current?.abort();
+  }, [suspended]);
 
   useEffect(() => {
-    if (!isSessionsReady || runningRef.current) return;
+    setEligibleCurrentId('');
+    if (suspended || !isSessionsReady || !current || currentCount < 2 || !needsSessionMetadata(current)) return;
+    const timer = window.setTimeout(() => setEligibleCurrentId(currentSessionId), 18_000);
+    return () => window.clearTimeout(timer);
+  }, [currentSessionId, isSessionsReady, currentCount, currentLastUpdate, suspended]);
+
+  useEffect(() => {
+    if (suspended || !isSessionsReady || runningRef.current) return;
     const candidate = sessions.find((session) =>
       needsSessionMetadata(session)
       && !attemptedRef.current.has(session.id)
@@ -54,11 +61,14 @@ export function useSessionMetadata({
 
     attemptedRef.current.add(candidate.id);
     runningRef.current = true;
+    const controller = new AbortController();
+    controllerRef.current = controller;
     setActiveId(candidate.id);
     void apiRef.current<{ title: string; summary: string }>('session-metadata', {
       history,
       lang: 'ko',
-    }).then((payload) => {
+    }, { signal: controller.signal }).then((payload) => {
+      if (controller.signal.aborted) return;
       const metadata = normalizeSessionMetadata(payload);
       if (!metadata) throw new Error('Invalid title or summary from model');
       setSessions((previous) => previous.map((session) =>
@@ -67,14 +77,17 @@ export function useSessionMetadata({
           : session
       ));
     }).catch((error) => {
+      if (controller.signal.aborted) return;
       console.error('Session metadata generation failed:', candidate.id, error);
       setErrors((previous) => ({ ...previous, [candidate.id]: true }));
     }).finally(() => {
+      if (controller.signal.aborted) attemptedRef.current.delete(candidate.id);
+      if (controllerRef.current === controller) controllerRef.current = null;
       runningRef.current = false;
       setActiveId('');
       setRevision((value) => value + 1);
     });
-  }, [sessions, currentSessionId, eligibleCurrentId, isSessionsReady, revision, setSessions]);
+  }, [sessions, currentSessionId, eligibleCurrentId, isSessionsReady, revision, setSessions, suspended]);
 
   return {
     metadataActiveId: activeId,
