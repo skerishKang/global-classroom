@@ -125,7 +125,13 @@ vi.mock('../../utils/interviewTranslationSessions', () => ({
     rotations = 0;
     async start() { return false; }
     feedAudio(_media: unknown) {}
-    rotate() { this.rotations += 1; return this.activeUtteranceId; }
+    rotate() {
+      this.rotations += 1;
+      // A real lane advances to the next utterance, so a stale id cannot be reused
+      // by a row that belongs to it.
+      this.activeUtteranceId = `utt-${this.rotations + 1}`;
+      return this.activeUtteranceId;
+    }
     stop() {}
   },
 }));
@@ -483,7 +489,7 @@ describe('#87 tail flush mechanics', () => {
     expect(state.closes).toBe(0);
   });
 
-  test('the first non-empty tail settles it once and closes exactly once', () => {
+  test('deltas accumulate and only a turn boundary settles', () => {
     const timers = manualTimers();
     const { session, state } = fakeSession();
     const settled: Array<string | null> = [];
@@ -493,19 +499,67 @@ describe('#87 tail flush mechanics', () => {
       clearTimer: timers.clearTimer,
     });
 
-    // An empty hypothesis is not a finalised tail.
-    expect(flush.accept('')).toBe(false);
-    expect(flush.accept('   ')).toBe(false);
+    // An empty, unterminated hypothesis carries nothing.
+    expect(flush.accept({ text: '', finished: false })).toBe(false);
+    expect(flush.accept({ text: '   ', finished: false })).toBe(false);
     expect(state.closes).toBe(0);
 
-    const tail = 'and only after that did I start investigating the root cause.';
-    expect(flush.accept(tail)).toBe(true);
-    // A backend that re-sends the same turn cannot emit the tail twice.
-    expect(flush.accept(tail)).toBe(false);
+    // An unfinished delta must not close the session: the sentence is not over.
+    expect(flush.accept({ text: 'and only after that did I ', finished: false })).toBe(true);
+    expect(settled).toEqual([]);
+    expect(state.closes).toBe(0);
 
-    expect(settled).toEqual([tail]);
+    expect(flush.accept({ text: 'start investigating the root cause.', finished: true })).toBe(true);
+    // Once settled, nothing else is consumed.
+    expect(flush.accept({ text: 'start investigating the root cause.', finished: true })).toBe(false);
+
+    expect(settled).toEqual(['and only after that did I start investigating the root cause.']);
     expect(state.closes).toBe(1);
     expect(timers.queued).toHaveLength(0);
+  });
+
+  test('a cumulative hypothesis replaces the prefix instead of duplicating it', () => {
+    const timers = manualTimers();
+    const { session } = fakeSession();
+    const settled: Array<string | null> = [];
+    const flush = flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    flush.accept({ text: 'under a very tight', finished: false });
+    flush.accept({ text: 'under a very tight deadline.', finished: true });
+    expect(settled).toEqual(['under a very tight deadline.']);
+  });
+
+  test('a boundary that arrives before any text cannot settle an empty tail', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession();
+    const settled: Array<string | null> = [];
+    const flush = flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    });
+    expect(flush.accept({ finished: true })).toBe(false);
+    expect(state.closes).toBe(0);
+    expect(flush.accept({ text: 'root cause.', finished: true })).toBe(true);
+    expect(settled).toEqual(['root cause.']);
+  });
+
+  test('an unfinished tail is still committed on the deadline', () => {
+    const timers = manualTimers();
+    const { session, state } = fakeSession();
+    const settled: Array<string | null> = [];
+    flushLiveTranscriptTail(session, {
+      onSettled: (text) => settled.push(text),
+      setTimer: timers.setTimer,
+      clearTimer: timers.clearTimer,
+    }).accept({ text: 'a tail that never finalises', finished: false });
+    expect(settled).toEqual([]);
+    timers.fireAll();
+    expect(settled).toEqual(['a tail that never finalises']);
+    expect(state.closes).toBe(1);
   });
 
   test('a session that never answers is closed on the bounded deadline', () => {
@@ -535,10 +589,11 @@ describe('#87 tail flush mechanics', () => {
       setTimer: timers.setTimer,
       clearTimer: timers.clearTimer,
     });
+    flush.accept({ text: 'half a sentence', finished: false });
     flush.cancel();
-    expect(settled).toEqual([null]);
+    expect(settled).toEqual(['half a sentence']);
     expect(state.closes).toBe(1);
-    expect(flush.accept('late')).toBe(false);
+    expect(flush.accept({ text: 'late', finished: true })).toBe(false);
     expect(state.closes).toBe(1);
   });
 
@@ -561,7 +616,7 @@ describe('#87 tail flush mechanics', () => {
       onSettled: () => { throw new Error('a null session must not report'); },
     });
     expect(flush.armed).toBe(false);
-    expect(flush.accept('x')).toBe(false);
+    expect(flush.accept({ text: 'x', finished: true })).toBe(false);
     flush.cancel();
   });
 
@@ -652,5 +707,145 @@ describe('#87 tail flush on mute and teardown', () => {
     hook.current.stop();
     await settle();
     expect(session.endSignals).toBe(1);
+  });
+});
+
+describe('#87 CENTRAL gates: retirement window and multi-delta tails', () => {
+  /** A retired session's chunk, exactly as the provider delivers it. */
+  function retireChunk(session: any, text: string | null, finished: boolean) {
+    session.callbacks.onmessage({
+      serverContent: text === null
+        ? { turnComplete: true }
+        : { inputTranscription: { text, finished } },
+    });
+  }
+
+  test('a tail that arrives during the connect gap is not dropped', async () => {
+    await startMic();
+    const outgoing = net.transcribeSessions[0];
+
+    const gate = deferred();
+    net.gate = gate.promise;
+    fireRotation();
+    await settle();
+
+    // The provider finalises while the incoming session is still handshaking.
+    retireChunk(outgoing, 'the final ', false);
+    retireChunk(outgoing, 'sentence.', true);
+
+    expect(finalRows.map((row) => row.text)).toEqual(['the final sentence.']);
+    // A rotation fragment has no translation-lane identity of its own, and must
+    // not steal the next utterance's id either.
+    expect(finalRows[0].utteranceId).toBe('');
+    expect(outgoing.closed).toBe(true);
+
+    gate.resolve();
+    await settle();
+    expect(net.transcribeSessions[1].frames).toEqual([]);
+  });
+
+  test('a tail delivered as two deltas commits one complete row, not the first fragment', async () => {
+    const hook = await startMic();
+    const session = net.transcribeSessions[0];
+
+    hook.current.stop();
+    await settle();
+
+    retireChunk(session, 'the final ', false);
+    expect(finalRows).toEqual([]);
+    expect(session.closed).toBe(false);
+
+    retireChunk(session, 'sentence.', true);
+    expect(finalRows.map((row) => row.text)).toEqual(['the final sentence.']);
+    expect(session.closed).toBe(true);
+  });
+
+  test('the muted tail keeps the utterance identity the translation lane holds', async () => {
+    const hook = await startMic();
+    const session = net.transcribeSessions[0];
+    session.callbacks.onmessage({
+      serverContent: {
+        inputTranscription: { text: 'Then I rolled the service back to the previous stable ', finished: false },
+      },
+    });
+
+    hook.current.stop();
+    await settle();
+    retireChunk(session, 'build, and only after that.', true);
+
+    expect(finalRows).toHaveLength(1);
+    expect(finalRows[0].text).toBe('Then I rolled the service back to the previous stable build, and only after that.');
+    // The row id ties the transcript to the Live preview already collected for it.
+    expect(finalRows[0].utteranceId).toBe('utt-1');
+  });
+
+  test('a cumulative hypothesis is merged without duplicating the tail', async () => {
+    const hook = await startMic();
+    const session = net.transcribeSessions[0];
+    hook.current.stop();
+    await settle();
+
+    retireChunk(session, 'under a very tight', false);
+    retireChunk(session, 'under a very tight deadline.', true);
+
+    expect(finalRows.map((row) => row.text)).toEqual(['under a very tight deadline.']);
+  });
+
+  test('a boundary without text cannot settle an empty tail', async () => {
+    const hook = await startMic();
+    const session = net.transcribeSessions[0];
+    hook.current.stop();
+    await settle();
+
+    retireChunk(session, null, true);
+    expect(finalRows).toEqual([]);
+    expect(session.closed).toBe(false);
+
+    retireChunk(session, 'root cause.', true);
+    expect(finalRows.map((row) => row.text)).toEqual(['root cause.']);
+  });
+
+  test('a stop immediately followed by a restart does not lose the muted sentence', async () => {
+    const hook = await startMic();
+    const retired = net.transcribeSessions[0];
+    retired.callbacks.onmessage({
+      serverContent: { inputTranscription: { text: 'Then I rolled the service back', finished: false } },
+    });
+
+    hook.current.stop();
+    await settle();
+    await hook.current.start();
+    await settle();
+
+    // The restart cancels the drain, but cancelling the wait must not throw away
+    // words the provider had already been given.
+    expect(finalRows.map((row) => row.text)).toEqual(['Then I rolled the service back']);
+    expect(retired.closed).toBe(true);
+    expect(retired.endSignals).toBe(1);
+    expect(net.transcribeSessions).toHaveLength(2);
+  });
+
+  test('a rotation with a partial prior turn keeps the boundary row and its id', async () => {
+    await startMic();
+    const outgoing = net.transcribeSessions[0];
+    outgoing.callbacks.onmessage({
+      serverContent: { inputTranscription: { text: 'Could you tell me which', finished: false } },
+    });
+
+    const gate = deferred();
+    net.gate = gate.promise;
+    fireRotation();
+    await settle();
+    gate.resolve();
+    await settle();
+
+    retireChunk(outgoing, ' city you grew up in?', true);
+
+    expect(finalRows.map((row) => row.text)).toEqual([
+      'Could you tell me which',
+      ' city you grew up in?',
+    ]);
+    // The boundary row owns utt-1; the fragment must not reuse or advance it.
+    expect(finalRows.map((row) => row.utteranceId)).toEqual(['utt-1', '']);
   });
 });

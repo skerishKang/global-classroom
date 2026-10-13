@@ -137,15 +137,28 @@ export type LiveTranscribeSessionLike = {
   close?: () => unknown;
 };
 
+/** One `inputTranscription` observation from the session being drained. */
+export type LiveTailChunk = {
+  text?: string | null;
+  /** The provider's turn boundary: `finished`, `turnComplete` or `generationComplete`. */
+  finished?: boolean;
+};
+
 export type LiveTailFlush = {
   /** True while the flush has not settled, so callers can skip redundant work. */
   readonly armed: boolean;
   /**
-   * Feed one `inputTranscription` chunk observed on the draining session. The
-   * first non-empty chunk settles it; later chunks are ignored so a backend that
-   * emits cumulative hypotheses cannot emit the same tail twice.
+   * Feed one chunk observed on the draining session. A backend may deliver the tail
+   * as several deltas *or* as cumulative hypotheses, so chunks are merged and only a
+   * turn boundary settles — closing on the first non-empty chunk would truncate the
+   * sentence, which is the very loss this flush exists to prevent. Settling also
+   * requires content: a bare boundary that arrives before any text must not close an
+   * empty tail.
+   *
+   * Returns true when the chunk was taken into account, false when it was ignored
+   * (already settled, or nothing usable in it).
    */
-  accept(chunkText?: string | null): boolean;
+  accept(chunk: LiveTailChunk): boolean;
   /**
    * Stop waiting for a tail (restart, fallback) and close the session. Anything
    * already captured is still reported: cancelling the wait must not discard words
@@ -174,9 +187,11 @@ export function flushLiveTranscriptTail(
   }
 
   let settled = false;
-  let timer: ReturnType<typeof setTimeout> | null = setTimer(() => finish(null), deadlineMs);
+  let tail = '';
+  let timer: ReturnType<typeof setTimeout> | null = setTimer(() => settle(), deadlineMs);
 
-  function finish(text: string | null) {
+  /** Close the session and hand over everything received, whether or not it was finalised. */
+  function settle() {
     if (settled) return;
     settled = true;
     if (timer !== null) {
@@ -188,26 +203,34 @@ export function flushLiveTranscriptTail(
     } catch {
       // The socket is going away either way.
     }
-    onSettled(text && text.trim() ? text : null);
+    onSettled(tail.trim() ? tail : null);
   }
 
   try {
     session.sendRealtimeInput?.({ audioStreamEnd: true });
   } catch {
-    finish(null);
+    settle();
   }
 
   return {
     get armed() {
       return !settled;
     },
-    accept(chunkText) {
-      if (settled || !chunkText || !String(chunkText).trim()) return false;
-      finish(String(chunkText));
+    accept(chunk) {
+      if (settled) return false;
+      const text = typeof chunk?.text === 'string' ? chunk.text : '';
+      if (!text.trim()) {
+        // A bare boundary is only usable once some text has been captured.
+        if (!chunk?.finished || !tail) return false;
+        settle();
+        return true;
+      }
+      tail = mergeLiveTranscriptChunk(tail, text);
+      if (chunk?.finished) settle();
       return true;
     },
     cancel() {
-      finish(null);
+      settle();
     },
   };
 }
