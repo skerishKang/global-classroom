@@ -159,6 +159,16 @@ test.describe('Interview Live session rotation (#87)', () => {
           open?.();
           return Boolean(open);
         },
+        /**
+         * Deliver an `inputTranscription` chunk on the session that is already
+         * retired, the way the provider does when it finalises cached audio.
+         */
+        emitOnRetired(text: string, finished: boolean) {
+          const socket = sockets.find((item) => item.model.includes('transcribe'));
+          socket?.emit({ serverContent: { inputTranscription: { text, finished } } });
+          return Boolean(socket);
+        },
+        rows: () => document.querySelectorAll('[data-testid="interview-row"]').length,
         pending: () => pendingOpens.length,
       };
     });
@@ -200,11 +210,26 @@ test.describe('Interview Live session rotation (#87)', () => {
     state = await probe();
     expect(state.transcribe).toEqual([1]);
 
+    // CENTRAL gate #1: the provider finalises the retired session's audio *during*
+    // the handshake gap. Before the fix those chunks had nowhere to go — the old
+    // generation was already invalid and the flush was only armed after connect.
+    const tailDelivered = await page.evaluate(() => (
+      (window as any).__rotateProbe.emitOnRetired('the final ', false)
+      && (window as any).__rotateProbe.emitOnRetired('sentence.', true)
+    ));
+    expect(tailDelivered, 'the retired session must still be reachable').toBe(true);
+
+    const rows = page.getByTestId('interview-row');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.first()).toContainText('the final sentence.');
+
     await page.evaluate(() => (window as any).__rotateProbe.openNext());
     await page.clock.runFor(200);
 
-    // The incoming session got exactly the frames produced during the gap.
+    // The incoming session got exactly the frames produced during the gap, and the
+    // retired tail was neither dropped nor re-emitted once it started reporting.
     state = await probe();
     expect(state.transcribe, `gap frames were: ${gapMarkers.join(',')}`).toEqual([1, 3]);
+    await expect(rows).toHaveCount(1);
   });
 });

@@ -16,10 +16,12 @@ import {
   TRANSCRIPT_TURN_STALL_MS,
   createAudioHandoffBuffer,
   createTranscriptTurnBuffer,
+  flushLiveTranscriptTail,
   resolveRecognitionLanguage,
   shouldCutGroqChunk,
   shouldFlushStalledTurn,
   startSpeechSilenceProbe,
+  type LiveTailFlush,
   type SpeechSilenceProbe,
 } from '../utils/liveTranscriptTurn';
 
@@ -142,6 +144,10 @@ export function useInterviewLive({
   const transcribeHandoffRef = useRef(createAudioHandoffBuffer<TranslationMedia>(
     LIVE_AUDIO_HANDOFF_FRAMES,
   ));
+  // #87: an invalidated session that was told the stream ended may still return
+  // the tail of the speech it already holds. That text is real, so it is routed
+  // to this one-shot flush instead of being dropped with the socket.
+  const tailFlushRef = useRef<{ generation: number; flush: LiveTailFlush } | null>(null);
   const transcribeRotateTimerRef = useRef<number | null>(null);
   const turnStallTimerRef = useRef<number | null>(null);
   const lastTurnChunkAtRef = useRef(0);
@@ -214,6 +220,58 @@ export function useInterviewLive({
     }
   }, []);
 
+  /**
+   * #87: close an outgoing Live transcription session without losing the speech it
+   * was already given. `generation` is the value the session was created at, which
+   * its own callbacks still carry, so the flushed tail can be matched to the right
+   * session even after `transcribeSessionRef` has moved on.
+   *
+   * `absorbPending` is for teardown: no other session can write to the turn buffer,
+   * so the tail joins the text already captured and becomes one row. A rotation must
+   * not touch that buffer — the incoming session is merging into it by then — so
+   * there the tail is committed as its own row.
+   *
+   * `utteranceId` is decided at retirement time, never at settle time. The caller
+   * passes the identity the row should carry: teardown supplies the utterance whose
+   * Live preview is still open, a rotation fragment supplies `''` because the lane has
+   * already advanced to the *next* utterance and reusing or stealing its id would give
+   * two transcript rows the same `ConversationItem.id`.
+   */
+  const retireTranscribeSession = useCallback((
+    session: any,
+    generation: number,
+    absorbPending: boolean,
+    utteranceId: string,
+  ) => {
+    tailFlushRef.current?.flush.cancel();
+    tailFlushRef.current = null;
+
+    const commit = (text: string | null) => {
+      if (tailFlushRef.current?.generation === generation) tailFlushRef.current = null;
+      let row: string | null = text || null;
+      if (absorbPending) {
+        if (text) turnBufferRef.current.merge(text);
+        row = turnBufferRef.current.finishTurn();
+      }
+      if (!row) return;
+      // The microphone is off or the boundary already rotated the translation
+      // context, so this row must not drive the translation sessions again.
+      handlersRef.current.onFinalTranscript(row, utteranceId, observedSourceLanguageRef.current);
+    };
+
+    if (!session) {
+      // Nothing left to drain. A teardown still has to surface text the session had
+      // already sent before the socket went away.
+      if (absorbPending) commit(null);
+      return;
+    }
+
+    tailFlushRef.current = {
+      generation,
+      flush: flushLiveTranscriptTail(session, { onSettled: commit }),
+    };
+  }, []);
+
   const cleanup = useCallback(() => {
     if (browserRestartTimerRef.current) {
       window.clearTimeout(browserRestartTimerRef.current);
@@ -257,6 +315,10 @@ export function useInterviewLive({
       inputContextRef.current = null;
     }
 
+    // #87: a retiring tail row belongs to the utterance the translation lane still
+    // holds, so that identity has to be read before the lane is torn down. Reading
+    // it later would either lose the live preview or claim the next utterance's id.
+    const retiringUtteranceId = translationRef.current?.activeUtteranceId || '';
     translationRef.current?.stop();
     translationRef.current = null;
 
@@ -270,21 +332,22 @@ export function useInterviewLive({
     }
     // Invalidate the outbound session before closing it so its onclose callback
     // is not mistaken for a real provider failure.
+    const outgoingTranscribeSession = transcribeSessionRef.current;
+    const retiredGeneration = transcribeGenerationRef.current;
     transcribeGenerationRef.current += 1;
-    try {
-      transcribeSessionRef.current?.close?.();
-    } catch {
-      // no-op
-    }
     transcribeSessionRef.current = null;
-    turnBufferRef.current.reset();
     // A stop while a rotation is in flight must not keep capturing frames or
     // replay them into a session that no longer exists.
     transcribeHandoffRef.current.reset();
+    // #87: the turn buffer is deliberately not reset here. Server VAD only
+    // finalises after it *receives* silence, so muting straight after a sentence
+    // leaves its tail cached in the session; the flush commits whatever lands,
+    // including text already merged, and closes the socket within a bounded window.
+    retireTranscribeSession(outgoingTranscribeSession, retiredGeneration, true, retiringUtteranceId);
 
     setTranslatePreviewAvailable(false);
     setBackend('idle');
-  }, [stopGroqSilenceProbe]);
+  }, [retireTranscribeSession, stopGroqSilenceProbe]);
 
   const stop = useCallback(() => {
     desiredRef.current = false;
@@ -635,7 +698,24 @@ export function useInterviewLive({
       callbacks: {
         onopen: () => {},
         onmessage: (message: any) => {
-          if (!isCurrentSession()) return;
+          if (!isCurrentSession()) {
+            // #87: this session was retired by a tail flush, so its chunks are the
+            // speech the user actually said. Only that flush may consume them, and it
+            // needs the turn boundary as well — the tail can arrive as several deltas.
+            const retiring = tailFlushRef.current;
+            if (retiring?.generation === generation) {
+              const content = message?.serverContent;
+              retiring.flush.accept({
+                text: content?.inputTranscription?.text,
+                finished: Boolean(
+                  content?.inputTranscription?.finished
+                  || content?.turnComplete
+                  || content?.generationComplete,
+                ),
+              });
+            }
+            return;
+          }
           const content = message?.serverContent;
           const interim = content?.interimInputTranscription?.text;
           const finalChunk = content?.inputTranscription;
@@ -710,6 +790,14 @@ export function useInterviewLive({
       translationRef.current?.rotate();
     }
 
+    // #87: arm the retirement flush BEFORE the generation is invalidated and before
+    // the new session is awaited. `audioStreamEnd` makes the outgoing session
+    // finalise the audio it holds, and those chunks arrive during the handshake —
+    // arming after `connectTranscribeSession()` resolved would drop them, because the
+    // old generation is already invalid and no flush exists to receive them yet.
+    const retiredGeneration = transcribeGenerationRef.current;
+    retireTranscribeSession(previous, retiredGeneration, false, '');
+
     // Invalidate the outgoing session before it closes so its onclose cannot be
     // mistaken for a real provider failure (#87).
     transcribeGenerationRef.current += 1;
@@ -743,18 +831,13 @@ export function useInterviewLive({
       }
 
       scheduleTranscribeRotation();
-      try {
-        previous?.close?.();
-      } catch {
-        // no-op
-      }
     } catch (error) {
       handoff.reset();
       beginFallback(
         `Gemini 실시간 전사 세션 갱신 실패: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }, [beginFallback, connectTranscribeSession, scheduleTranscribeRotation]);
+  }, [beginFallback, connectTranscribeSession, retireTranscribeSession, scheduleTranscribeRotation]);
 
   rotateTranscribeSessionRef.current = () => {
     void rotateTranscribeSession();
