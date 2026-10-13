@@ -467,6 +467,91 @@ describe('#85 detector model pool', () => {
     expect(source).toContain("'gemini-3.5-flash-lite'");
     expect(source).toContain("'gemini-3.1-flash-lite'");
   });
+
+  test('maps each supported language to its own code (en/ko/ja/fr)', async () => {
+    const cases: Array<[string, string]> = [
+      ['Could you tell me about your most recent role?', 'en'],
+      ['안녕하세요, 자기소개를 부탁드립니다.', 'ko'],
+      ['こんにちは、よろしくお願いします。', 'ja'],
+      ['Bonjour, parlez-moi de votre expérience professionnelle.', 'fr'],
+    ];
+
+    for (const [text, code] of cases) {
+      mocks.generateContent.mockReset();
+      mocks.generateContent.mockResolvedValue({
+        text: JSON.stringify({ code, confidence: 0.9 }),
+      });
+
+      const res = parseResponse(await detectHandler(makeEvent({ text })));
+
+      expect(res.statusCode, text).toBe(200);
+      expect(res.json.code, text).toBe(code);
+      expect(res.json.confidence, text).toBe(0.9);
+    }
+  });
+
+  test.each([
+    ['429 quota', '429 RESOURCE_EXHAUSTED'],
+    ['5xx upstream', '500 INTERNAL'],
+    ['timeout', 'Deadline exceeded'],
+  ])('a %s on the primary falls through to the secondary model', async (_label, message) => {
+    mocks.generateContent
+      .mockRejectedValueOnce(new Error(message))
+      .mockResolvedValueOnce({ text: JSON.stringify({ code: 'fr', confidence: 0.8 }) });
+
+    const res = parseResponse(await detectHandler(makeEvent({ text: 'bonjour' })));
+
+    expect(res.statusCode).toBe(200);
+    expect(res.json.code).toBe('fr');
+    expect(mocks.generateContent.mock.calls.map(([request]) => request.model)).toEqual([
+      'gemini-3.5-flash-lite',
+      'gemini-3.1-flash-lite',
+    ]);
+  });
+
+  test('confidence is clamped into [0, 1] rather than reported raw', async () => {
+    mocks.generateContent.mockResolvedValueOnce({
+      text: JSON.stringify({ code: 'en', confidence: 1.7 }),
+    });
+    let res = parseResponse(await detectHandler(makeEvent({ text: 'hello' })));
+    expect(res.statusCode).toBe(200);
+    expect(res.json.confidence).toBe(1);
+
+    mocks.generateContent.mockResolvedValueOnce({
+      text: JSON.stringify({ code: 'ko', confidence: -0.4 }),
+    });
+    res = parseResponse(await detectHandler(makeEvent({ text: '안녕하세요' })));
+    expect(res.statusCode).toBe(200);
+    expect(res.json.confidence).toBe(0);
+  });
+
+  test('the total budget stops the loop before another candidate is started', async () => {
+    const start = 1_700_000_000_000;
+    let clock = start;
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
+
+    // The primary model alone consumes more than the 18s detector budget, so the
+    // loop must stop instead of starting a second candidate it cannot finish.
+    mocks.generateContent.mockImplementationOnce(async () => {
+      clock += 19_000;
+      throw new Error('500 upstream');
+    });
+
+    const res = parseResponse(await detectHandler(makeEvent({ text: 'hello' })));
+
+    expect(res.statusCode).toBe(500);
+    expect(mocks.generateContent).toHaveBeenCalledTimes(1);
+    nowSpy.mockRestore();
+  });
+
+  test('a non-POST detector request is rejected before any provider call', async () => {
+    const res = parseResponse(
+      await detectHandler({ httpMethod: 'GET', headers: {}, body: null }),
+    );
+
+    expect(res.statusCode).toBe(405);
+    expect(mocks.generateContent).not.toHaveBeenCalled();
+  });
 });
 
 describe('#36 secret redaction', () => {
