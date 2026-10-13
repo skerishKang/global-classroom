@@ -1,10 +1,19 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Interview mode on the existing Global Classroom UI', () => {
-  test('normal mode exposes an explicit open-Interview action without replacing the main UI', async ({ page }) => {
+  test('normal mode exposes the shared service navigation without replacing the main UI', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: '인터뷰 통역 열기' })).toBeVisible();
+    // #90 replaced the classroom-header Interview toggle with the shared
+    // three-service navigation. The approved entry point into Interview mode is
+    // now the `인터뷰` link (href `/interview`), not a header button.
+    const nav = page.getByRole('navigation', { name: '서비스 메뉴' });
+    await expect(nav).toBeVisible();
+    const interviewLink = nav.getByRole('link', { name: '인터뷰', exact: true });
+    await expect(interviewLink).toBeVisible();
+    await expect(interviewLink).toHaveAttribute('href', '/interview');
+    await expect(nav.getByRole('link', { name: '글로벌 클래스룸' })).toHaveAttribute('aria-current', 'page');
+
     await expect(page.getByTitle('입력 언어 선택 (내가 말하는 언어)')).toBeVisible();
     await expect(page.getByTitle('번역 언어 선택 (듣고 싶은 언어)')).toBeVisible();
     await expect(page.getByText('AI 면접 실시간 통역')).toHaveCount(0);
@@ -13,7 +22,12 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
   test('interview mode shows the authoritative Auto → bidirectional target policy', async ({ page }) => {
     await page.goto('/?mode=interview', { waitUntil: 'domcontentloaded' });
 
-    await expect(page.getByRole('button', { name: '← GLOBAL CLASSROOM' })).toBeVisible();
+    // #90: the back affordance is the shared service navigation, not a
+    // `← GLOBAL CLASSROOM` header button.
+    const serviceNav = page.getByRole('navigation', { name: '서비스 메뉴' });
+    await expect(serviceNav).toBeVisible();
+    await expect(serviceNav.getByRole('link', { name: '인터뷰', exact: true })).toHaveAttribute('aria-current', 'page');
+    await expect(serviceNav.getByRole('link', { name: '글로벌 클래스룸' })).toHaveAttribute('href', '/classroom');
     const readyBadge = page.getByText(/AUTO · KO ↔ EN/);
     await expect(readyBadge).toHaveCount(1);
     if ((page.viewportSize()?.width ?? 1280) < 640) {
@@ -72,15 +86,20 @@ test.describe('Interview mode on the existing Global Classroom UI', () => {
     await expect(page.getByText('Drive 세션을 보려면 Google 로그인이 필요합니다.')).toBeVisible();
   });
 
-  test('the same header toggle enters and exits interview mode', async ({ page }) => {
+  test('the shared service navigation enters and exits interview mode', async ({ page }) => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '인터뷰 통역 열기' }).click();
-    await expect(page).toHaveURL(/mode=interview/);
-    await expect(page.getByRole('button', { name: '← GLOBAL CLASSROOM' })).toBeVisible();
+    await page.getByRole('navigation', { name: '서비스 메뉴' })
+      .getByRole('link', { name: '인터뷰', exact: true }).click();
+    await expect(page).toHaveURL(/\/interview/);
+    await expect(page.getByRole('textbox', { name: '인터뷰 텍스트 입력' })).toBeVisible();
 
-    await page.getByRole('button', { name: '← GLOBAL CLASSROOM' }).click();
-    await expect(page).not.toHaveURL(/mode=interview/);
-    await expect(page.getByRole('button', { name: '인터뷰 통역 열기' })).toBeVisible();
+    await page.getByRole('navigation', { name: '서비스 메뉴' })
+      .getByRole('link', { name: '글로벌 클래스룸' }).click();
+    await expect(page).not.toHaveURL(/\/interview/);
+    const nav = page.getByRole('navigation', { name: '서비스 메뉴' });
+    await expect(nav.getByRole('link', { name: '글로벌 클래스룸' })).toHaveAttribute('aria-current', 'page');
+    // The Interview-only composer is gone once the classroom page is active.
+    await expect(page.getByRole('textbox', { name: '인터뷰 텍스트 입력' })).toHaveCount(0);
   });
 
   test('left text composer waits for Enter, applies glossary, and retranslates only on request', async ({ page }) => {
