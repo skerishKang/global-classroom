@@ -39,7 +39,7 @@ export function useTranslationService({
     const historyRef = useRef<ConversationItem[]>(history);
     historyRef.current = history;
 
-    const postApi = useCallback(async <T,>(endpoint: string, body: any): Promise<T> => {
+    const postApi = useCallback(async <T,>(endpoint: string, body: any, options?: { signal?: AbortSignal }): Promise<T> => {
         const headers: Record<string, string> = { "Content-Type": "application/json" };
         if (settings.userApiKey) {
             headers["x-user-api-key"] = settings.userApiKey;
@@ -48,6 +48,7 @@ export function useTranslationService({
             method: "POST",
             headers,
             body: JSON.stringify(body),
+            signal: options?.signal,
         });
         const text = await resp.text();
         if (!resp.ok) {

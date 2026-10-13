@@ -308,13 +308,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
     }
   });
 
-  const { metadataActiveId, metadataErrors, metadataDone, metadataTotal } = useSessionMetadata({
-    sessions,
-    setSessions,
-    currentSessionId,
-    isSessionsReady,
-    postApi,
-  });
+  // #84: initialise metadata after Interview Live so its requests can be
+  // suspended while the microphone is connecting or streaming.
 
   // --- Live Sharing ---
   const onLiveMessageReceived = useCallback((text: string, langCode: string) => {
@@ -784,6 +779,15 @@ setHistory((prev) => [...prev, newItem]);
     },
     onWarning: (message) => setInterviewLiveWarning(message),
     onFatalError: (message) => setInterviewLiveError(message),
+  });
+
+  const { metadataActiveId, metadataErrors, metadataDone, metadataTotal } = useSessionMetadata({
+    sessions,
+    setSessions,
+    currentSessionId,
+    isSessionsReady,
+    postApi,
+    suspended: interviewMode && (interviewLiveStatus === 'connecting' || interviewLiveStatus === 'live'),
   });
 
   const interviewConnectionStatus =
