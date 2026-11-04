@@ -31,6 +31,13 @@ vi.mock('groq-sdk', () => {
 });
 
 import { handler, parseAnswerPayload, ANSWER_PRIMARY_MODEL } from '../../netlify/functions/interview-answer';
+import { resetRateLimitsForTests } from '../../netlify/functions/_rateLimit';
+
+// #111: usage-gate buckets live in module state. Reset them before every test
+// so handler tests cannot exhaust each other's burst allowance.
+beforeEach(() => {
+  resetRateLimitsForTests();
+});
 import {
   buildAnswerRequest,
   isAnswerTranslationFresh,

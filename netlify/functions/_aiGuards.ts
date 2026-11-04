@@ -9,7 +9,8 @@
 
 export type AiJsonResponse = {
   statusCode: number;
-  headers: { 'Content-Type': string };
+  /** Retry-After 등 추가 헤더를 허용하도록 레코드로 완화(#111). */
+  headers: Record<string, string>;
   body: string;
 };
 
