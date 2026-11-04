@@ -112,3 +112,41 @@ function writeString(view: DataView, offset: number, string: string) {
         view.setUint8(offset + i, string.charCodeAt(i));
     }
 }
+
+/**
+ * Realtime input mixer (#114): sums live input streams (mic + screen-share
+ * audio) into one stream so a single 16 kHz mono transcription pipeline can
+ * consume them all. Per-source gain 0.5 keeps a two-source sum from clipping.
+ */
+export interface LiveMixHandle {
+    stream: MediaStream;
+    disconnect: () => void;
+}
+
+export function createLiveMixStream(context: AudioContext, streams: MediaStream[]): LiveMixHandle {
+    const destination = context.createMediaStreamDestination();
+    const sources: MediaStreamAudioSourceNode[] = [];
+    const gains: GainNode[] = [];
+
+    for (const stream of streams) {
+        const source = context.createMediaStreamSource(stream);
+        const gain = context.createGain();
+        gain.gain.value = 0.5;
+        // 'explicit' 모노 강제: 스테레오 시스템 오디오도 모노로 내려 합산한다.
+        gain.channelCount = 1;
+        gain.channelCountMode = 'explicit';
+        source.connect(gain);
+        gain.connect(destination);
+        sources.push(source);
+        gains.push(gain);
+    }
+
+    return {
+        stream: destination.stream,
+        disconnect: () => {
+            sources.forEach((source) => source.disconnect());
+            gains.forEach((gain) => gain.disconnect());
+            destination.disconnect();
+        },
+    };
+}

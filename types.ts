@@ -165,6 +165,14 @@ export interface TranslationMap {
 
 export type VisionNotificationStatus = 'capturing' | 'analyzing' | 'translating' | 'done' | 'error';
 
+/**
+ * 통역 입력 소스 (#114):
+ * - mic: 브라우저 마이크 (기존 동작)
+ * - system: 화면 공유 오디오(탭·시스템 소리)만
+ * - both: 마이크 + 화면 공유 오디오를 섞어서
+ */
+export type AudioInputMode = 'mic' | 'system' | 'both';
+
 export interface VisionNotification {
   id: string;
   timestamp: number;
@@ -184,4 +192,6 @@ export interface AppSettings {
   savedApiKeys?: string[]; // 로컬에만 저장하는 즐겨찾기 키 슬롯
   /** Interview mode: selected output target language set. */
   interviewTargets?: string[];
+  /** 일반 통역의 입력 소스 (#114). 기본값 mic. */
+  audioInputMode?: AudioInputMode;
 }

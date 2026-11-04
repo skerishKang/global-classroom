@@ -1,5 +1,5 @@
 import { DEFAULT_TRANSLATION_MODEL, SETTINGS_KEY } from '../constants';
-import { AppSettings } from '../types';
+import { AppSettings, AudioInputMode } from '../types';
 import { getDefaultTargets, normalizeInterviewTargets } from './interviewLanguageRouting';
 
 /**
@@ -15,11 +15,19 @@ export function createDefaultSettings(): AppSettings {
     driveBackupMode: 'manual',
     audioCacheEnabled: true,
     recordOriginalEnabled: true,
+    audioInputMode: 'mic',
     userApiKey: '',
     translationModel: DEFAULT_TRANSLATION_MODEL,
     interviewTargets: [...getDefaultTargets()],
     savedApiKeys: [],
   };
+}
+
+/**
+ * 통역 입력 소스 정규화 (#114). 저장소 값이 변형·누락되어 있으면 마이크로 되돌린다.
+ */
+export function normalizeAudioInputMode(value: unknown): AudioInputMode {
+  return value === 'system' || value === 'both' ? value : 'mic';
 }
 
 /**
@@ -64,6 +72,7 @@ export function parseStoredSettings(raw: string | null): AppSettings {
       driveBackupMode: parsed.driveBackupMode === 'auto' ? 'auto' : 'manual',
       audioCacheEnabled: typeof parsed.audioCacheEnabled === 'boolean' ? parsed.audioCacheEnabled : true,
       recordOriginalEnabled: typeof parsed.recordOriginalEnabled === 'boolean' ? parsed.recordOriginalEnabled : true,
+      audioInputMode: normalizeAudioInputMode(parsed.audioInputMode),
       // 로컬에 입력된 개인 키만 사용한다. cloud profile 값은 여기로 유입될 수 없다 (#32).
       userApiKey: typeof parsed.userApiKey === 'string' ? parsed.userApiKey : '',
       translationModel: migratedModel || DEFAULT_TRANSLATION_MODEL,
