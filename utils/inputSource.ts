@@ -42,12 +42,23 @@ export function isSystemAudioInputSupported(): boolean {
 export interface CaptureAudioInputOptions {
     /** 화면 공유 오디오 트랙이 끊겼을 때(사용자가 공유를 중지했을 때) 알린다. */
     onSystemTrackEnded?: () => void;
+    /**
+     * 마이크 getUserMedia 제약을 호출 쪽 기존 동작으로 맞춘다(#116).
+     * 미지정이면 기존(#114) 기본 제약을 쓴다 — 'mic' 경로와 'both'의 마이크 쪽에
+     * 동일하게 적용된다.
+     */
+    micConstraints?: MediaTrackConstraints;
 }
 
 export interface CapturedAudioInput {
     mode: AudioInputMode;
     /** 기존 16 kHz 파이프라인에 그대로 넣는 스트림. */
     stream: MediaStream;
+    /**
+     * 'both' 모드에서만 있는 소스별 RMS 샘플러(0 = 마이크/나, 1 = 시스템/상대).
+     * 턴 단위 화자 표시(#116)에 쓴다.
+     */
+    sourceLevels?: Array<() => number>;
     /** 모든 트랙·노드·리스너를 정리한다. */
     stop: () => void;
 }
@@ -90,9 +101,9 @@ export async function captureAudioInput(
     options: CaptureAudioInputOptions = {},
 ): Promise<CapturedAudioInput> {
     if (mode === 'mic') {
-        // 기존 마이크 경로와 동일한 제약을 유지한다.
+        // 호출 쪽 기존 마이크 경로와 동일한 제약을 유지한다(기본값은 #114의 제약).
         const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, sampleRate: 16000 },
+            audio: options.micConstraints ?? { channelCount: 1, sampleRate: 16000 },
         });
         return {
             mode,
@@ -136,7 +147,7 @@ export async function captureAudioInput(
     let micStream: MediaStream;
     try {
         micStream = await navigator.mediaDevices.getUserMedia({
-            audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+            audio: options.micConstraints ?? { channelCount: 1, echoCancellation: true, noiseSuppression: true },
         });
     } catch (micError) {
         releaseSystemStream();
@@ -153,6 +164,8 @@ export async function captureAudioInput(
     return {
         mode,
         stream: mix.stream,
+        // 순서 계약: [0] = 마이크(나), [1] = 시스템(상대). 화자 표시(#116)가 쓴다.
+        sourceLevels: mix.sourceLevels,
         stop: () => {
             mix.disconnect();
             micStream.getTracks().forEach((track) => track.stop());

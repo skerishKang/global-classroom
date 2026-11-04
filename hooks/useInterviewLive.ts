@@ -2,6 +2,9 @@ import { useCallback, useRef, useState } from 'react';
 import { GoogleGenAI } from '@google/genai';
 import { arrayBufferToBase64 } from '../utils/audioUtils';
 import { startInterviewAudioCapture, type InterviewAudioCapture } from '../utils/interviewAudioCapture';
+import type { AudioInputMode } from '../types';
+import { captureAudioInput, describeAudioInputError, type CapturedAudioInput } from '../utils/inputSource';
+import { createSpeakerMeter, type SpeakerHint } from '../utils/speakerMeter';
 import {
   InterviewTranslationSessions,
   type TranslationMedia,
@@ -36,8 +39,13 @@ export type LiveTranslationUpdate = {
 
 type UseInterviewLiveOptions = {
   onInterimTranscript: (text: string) => void;
-  /** `utteranceId` identifies the finalized source segment this text belongs to. */
-  onFinalTranscript: (text: string, utteranceId: string, languageCode?: string) => void;
+  onFinalTranscript: (
+    text: string,
+    utteranceId: string,
+    languageCode?: string,
+    /** #116: "둘 다" 모드에서 소스별 음량으로 판정한 화자 힌트. 애매하면 없다. */
+    speakerHint?: SpeakerHint,
+  ) => void;
   /** Fired when a new utterance opens, so live preview can reset for it. */
   onUtteranceStart: (utteranceId: string) => void;
   onLiveTranslation: (update: LiveTranslationUpdate) => void;
@@ -59,11 +67,28 @@ type UseInterviewLiveOptions = {
    * browser locale alone (#87).
    */
   sourceLanguageHint?: string;
+  /**
+   * 통역 입력 소스(#116): mic / system / both. classroom 설정(#115)의 같은
+   * audioInputMode 값을 공유한다.
+   */
+  audioInputMode?: AudioInputMode;
 };
 
 const TRANSCRIBE_MODEL = LIVE_TRANSCRIBE_MODEL;
 const TRANSLATE_MODEL = 'gemini-3.5-live-translate-preview';
 const DEFAULT_TRANSLATION_TARGETS: readonly TranslationTarget[] = ['en', 'ko'];
+
+/**
+ * #116: 면접 모드 마이크의 기존 제약. 입력 소스가 무엇이든 마이크쪽 동작은
+ * 이 제약을 그대로 유지한다('mic' 경로와 'both'의 마이크 쪽에 동일 적용).
+ */
+const INTERVIEW_MIC_CONSTRAINTS: MediaTrackConstraints = {
+  channelCount: 1,
+  sampleRate: 16000,
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
 
 const CUSTOM_VOCABULARY = [
   'Padiem',
@@ -119,6 +144,7 @@ export function useInterviewLive({
   onWarning,
   onFatalError,
   sourceLanguageHint,
+  audioInputMode,
 }: UseInterviewLiveOptions) {
   const [status, setStatus] = useState<InterviewLiveStatus>('idle');
   const [translatePreviewAvailable, setTranslatePreviewAvailable] = useState(false);
@@ -157,6 +183,14 @@ export function useInterviewLive({
   const translationRef = useRef<InterviewTranslationSessions | null>(null);
   const targetsRef = useRef<readonly TranslationTarget[]>(translationTargets);
   targetsRef.current = translationTargets;
+
+  // #116: 입력 소스 캡처(마이크 외 입력 포함)의 전체 정리를 맡는 핸들.
+  const inputCaptureRef = useRef<CapturedAudioInput | null>(null);
+  const audioInputModeRef = useRef<AudioInputMode | undefined>(audioInputMode);
+  audioInputModeRef.current = audioInputMode;
+  // #116: "둘 다" 모드의 턴 단위 화자 판정(소스별 RMS → 나/상대).
+  const speakerMeterRef = useRef<ReturnType<typeof createSpeakerMeter> | null>(null);
+  const speakerMeterTimerRef = useRef<number | null>(null);
 
   // Callbacks are read through a ref so the session lifecycle can be created
   // once per start() without being rebuilt when a caller re-renders.
@@ -199,6 +233,35 @@ export function useInterviewLive({
     stopGroqSilenceProbe();
     groqProbeRef.current = startSpeechSilenceProbe(stream);
   }, [stopGroqSilenceProbe]);
+
+  const stopSpeakerMetering = useCallback(() => {
+    if (speakerMeterTimerRef.current) {
+      window.clearInterval(speakerMeterTimerRef.current);
+      speakerMeterTimerRef.current = null;
+    }
+    speakerMeterRef.current = null;
+  }, []);
+
+  /**
+   * #116: "둘 다" 모드에서만 소스별 음량을 누적해 턴의 화자를 판정한다.
+   * levels = [마이크(나), 시스템(상대)] — inputSource.sourceLevels 계약.
+   */
+  const startSpeakerMetering = useCallback((levels: Array<() => number>) => {
+    stopSpeakerMetering();
+    if (levels.length < 2) return;
+    const meter = createSpeakerMeter({ me: levels[0], counterpart: levels[1] });
+    speakerMeterRef.current = meter;
+    speakerMeterTimerRef.current = window.setInterval(() => meter.sample(), 250);
+  }, [stopSpeakerMetering]);
+
+  /** 턴 경계에서 화자 판정을 읽고 누적을 초기화한다(#116). "둘 다" 모드에서만 값을 낸다. */
+  const currentSpeakerHint = useCallback((): SpeakerHint | undefined => {
+    const meter = speakerMeterRef.current;
+    if (!meter) return undefined;
+    const hint = meter.dominant();
+    meter.reset();
+    return hint;
+  }, []);
 
   /**
    * Fallback transcribers deliver no language identity, so the finalized
@@ -302,6 +365,15 @@ export function useInterviewLive({
     groqStreamRef.current = null;
     groqChunksRef.current = [];
 
+    stopSpeakerMetering();
+    const activeInputCapture = inputCaptureRef.current;
+    inputCaptureRef.current = null;
+    try {
+      activeInputCapture?.stop();
+    } catch {
+      // no-op
+    }
+
     if (captureRef.current) {
       try { captureRef.current.stop(); } catch { /* already disconnected */ }
       captureRef.current = null;
@@ -347,7 +419,19 @@ export function useInterviewLive({
 
     setTranslatePreviewAvailable(false);
     setBackend('idle');
-  }, [retireTranscribeSession, stopGroqSilenceProbe]);
+  }, [retireTranscribeSession, stopGroqSilenceProbe, stopSpeakerMetering]);
+
+  // #116: 화면 공유 오디오 트랙이 끊기면(사용자가 공유를 중지) 면접 통역을 안전하게
+  // 중단한다. cleanup이 트랙을 stop할 때도 ended가 발생하지만 desiredRef 가드가
+  // 재진입을 막는다.
+  const stopForSystemAudioEnded = useCallback(() => {
+    if (!desiredRef.current) return;
+    desiredRef.current = false;
+    fallbackStartedRef.current = false;
+    cleanup();
+    setStatus('idle');
+    handlersRef.current.onWarning?.('화면 공유가 종료되어 면접 통역을 중단했습니다.');
+  }, [cleanup]);
 
   const stop = useCallback(() => {
     desiredRef.current = false;
@@ -559,11 +643,20 @@ export function useInterviewLive({
 
   const beginFallback = useCallback((reason: string) => {
     if (!desiredRef.current || fallbackStartedRef.current) return;
+    if ((audioInputModeRef.current ?? 'mic') !== 'mic') {
+      // fallback은 마이크를 다시 잡는다. 시스템 소리 입력에서는 다른 소리를 전사하게
+      // 되므로 자동 전환하지 않고 중단한다(#116).
+      fallbackStartedRef.current = true;
+      cleanup();
+      setStatus('error');
+      onFatalError?.(`${reason} 시스템 소리 입력은 fallback을 지원하지 않아 통역을 중단했습니다.`);
+      return;
+    }
     fallbackStartedRef.current = true;
     cleanup();
     onWarning?.(`${reason} 브라우저 전사로 자동 전환합니다.`);
     startBrowserFallback();
-  }, [cleanup, onWarning, startBrowserFallback]);
+  }, [cleanup, onFatalError, onWarning, startBrowserFallback]);
 
   /**
    * One Live Translate session for one utterance. Each connection takes its own
@@ -650,6 +743,7 @@ export function useInterviewLive({
         committedTranscript,
         translationRef.current?.activeUtteranceId || '',
         observedSourceLanguageRef.current,
+        currentSpeakerHint(),
       );
       translationRef.current?.rotate();
     };
@@ -786,6 +880,7 @@ export function useInterviewLive({
         pendingBeforeRotation,
         translationRef.current?.activeUtteranceId || '',
         observedSourceLanguageRef.current,
+        currentSpeakerHint(),
       );
       translationRef.current?.rotate();
     }
@@ -837,7 +932,7 @@ export function useInterviewLive({
         `Gemini 실시간 전사 세션 갱신 실패: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-  }, [beginFallback, connectTranscribeSession, retireTranscribeSession, scheduleTranscribeRotation]);
+  }, [beginFallback, connectTranscribeSession, currentSpeakerHint, retireTranscribeSession, scheduleTranscribeRotation]);
 
   rotateTranscribeSessionRef.current = () => {
     void rotateTranscribeSession();
@@ -897,30 +992,40 @@ export function useInterviewLive({
         return;
       }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: 16000,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
-      if (!desiredRef.current || fallbackStartedRef.current) {
-        stream.getTracks().forEach((track) => track.stop());
-        return;
-      }
-      streamRef.current = stream;
-
+      // #116: 입력 소스 선택(마이크 / 이 컴퓨터 소리 / 둘 다)에 따라 스트림을 조립한다.
+      // 믹싱에 쓰일 16 kHz 입력 컨텍스트를 먼저 만든다.
       const AudioContextCtor = window.AudioContext || (window as any).webkitAudioContext;
       const inputContext = new AudioContextCtor({ sampleRate: 16000 });
       inputContextRef.current = inputContext;
       await inputContext.resume();
 
+      let captured: CapturedAudioInput;
+      try {
+        captured = await captureAudioInput(audioInputModeRef.current ?? 'mic', inputContext, {
+          micConstraints: INTERVIEW_MIC_CONSTRAINTS,
+          onSystemTrackEnded: stopForSystemAudioEnded,
+        });
+      } catch (captureError) {
+        // 공유 취소·오디오 미공유·미지원 브라우저: 세션을 정리하고 안내를 남긴다.
+        cleanup();
+        setStatus('error');
+        onFatalError?.(describeAudioInputError(captureError));
+        return;
+      }
+      if (!desiredRef.current || fallbackStartedRef.current) {
+        captured.stop();
+        return;
+      }
+      streamRef.current = captured.stream;
+      inputCaptureRef.current = captured;
+      if (captured.sourceLevels) {
+        startSpeakerMetering(captured.sourceLevels);
+      }
+
       // #87: the browser audio thread owns the PCM conversion. React updates,
       // scrolling and synchronous session persistence no longer run inside a
       // ScriptProcessor audio callback. Legacy capture is a browser fallback.
-      const capture = await startInterviewAudioCapture(inputContext, stream, (pcm16) => {
+      const capture = await startInterviewAudioCapture(inputContext, captured.stream, (pcm16) => {
         if (!desiredRef.current) return;
         const media: TranslationMedia = {
           data: arrayBufferToBase64(pcm16),
@@ -967,6 +1072,8 @@ export function useInterviewLive({
     connectTranslationSession,
     onWarning,
     scheduleTranscribeRotation,
+    startSpeakerMetering,
+    stopForSystemAudioEnded,
   ]);
 
   return {

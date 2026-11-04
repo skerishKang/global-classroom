@@ -117,9 +117,14 @@ function writeString(view: DataView, offset: number, string: string) {
  * Realtime input mixer (#114): sums live input streams (mic + screen-share
  * audio) into one stream so a single 16 kHz mono transcription pipeline can
  * consume them all. Per-source gain 0.5 keeps a two-source sum from clipping.
+ *
+ * `sourceLevels`(#116)는 소스별 RMS 샘플러를 돌려준다. 각 소스에 AnalyserNode를
+ * 병렬로 태워 게인 이전의 원래 음량을 본다 — 턴 단위 화자 표시(나/상대)가 쓴다.
  */
 export interface LiveMixHandle {
     stream: MediaStream;
+    /** 소스 순서와 같은 인덱스의 RMS(0..1) 샘플러. */
+    sourceLevels: Array<() => number>;
     disconnect: () => void;
 }
 
@@ -127,6 +132,7 @@ export function createLiveMixStream(context: AudioContext, streams: MediaStream[
     const destination = context.createMediaStreamDestination();
     const sources: MediaStreamAudioSourceNode[] = [];
     const gains: GainNode[] = [];
+    const analysers: AnalyserNode[] = [];
 
     for (const stream of streams) {
         const source = context.createMediaStreamSource(stream);
@@ -137,15 +143,34 @@ export function createLiveMixStream(context: AudioContext, streams: MediaStream[
         gain.channelCountMode = 'explicit';
         source.connect(gain);
         gain.connect(destination);
+
+        // 게인 이전 원 신호를 태워 소스별 음량을 잰다.
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        analysers.push(analyser);
+
         sources.push(source);
         gains.push(gain);
     }
 
+    const levelBuffer = new Float32Array(512);
+    const sourceLevels = analysers.map((analyser) => () => {
+        analyser.getFloatTimeDomainData(levelBuffer);
+        let sum = 0;
+        for (let i = 0; i < levelBuffer.length; i += 1) {
+            sum += levelBuffer[i] * levelBuffer[i];
+        }
+        return Math.sqrt(sum / levelBuffer.length);
+    });
+
     return {
         stream: destination.stream,
+        sourceLevels,
         disconnect: () => {
             sources.forEach((source) => source.disconnect());
             gains.forEach((gain) => gain.disconnect());
+            analysers.forEach((analyser) => analyser.disconnect());
             destination.disconnect();
         },
     };
