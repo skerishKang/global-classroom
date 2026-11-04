@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { GoogleGenAI, Modality } from '@google/genai';
-import { ConnectionStatus, Language } from '../types';
+import { AudioInputMode, ConnectionStatus, Language } from '../types';
+import { captureAudioInput, describeAudioInputError, type CapturedAudioInput } from '../utils/inputSource';
 import { float32ToInt16, arrayBufferToBase64, base64ToUint8Array, decodeAudioData, pcm16Base64ToWavBlob } from '../utils/audioUtils';
 import {
     LIVE_TRANSCRIBE_MODEL,
@@ -16,7 +17,7 @@ interface UseGeminiLiveProps {
     onTranscriptReceived: (text: string, isFinal: boolean) => void;
     onAudioReceived: (base64: string) => void;
     postApi: <T>(endpoint: string, body: any) => Promise<T>;
-    settings: { recordOriginalEnabled: boolean };
+    settings: { recordOriginalEnabled: boolean; audioInputMode?: AudioInputMode };
 }
 
 export const GLOBAL_TRANSCRIBE_MODEL = LIVE_TRANSCRIBE_MODEL;
@@ -61,6 +62,8 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
     const audioContextRef = useRef<AudioContext | null>(null);
     const inputAudioContextRef = useRef<AudioContext | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
+    // #114: 마이크 외 입력(화면 공유 오디오/믹스)의 전체 정리를 맡는 핸들.
+    const inputCaptureRef = useRef<CapturedAudioInput | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
     const sessionPromiseRef = useRef<Promise<any> | null>(null);
     const currentSourceRef = useRef<AudioBufferSourceNode | null>(null);
@@ -143,6 +146,13 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
             processorRef.current.disconnect();
             processorRef.current = null;
         }
+        const activeCapture = inputCaptureRef.current;
+        inputCaptureRef.current = null;
+        try {
+            activeCapture?.stop();
+        } catch {
+            // no-op
+        }
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
             streamRef.current = null;
@@ -165,6 +175,18 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
         }
         setIsRecordingOriginal(false);
     }, []);
+
+    // #114: 화면 공유 오디오 트랙이 끊기면(사용자가 공유를 중지) 통역을 멈추고 안내한다.
+    // errorMessage는 ERROR 상태에서만 렌더링되므로 상태를 ERROR로 되돌려 안내를 보이게 한다.
+    const stopSessionForSystemAudioEnded = useCallback(() => {
+        if (!geminiMicDesiredRef.current) return; // 이미 정리된 세션(track.stop()으로 유발된 ended 포함)
+        geminiMicDesiredRef.current = false;
+        setIsMicOn(false);
+        setStatus(ConnectionStatus.ERROR);
+        cleanupAudio();
+        stopOriginalRecording();
+        setErrorMessage('화면 공유가 종료되어 통역을 중단했습니다.');
+    }, [cleanupAudio, stopOriginalRecording]);
 
     // 사용자 제스처 시점에 오디오 컨텍스트를 깨워 자동재생 차단을 피함
     const ensureAudioContext = useCallback(async () => {
@@ -401,6 +423,17 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
 
     const beginFallback = useCallback((reason: string) => {
         if (!geminiMicDesiredRef.current || fallbackActiveRef.current) return;
+        if ((settings.audioInputMode ?? 'mic') !== 'mic') {
+            // fallback은 마이크를 다시 잡는다. 시스템 소리 입력에서는 다른 소리를
+            // 전사하게 되므로 조용히 중단하고 안내한다 (#114).
+            geminiMicDesiredRef.current = false;
+            setIsMicOn(false);
+            setStatus(ConnectionStatus.ERROR);
+            cleanupAudio();
+            stopOriginalRecording();
+            setErrorMessage(`${reason} 시스템 소리 입력은 fallback을 지원하지 않아 통역을 중단했습니다.`);
+            return;
+        }
         // Suppress the Live onclose callback while we deliberately tear down
         // this session, then restore the user's mic intent for the fallback.
         geminiMicDesiredRef.current = false;
@@ -410,7 +443,7 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
         geminiMicDesiredRef.current = true;
         setErrorMessage(reason);
         startBrowserFallback();
-    }, [cleanupAudio, startBrowserFallback, stopOriginalRecording]);
+    }, [cleanupAudio, settings.audioInputMode, startBrowserFallback, stopOriginalRecording]);
 
     const recoverTurnWithGroq = useCallback(async () => {
         if (currentTurnPcmBytesRef.current <= 0) {
@@ -524,11 +557,28 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
                         setIsMicOn(true);
                         isGeminiConnectingRef.current = false;
 
-                        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, sampleRate: 16000 } });
-                        streamRef.current = stream;
-                        startOriginalRecording(stream);
+                        // #114: 입력 소스 선택(마이크 / 이 컴퓨터 소리 / 둘 다)에 따라 스트림을 조립한다.
+                        let capture: CapturedAudioInput;
+                        try {
+                            capture = await captureAudioInput(settings.audioInputMode ?? 'mic', inputCtx, {
+                                onSystemTrackEnded: stopSessionForSystemAudioEnded,
+                            });
+                        } catch (captureError) {
+                            // 공유 취소·오디오 미공유·미지원 브라우저: 세션을 닫고 안내를 보인다.
+                            // errorMessage는 ERROR 상태에서만 렌더링되므로 ERROR로 되돌린다 (#114).
+                            geminiMicDesiredRef.current = false;
+                            setIsMicOn(false);
+                            setStatus(ConnectionStatus.ERROR);
+                            isGeminiConnectingRef.current = false;
+                            setErrorMessage(describeAudioInputError(captureError));
+                            cleanupAudio();
+                            return;
+                        }
+                        streamRef.current = capture.stream;
+                        inputCaptureRef.current = capture;
+                        startOriginalRecording(capture.stream);
 
-                        const source = inputCtx.createMediaStreamSource(stream);
+                        const source = inputCtx.createMediaStreamSource(capture.stream);
                         // 버퍼를 줄여 초기 전송 지연 최소화
                         const processor = inputCtx.createScriptProcessor(1024, 1, 1);
                         processorRef.current = processor;
@@ -670,7 +720,9 @@ export function useGeminiLive({ langInput, onTranscriptReceived, onAudioReceived
         postApi,
         recoverTurnWithGroq,
         resetTurnBuffers,
+        settings.audioInputMode,
         startOriginalRecording,
+        stopSessionForSystemAudioEnded,
     ]);
 
     const toggleMic = useCallback(() => {
