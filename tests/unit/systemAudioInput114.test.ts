@@ -45,6 +45,7 @@ function mixContextHarness() {
     const destination = { stream: {} as MediaStream, disconnect: vi.fn() };
     const gains: any[] = [];
     const sources: any[] = [];
+    const analysers: any[] = [];
     const context = {
         createMediaStreamDestination: vi.fn(() => destination),
         createMediaStreamSource: vi.fn(() => {
@@ -57,8 +58,21 @@ function mixContextHarness() {
             gains.push(gain);
             return gain;
         }),
+        // #116: 믹서가 소스별 RMS 샘플러를 위해 분석기를 붙인다.
+        createAnalyser: vi.fn(() => {
+            const analyser = {
+                fftSize: 512,
+                connect: vi.fn(),
+                disconnect: vi.fn(),
+                getFloatTimeDomainData: vi.fn((buffer: Float32Array) => {
+                    buffer.fill(0);
+                }),
+            };
+            analysers.push(analyser);
+            return analyser;
+        }),
     } as unknown as AudioContext;
-    return { context, destination, gains, sources };
+    return { context, destination, gains, sources, analysers };
 }
 
 describe('#114 input source capture', () => {
@@ -166,10 +180,13 @@ describe('#114 input source capture', () => {
         }
         expect(capture.mode).toBe('both');
         expect(capture.stream).toBe(harness.destination.stream);
+        expect(capture.sourceLevels).toHaveLength(2);
+        expect(capture.sourceLevels![0]()).toBe(0);
 
         capture.stop();
         expect(harness.sources[0].disconnect).toHaveBeenCalled();
         expect(harness.sources[1].disconnect).toHaveBeenCalled();
+        expect(harness.analysers[0].disconnect).toHaveBeenCalled();
         expect(harness.destination.disconnect).toHaveBeenCalled();
         expect(micTrack.stop).toHaveBeenCalledTimes(1);
         expect(systemAudio.stop).toHaveBeenCalledTimes(1);

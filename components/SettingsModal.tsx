@@ -202,47 +202,45 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                         </p>
                     </div>
 
-                    {/* 음성 입력 소스 (#114) */}
-                    {!interviewMode && (
-                        <div className="space-y-2">
-                            <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
-                                <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z" />
-                                </svg>
-                                음성 입력 소스
-                            </div>
-                            <div className="flex gap-2">
-                                {([
-                                    { mode: 'mic', label: '마이크' },
-                                    { mode: 'system', label: '이 컴퓨터 소리' },
-                                    { mode: 'both', label: '둘 다' },
-                                ] as { mode: AudioInputMode; label: string }[]).map(({ mode, label }) => {
-                                    const selected = (settings.audioInputMode ?? 'mic') === mode;
-                                    const disabled = mode !== 'mic' && !systemAudioSupported;
-                                    return (
-                                        <button
-                                            key={mode}
-                                            type="button"
-                                            disabled={disabled}
-                                            aria-pressed={selected}
-                                            onClick={() => setSettings(prev => ({ ...prev, audioInputMode: mode }))}
-                                            className={`flex-1 px-2 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 shadow-sm whitespace-nowrap ${selected
-                                                ? 'bg-indigo-600 border-indigo-700 text-white shadow-indigo-100'
-                                                : 'bg-white border-gray-200 text-gray-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600'
-                                                } disabled:cursor-not-allowed disabled:opacity-40`}
-                                        >
-                                            {label}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                            <p className="text-[10px] text-gray-400 leading-relaxed">
-                                {systemAudioSupported
-                                    ? '"이 컴퓨터 소리"를 쓰면 통역 시작 시 공유 창이 열립니다. 창에서 "탭 오디오 공유" 또는 "시스템 오디오 공유"를 켜야 합니다.'
-                                    : '이 브라우저는 화면 공유 오디오를 지원하지 않습니다. Chrome이나 Edge에서 사용할 수 있습니다.'}
-                            </p>
+                    {/* 음성 입력 소스 (#114, 면접 모드 공유: #116) */}
+                    <div className="space-y-2">
+                        <div className="text-sm font-bold text-gray-800 flex items-center gap-2">
+                            <svg className="w-4 h-4 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z" />
+                            </svg>
+                            음성 입력 소스
                         </div>
-                    )}
+                        <div className="flex gap-2">
+                            {([
+                                { mode: 'mic', label: '마이크' },
+                                { mode: 'system', label: '이 컴퓨터 소리' },
+                                { mode: 'both', label: '둘 다' },
+                            ] as { mode: AudioInputMode; label: string }[]).map(({ mode, label }) => {
+                                const selected = (settings.audioInputMode ?? 'mic') === mode;
+                                const disabled = mode !== 'mic' && !systemAudioSupported;
+                                return (
+                                    <button
+                                        key={mode}
+                                        type="button"
+                                        disabled={disabled}
+                                        aria-pressed={selected}
+                                        onClick={() => setSettings(prev => ({ ...prev, audioInputMode: mode }))}
+                                        className={`flex-1 px-2 py-2 rounded-xl text-xs font-bold border transition-all active:scale-95 shadow-sm whitespace-nowrap ${selected
+                                            ? 'bg-indigo-600 border-indigo-700 text-white shadow-indigo-100'
+                                            : 'bg-white border-gray-200 text-gray-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600'
+                                            } disabled:cursor-not-allowed disabled:opacity-40`}
+                                    >
+                                        {label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="text-[10px] text-gray-400 leading-relaxed">
+                            {systemAudioSupported
+                                ? '"이 컴퓨터 소리"를 쓰면 통역 시작 시 공유 창이 열립니다. 창에서 "탭 오디오 공유" 또는 "시스템 오디오 공유"를 켜야 합니다. 면접 모드의 "둘 다"는 발언마다 나/상대 표시가 붙습니다(음량 판정이며 에코가 크면 부정확할 수 있습니다).'
+                                : '이 브라우저는 화면 공유 오디오를 지원하지 않습니다. Chrome이나 Edge에서 사용할 수 있습니다.'}
+                        </p>
+                    </div>
 
                     {/* 음성 캐시 */}
                     <div className="space-y-2">

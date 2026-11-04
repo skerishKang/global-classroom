@@ -556,7 +556,8 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
   const onInterviewFinalTranscript = useCallback((
     text: string,
     utteranceId: string,
-    detectedLanguageCode?: string
+    detectedLanguageCode?: string,
+    speakerHint?: 'me' | 'counterpart'
   ) => {
     const normalized = text.trim();
     if (!normalized) return;
@@ -607,6 +608,7 @@ function ClassroomApp({ interviewMode }: { interviewMode: boolean }) {
       translated: (activeTarget && translations[activeTarget]?.text) || '',
       isTranslating: missingFinalTargetsAtBoundary.length > 0,
       sourceKind: 'voice',
+      speakerHint,
       sourceLanguage,
       translations,
       activeTarget: activeTarget || '',
@@ -779,6 +781,8 @@ setHistory((prev) => [...prev, newItem]);
     },
     onWarning: (message) => setInterviewLiveWarning(message),
     onFatalError: (message) => setInterviewLiveError(message),
+    // #116: classroom 설정과 같은 음성 입력 소스를 면접 모드도 공유한다.
+    audioInputMode: settings.audioInputMode,
   });
 
   const { metadataActiveId, metadataErrors, metadataDone, metadataTotal } = useSessionMetadata({

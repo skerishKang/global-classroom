@@ -41,6 +41,11 @@ export interface ConversationItem {
   isTranslating: boolean;
   timestamp: number;
   sourceKind?: 'voice' | 'text' | 'image';
+  /**
+   * 턴 단위 화자 힌트(#116): 면접 "둘 다" 모드에서 소스별 음량으로 판정한다.
+   * 휴리스틱이므로 판정이 애매하면 비워 둔다(배지를 숨긴다).
+   */
+  speakerHint?: 'me' | 'counterpart';
   originalRaw?: string;
   translationKind?: 'live' | 'manual';
   translationStale?: boolean;

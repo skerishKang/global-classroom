@@ -415,16 +415,32 @@ const ConversationList: React.FC<ConversationListProps> = ({
                                     : (uiLangCode === 'ko' ? '답변 보기' : 'Show answer');
 
                             return (
-                                <div key={item.id} data-testid="interview-row" data-source-kind={item.sourceKind || ''} className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 items-stretch">
+                                <div key={item.id} data-testid="interview-row" data-source-kind={item.sourceKind || ''} data-speaker={item.speakerHint || ''} className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 items-stretch">
                                     <div
                                         data-testid="transcript-cell"
                                         className="relative min-w-0 rounded-xl border border-slate-200 bg-slate-50/80 p-4 text-sm leading-relaxed text-slate-900 shadow-sm md:text-base"
                                     >
-                                        <div className="mb-2 text-[10px] font-black uppercase tracking-wide text-slate-500">
-                                            {item.sourceKind === 'image'
-                                                ? (uiLangCode === 'ko' ? '이미지에서 읽음' : 'From image')
-                                                : (uiLangCode === 'ko' ? '전사' : 'Transcript')}
-                                            {item.sourceLanguage ? ' · ' + item.sourceLanguage : ''}
+                                        <div className="mb-2 flex items-center gap-2 text-[10px] font-black uppercase tracking-wide text-slate-500">
+                                            <span>
+                                                {item.sourceKind === 'image'
+                                                    ? (uiLangCode === 'ko' ? '이미지에서 읽음' : 'From image')
+                                                    : (uiLangCode === 'ko' ? '전사' : 'Transcript')}
+                                                {item.sourceLanguage ? ' · ' + item.sourceLanguage : ''}
+                                            </span>
+                                            {item.speakerHint && (
+                                                <span
+                                                    data-testid="speaker-badge"
+                                                    className={`rounded-full px-2 py-0.5 text-[10px] font-black normal-case tracking-normal ${
+                                                        item.speakerHint === 'me'
+                                                            ? 'bg-indigo-100 text-indigo-700'
+                                                            : 'bg-emerald-100 text-emerald-700'
+                                                    }`}
+                                                >
+                                                    {item.speakerHint === 'me'
+                                                        ? (uiLangCode === 'ko' ? '나' : 'Me')
+                                                        : (uiLangCode === 'ko' ? '상대' : 'Counterpart')}
+                                                </span>
+                                            )}
                                         </div>
                                         {isEditingOriginal ? (
                                             <div className="flex h-full flex-col gap-3">
