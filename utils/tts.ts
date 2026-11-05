@@ -1,5 +1,5 @@
 import { base64ToUint8Array, arrayBufferToBase64 } from './audioUtils';
-import { buildAiHeaders, bumpTrialCount, isTrialCall } from './apiKey';
+import { buildAiHeaders, bumpTrialCount, isTrialCall, rememberTrialRemaining } from './apiKey';
 
 const MAX_TTS_CHARS = 200;
 
@@ -89,6 +89,7 @@ export const generateTtsBase64 = async (
                 headers,
                 body: JSON.stringify({ text: chunk, voiceName, model }),
             });
+            rememberTrialRemaining(res.headers);
             const json = await res.json().catch(() => ({}));
             if (!res.ok) {
                 const errorMessage = (json as any)?.error || 'TTS 요청에 실패했습니다.';

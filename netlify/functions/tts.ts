@@ -23,8 +23,8 @@ export const handler = async (event: any) => {
   }
 
   // #111: 익명 사용량 보호 — "전체 듣기"의 문장 묶음 버스트를 흡수하면서 남용은 429.
-  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.tts);
-  if (limited) return limited;
+  const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.tts, 'tts');
+  if (gate.blocked) return gate.blocked;
 
   const userApiKey = event.headers['x-user-api-key'];
   const apiKey = userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
@@ -80,7 +80,7 @@ export const handler = async (event: any) => {
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...gate.headers },
       body: JSON.stringify({ audioBase64: base64Audio }),
     };
   } catch (error) {

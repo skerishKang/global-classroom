@@ -21,8 +21,8 @@ export const handler = async (event: any) => {
   }
 
   // #111: 익명 사용량 보호 — 버스트·분당 예산 초과 시 429와 재시도 시간을 돌려준다.
-  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.liveToken);
-  if (limited) return limited;
+  const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.liveToken, 'live-token');
+  if (gate.blocked) return gate.blocked;
 
   const tooLarge = enforceBodySize(event, MAX_LIVE_TOKEN_BODY_BYTES);
   if (tooLarge) return tooLarge;
@@ -68,7 +68,7 @@ export const handler = async (event: any) => {
 
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...gate.headers },
       body: JSON.stringify({ token: token.name, expireTime }),
     };
   } catch (error) {

@@ -6,7 +6,7 @@ import {
     jsonResponse,
     readJsonBody,
 } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate, withTrialHeaders } from './_rateLimit';
 import {
     ProviderTelemetry,
     createProviderBudget,
@@ -161,8 +161,8 @@ export const handler = async (event: any) => {
     }
 
     // #111: 익명 사용량 보호 — 정상 면접 턴의 연속 호출을 해치지 않는 선의 버스트·분당 예산.
-    const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.interviewAnswer);
-    if (limited) return limited;
+    const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.interviewAnswer, 'interview-answer');
+    if (gate.blocked) return gate.blocked;
 
     // Same key resolution as translate.ts: a personal key supplies Google
     // credentials, Groq runs on the server-side key (#32 forwarding contract).
@@ -222,7 +222,7 @@ export const handler = async (event: any) => {
 
     const serve = (payload: InterviewAnswerPayload, provider: ProviderName, model: string) => {
         console.info(telemetry.summary({ statusCode: 200, provider, model }));
-        return jsonResponse(200, payload);
+        return withTrialHeaders(jsonResponse(200, payload), gate);
     };
 
     // 1) Groq first: lowest latency for the interview path.

@@ -1,7 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import Groq from 'groq-sdk';
 import { errorResponse, enforceTextLimit, jsonResponse, readJsonBody, safeErrorDetail } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate, withTrialHeaders } from './_rateLimit';
 
 export const SESSION_METADATA_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite'] as const;
 export const MAX_SESSION_METADATA_INPUT = 40_000;
@@ -22,8 +22,8 @@ export function parseSessionMetadata(raw: string): { title: string; summary: str
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') return errorResponse(405, 'Method not allowed');
   // #111: 익명 사용량 보호 — 세션 요약 생성 호출에 버스트·분당 예산을 둔다.
-  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.sessionMetadata);
-  if (limited) return limited;
+  const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.sessionMetadata, 'session-metadata');
+  if (gate.blocked) return gate.blocked;
   const parsedBody = readJsonBody(event);
   if (parsedBody.ok === false) return parsedBody.response;
 
@@ -65,7 +65,7 @@ ${history}`;
       });
       const result = parseSessionMetadata(reply.text || '');
       if (!result) throw new Error('Missing JSON title/summary');
-      return jsonResponse(200, result);
+      return withTrialHeaders(jsonResponse(200, result), gate);
     } catch (error) {
       lastDetail = safeErrorDetail(error);
       console.error(`session-metadata: ${model} failed:`, lastDetail);
@@ -88,7 +88,7 @@ ${history}`;
         } as any);
         const result = parseSessionMetadata(response.choices?.[0]?.message?.content || '');
         if (!result) throw new Error('Missing JSON title/summary');
-        return jsonResponse(200, result);
+        return withTrialHeaders(jsonResponse(200, result), gate);
       } catch (error) {
         lastDetail = safeErrorDetail(error);
         console.error(`session-metadata: Groq ${model} failed:`, lastDetail);

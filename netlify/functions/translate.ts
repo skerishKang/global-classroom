@@ -141,8 +141,8 @@ export const handler = async (event: any) => {
 
   // #111: 익명 사용량 보호 — 발화마다 번역 호출이 나가므로 정상 면접 턴이 여유 있게
   // 통과하는 선에서 버스트·분당 예산을 둔다.
-  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.translate);
-  if (limited) return limited;
+  const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.translate, 'translate');
+  if (gate.blocked) return gate.blocked;
 
   const userApiKey = event.headers['x-user-api-key'];
   const geminiApiKey = userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
@@ -207,7 +207,7 @@ export const handler = async (event: any) => {
     console.info(telemetry.summary({ statusCode: 200, provider, model }));
     return {
       statusCode: 200,
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...gate.headers },
       body: JSON.stringify({ translated, model, provider }),
     };
   };

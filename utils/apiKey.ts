@@ -10,6 +10,7 @@ const DEVICE_ID_STORAGE_KEY = 'padiem.deviceId';
 const TRIAL_SESSION_STORAGE_KEY = 'padiem.trialSession';
 const CLASS_API_KEY_STORAGE_KEY = 'padiem.classApiKey';
 const TRIAL_COUNT_STORAGE_KEY = 'padiem.trialCount';
+const TRIAL_SERVER_REMAINING_STORAGE_KEY = 'padiem.trialServerRemaining';
 
 /** 서버 상수와 동일(대표 확정 전 기본값): 기기 누적 맛보기 한도. */
 export const TRIAL_DEVICE_LIMIT = 30;
@@ -66,8 +67,9 @@ export function setClassApiKey(value: string): void {
     } else {
       localStorage.removeItem(CLASS_API_KEY_STORAGE_KEY);
     }
-    // A key arriving makes the local trial counter meaningless; clear it.
+    // A key arriving makes the trial counters meaningless; clear them.
     localStorage.removeItem(TRIAL_COUNT_STORAGE_KEY);
+    localStorage.removeItem(TRIAL_SERVER_REMAINING_STORAGE_KEY);
   } catch {
     /* 사파리 사생모드 등: 설정은 유지되지 않지만 호출은 계속된다 */
   }
@@ -113,7 +115,34 @@ export function bumpTrialCount(): number {
   }
 }
 
+/**
+ * Remember the server's authoritative remaining count (#120 observability).
+ * The server sends x-trial-remaining only on shared-trial responses, so a
+ * keyed response can never overwrite the trial display.
+ */
+export function rememberTrialRemaining(headers: { get(name: string): string | null }): void {
+  try {
+    const raw = headers.get('x-trial-remaining');
+    if (raw === null) return;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) return;
+    localStorage.setItem(TRIAL_SERVER_REMAINING_STORAGE_KEY, String(Math.floor(value)));
+  } catch {
+    /* 저장소가 없으면 화면은 기존 로컬 계산으로 남는다. */
+  }
+}
+
+/** Prefer the server's last count; fall back to the local optimistic counter. */
 export function trialRemaining(): number {
+  try {
+    const stored = localStorage.getItem(TRIAL_SERVER_REMAINING_STORAGE_KEY);
+    if (stored !== null) {
+      const value = Number(stored);
+      if (Number.isFinite(value) && value >= 0) return Math.floor(value);
+    }
+  } catch {
+    /* fall through to the local counter */
+  }
   return Math.max(0, TRIAL_DEVICE_LIMIT - trialCount());
 }
 
