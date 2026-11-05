@@ -175,8 +175,15 @@ describe('#32 personal api keys stay local', () => {
 
     test('API_REQUEST_FORWARDING=UNCHANGED: x-user-api-key path stays intact', () => {
       // Browser -> /api/* serverless function forwarding was not part of #32 and must remain.
+      // 261105(#120): header selection moved to the single resolver in
+      // utils/apiKey.ts (personal > class > shared trial) — the hook calls it
+      // instead of embedding the header name, so the contract follows there.
+      const resolverSource = readSource('utils/apiKey.ts');
+      expect(resolverSource).toMatch(/x-user-api-key/);
+      expect(resolverSource).toMatch(/resolveApiKey/);
+
       const serviceSource = readSource('hooks/useTranslationService.ts');
-      expect(serviceSource).toMatch(/x-user-api-key/);
+      expect(serviceSource).toMatch(/buildAiHeaders/);
       expect(serviceSource).toMatch(/settings\.userApiKey/);
 
       const endpoints = ['translate', 'detect-language', 'summarize', 'vision', 'tts', 'live-token'];

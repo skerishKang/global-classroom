@@ -5,6 +5,7 @@ import {
   isAllowedString, readJsonBody, safeErrorDetail, ALLOWED_VISION_MODELS,
   MAX_LANGUAGE_CODE_CHARS, MAX_VISION_IMAGE_BYTES, MAX_VISION_BODY_BYTES,
 } from './_aiGuards';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 
 export const VISION_MODEL_ORDER = [
   'gemini-3.5-flash-lite', 'gemma-4-31b-it', 'gemma-4-26b-a4b-it',
@@ -27,6 +28,9 @@ export function parseVisionResult(raw: string): { originalText: string; translat
 
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') return errorResponse(405, 'Method not allowed');
+  // #111: 익명 사용량 보호 — 칠판 촬영(비전) 호출에 버스트·분당 예산을 둔다.
+  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.vision);
+  if (limited) return limited;
   const oversized = enforceBodySize(event, MAX_VISION_BODY_BYTES);
   if (oversized) return oversized;
   const payload = readJsonBody(event);

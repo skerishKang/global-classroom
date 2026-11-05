@@ -11,6 +11,7 @@ import {
     buildAnswerRequest,
     resolveAnswerTranslationTarget,
 } from '../utils/interviewAnswer';
+import { buildAiHeaders, bumpTrialCount, isTrialCall } from '../utils/apiKey';
 
 interface UseTranslationServiceProps {
     settings: AppSettings;
@@ -40,9 +41,14 @@ export function useTranslationService({
     historyRef.current = history;
 
     const postApi = useCallback(async <T,>(endpoint: string, body: any, options?: { signal?: AbortSignal }): Promise<T> => {
-        const headers: Record<string, string> = { "Content-Type": "application/json" };
-        if (settings.userApiKey) {
-            headers["x-user-api-key"] = settings.userApiKey;
+        // #120: personal key > class key > shared trial (device/session counted
+        // server-side). Header selection lives only in utils/apiKey.ts.
+        const headers: Record<string, string> = {
+            "Content-Type": "application/json",
+            ...buildAiHeaders(settings),
+        };
+        if (isTrialCall(settings)) {
+            bumpTrialCount();
         }
         const resp = await fetch(`/api/${endpoint}`, {
             method: "POST",

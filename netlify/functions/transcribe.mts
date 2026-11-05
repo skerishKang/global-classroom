@@ -1,12 +1,17 @@
 import { redactSecrets } from './_aiGuards';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 
 const STT_MODELS = ['whisper-large-v3-turbo', 'whisper-large-v3'];
 const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
+// #111: 플랫폼 함수 창(약 10초) 안에서 외부 STT 호출 전체를 묶는다. 오래 걸리는
+// 업스트림은 남은 예산만큼만 시도되고, 예산이 끝나면 명확한 504로 끝난다.
+const STT_TOTAL_BUDGET_MS = 9_000;
+const STT_MIN_ATTEMPT_MS = 1_500;
 
-function json(status: number, body: Record<string, unknown>) {
+function json(status: number, body: Record<string, unknown>, headers: Record<string, string> = {}) {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...headers },
   });
 }
 
@@ -27,11 +32,115 @@ function parseAudioDataUrl(dataUrl: string) {
   return { mimeType, bytes, extension };
 }
 
+export type SttOutcome = 'http_error' | 'empty' | 'timeout' | 'network';
+
+export interface SttAttemptInput {
+  apiKey: string;
+  model: string;
+  audio: { mimeType: string; bytes: Buffer; extension: string };
+  language: string;
+  timeoutMs: number;
+  fetchImpl?: typeof fetch;
+}
+
+export type SttAttemptResult =
+  | { ok: 'ok'; text: string }
+  | { ok: 'failed'; outcome: SttOutcome; error: string };
+
+/**
+ * #111: 한 모델의 외부 STT 호출을 시간 제한 안에 묶는다. AbortSignal을 업스트림에
+ * 넘겨 멈춘 요청이 실제로 취소되게 하고, 동시에 로컬 마감과 경주해 신호를 무시하는
+ * 구현에도 경계가 유효하도록 한다(_providerBudget.runWithDeadline과 같은 이중 잠금).
+ */
+export async function runSttAttempt(input: SttAttemptInput): Promise<SttAttemptResult> {
+  const controller = new AbortController();
+  let timedOut = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(Object.assign(new Error(`STT 시간 제한(${input.timeoutMs}ms)을 초과했습니다.`), { name: 'AbortError' }));
+    }, input.timeoutMs);
+  });
+
+  const attempt = async (): Promise<string | null> => {
+    const doFetch = input.fetchImpl ?? fetch;
+    const form = new FormData();
+    form.append(
+      'file',
+      new Blob([input.audio.bytes], { type: input.audio.mimeType }),
+      `interview-audio.${input.audio.extension}`
+    );
+    form.append('model', input.model);
+    if (input.language !== 'auto') {
+      form.append('language', input.language);
+    }
+    form.append('response_format', 'json');
+    form.append('temperature', '0');
+
+    const response = await doFetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: form,
+      signal: controller.signal,
+    });
+
+    const data: any = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw Object.assign(
+        new Error(data?.error?.message || data?.error || `Groq STT HTTP ${response.status}`),
+        { sttOutcome: 'http_error' },
+      );
+    }
+
+    const text = typeof data?.text === 'string' ? data.text.trim() : '';
+    return text || null;
+  };
+
+  try {
+    const text = await Promise.race([attempt(), deadline]);
+    if (text === null) {
+      return { ok: 'failed', outcome: 'empty', error: `${input.model} returned an empty transcript` };
+    }
+    return { ok: 'ok', text };
+  } catch (error: any) {
+    if (timedOut) {
+      return { ok: 'failed', outcome: 'timeout', error: `STT 시간 제한(${input.timeoutMs}ms)을 초과했습니다.` };
+    }
+    if (error?.sttOutcome === 'http_error') {
+      return { ok: 'failed', outcome: 'http_error', error: redactSecrets(String(error.message || error)) };
+    }
+    return { ok: 'failed', outcome: 'network', error: redactSecrets(error?.message || String(error)) };
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    // 성공 경로에서도 늦게 도착하는 업스트림이 백그라운드에서 계속 도는 일을 막는다.
+    controller.abort();
+  }
+}
+
 export default async (req: Request) => {
   if (req.method !== 'POST') {
     return json(405, { error: '허용되지 않은 메서드입니다.' });
   }
 
+  // #111/#120: 사용량 보호 — 통합 게이트가 버스트·분당 예산과 함께 공용
+  // 맛보기(기기·세션 단위) 누적을 센다. 키가 있는 요청은 맛보기 대상이 아니다.
+  const limited = await enforceAiUsageGate(
+    { headers: Object.fromEntries(req.headers) } as any,
+    AI_RATE_LIMITS.transcribe,
+  );
+  if (limited) {
+    return json(
+      limited.statusCode,
+      JSON.parse(limited.body),
+      limited.headers,
+    );
+  }
+
+  const startedAt = Date.now();
   const groqApiKey = (globalThis as any).Netlify?.env?.get?.('GROQ_API_KEY') || '';
   if (!groqApiKey) {
     return json(500, { error: 'GROQ_API_KEY가 설정되지 않았습니다.' });
@@ -70,57 +179,36 @@ export default async (req: Request) => {
   }
 
   let lastError = '';
+  let lastOutcome: SttOutcome = 'network';
 
   for (const model of STT_MODELS) {
-    try {
-      const form = new FormData();
-      form.append(
-        'file',
-        new Blob([audio.bytes], { type: audio.mimeType }),
-        `interview-audio.${audio.extension}`
-      );
-      form.append('model', model);
-      if (language !== 'auto') {
-        form.append('language', language);
-      }
-      form.append('response_format', 'json');
-      form.append('temperature', '0');
+    // 남은 예산이 한 번의 시도도 못 하면 여기서 명확히 끝낸다(플랫폼 504보다 빠르고).
+    const remaining = STT_TOTAL_BUDGET_MS - (Date.now() - startedAt);
+    if (remaining < STT_MIN_ATTEMPT_MS) {
+      lastError = 'STT 시간 예산을 모두 사용했습니다.';
+      lastOutcome = 'timeout';
+      break;
+    }
 
-      const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${groqApiKey}`,
-        },
-        body: form,
-      });
-
-      const data: any = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        lastError = data?.error?.message || data?.error || `Groq STT HTTP ${response.status}`;
-        console.error(`transcribe: ${model} failed:`, redactSecrets(lastError));
-        continue;
-      }
-
-      const text = typeof data?.text === 'string' ? data.text.trim() : '';
-      if (!text) {
-        lastError = `${model} returned an empty transcript`;
-        continue;
-      }
-
+    const result = await runSttAttempt({ apiKey: groqApiKey, model, audio, language, timeoutMs: remaining });
+    if (result.ok === 'ok') {
       return json(200, {
-        text,
+        text: result.text,
         provider: 'groq',
         model,
       });
-    } catch (error: any) {
-      lastError = error?.message || String(error);
-      console.error(`transcribe: ${model} failed:`, redactSecrets(lastError));
     }
+
+    lastError = result.error;
+    lastOutcome = result.outcome;
+    console.error(`transcribe: ${model} failed (${result.outcome}):`, redactSecrets(result.error));
   }
 
-  return json(502, {
+  const status = lastOutcome === 'timeout' ? 504 : 502;
+  return json(status, {
     error: '음성 전사에 실패했습니다.',
     detail: redactSecrets(lastError),
+    outcome: lastOutcome,
   });
 };
 

@@ -38,6 +38,13 @@ import {
   ANSWER_TOTAL_BUDGET_MS,
   handler,
 } from '../../netlify/functions/interview-answer';
+import { resetRateLimitsForTests } from '../../netlify/functions/_rateLimit';
+
+// #111: usage-gate buckets live in module state. Reset them before every test
+// so handler tests cannot exhaust each other's burst allowance.
+beforeEach(() => {
+  resetRateLimitsForTests();
+});
 
 const GROQ_ORDER = ['openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b'];
 const GOOGLE_ORDER = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'];

@@ -58,6 +58,13 @@ import { handler as translateHandler } from '../../netlify/functions/translate';
 import { handler as ttsHandler } from '../../netlify/functions/tts';
 import { handler as visionHandler } from '../../netlify/functions/vision';
 import transcribeHandler from '../../netlify/functions/transcribe.mts';
+import { resetRateLimitsForTests } from '../../netlify/functions/_rateLimit';
+
+// #111: usage-gate buckets live in module state. Reset them before every test
+// so handler tests cannot exhaust each other's burst allowance.
+beforeEach(() => {
+  resetRateLimitsForTests();
+});
 
 const GROQ_STT_MAX_AUDIO_BYTES = 3 * 1024 * 1024;
 

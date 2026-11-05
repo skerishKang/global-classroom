@@ -3,6 +3,7 @@ import { AppSettings, AudioInputMode } from '../types';
 import { TRANSLATION_MODELS, DEFAULT_TRANSLATION_MODEL, SUPPORTED_LANGUAGES } from '../constants';
 import { MIN_INTERVIEW_TARGETS } from '../utils/interviewLanguageRouting';
 import { isSystemAudioInputSupported } from '../utils/inputSource';
+import { getClassApiKey, setClassApiKey, trialRemaining } from '../utils/apiKey';
 
 interface SettingsModalProps {
     isOpen: boolean;
@@ -48,6 +49,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     const openConfirm = (title: string, desc: string | undefined, onConfirm: () => void) => {
         setConfirmState({ open: true, title, desc, onConfirm });
     };
+
+    // #120: 반 키는 개인 키와 같은 #32 계약(브라우저 저장만)으로 둔다. 서버는
+    // 개인/반을 구분하지 않으므로 이 값도 x-user-api-key로만 이동한다.
+    const [classApiKeyDraft, setClassApiKeyDraft] = useState(() => getClassApiKey());
+    const trialLeft = trialRemaining();
+    const trialInUse = !((settings.userApiKey || '').trim() || classApiKeyDraft.trim());
 
     const closeConfirm = () => setConfirmState(prev => ({ ...prev, open: false }));
 
@@ -367,6 +374,41 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 키는 로컬에만 저장됩니다. 슬롯에서 “사용”을 누르면 즉시 적용됩니다.
                             </p>
                         </div>
+
+                        {/* 반 API 키(#120): 교사가 배포한 키 — 브라우저에만 저장, 개인 키보다 우선순위 낮음 */}
+                        <div className="space-y-2 pt-4 border-t border-gray-100">
+                            <div className="text-sm font-bold text-gray-800">반 API Key (클래스)</div>
+                            <div className="flex gap-2">
+                                <input
+                                    name="classApiKey"
+                                    type="password"
+                                    placeholder="교사가 배포한 반 키 입력"
+                                    value={classApiKeyDraft}
+                                    onChange={(e) => setClassApiKeyDraft(e.target.value)}
+                                    className="flex-1 px-4 py-3 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                                />
+                                <button
+                                    onClick={() => {
+                                        setClassApiKey(classApiKeyDraft);
+                                        openConfirm('반 키 저장', '이 브라우저에 반 키를 저장했습니다.', () => { });
+                                    }}
+                                    className="px-3 py-3 rounded-xl text-xs font-bold border border-indigo-200 text-indigo-600 hover:bg-indigo-50 active:scale-95 transition"
+                                >
+                                    저장
+                                </button>
+                            </div>
+                            <p className="text-[10px] text-gray-400 leading-relaxed">
+                                교사가 반 전체에 배포한 키입니다. 같은 반 학생이 함께 쓰며, 개인 키를 설정하면 개인 키가 우선합니다. 반 키도 이 브라우저에만 저장됩니다.
+                            </p>
+                        </div>
+
+                        {trialInUse && (
+                            <div className="pt-2">
+                                <p className="text-[10px] text-gray-500 leading-relaxed">
+                                    공용 체험 키 사용 중 — 남은 체험 횟수: <span className="font-bold">{trialLeft}회</span>. 소진되면 개인 키 또는 반 키 등록이 필요합니다.
+                                </p>
+                            </div>
+                        )}
                     </div>
                 </div>
                 {confirmState.open && (

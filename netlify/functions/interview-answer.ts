@@ -6,6 +6,7 @@ import {
     jsonResponse,
     readJsonBody,
 } from './_aiGuards';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 import {
     ProviderTelemetry,
     createProviderBudget,
@@ -158,6 +159,10 @@ export const handler = async (event: any) => {
     if (event.httpMethod !== 'POST') {
         return errorResponse(405, '허용되지 않은 메서드입니다.');
     }
+
+    // #111: 익명 사용량 보호 — 정상 면접 턴의 연속 호출을 해치지 않는 선의 버스트·분당 예산.
+    const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.interviewAnswer);
+    if (limited) return limited;
 
     // Same key resolution as translate.ts: a personal key supplies Google
     // credentials, Groq runs on the server-side key (#32 forwarding contract).
