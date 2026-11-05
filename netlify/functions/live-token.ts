@@ -9,7 +9,7 @@ import {
     ALLOWED_LIVE_MODELS,
     MAX_LIVE_TOKEN_BODY_BYTES,
 } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceRateLimit } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') {
@@ -21,7 +21,7 @@ export const handler = async (event: any) => {
   }
 
   // #111: 익명 사용량 보호 — 버스트·분당 예산 초과 시 429와 재시도 시간을 돌려준다.
-  const limited = enforceRateLimit(event, AI_RATE_LIMITS.liveToken);
+  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.liveToken);
   if (limited) return limited;
 
   const tooLarge = enforceBodySize(event, MAX_LIVE_TOKEN_BODY_BYTES);

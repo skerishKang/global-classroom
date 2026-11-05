@@ -9,7 +9,7 @@ import {
     ALLOWED_TTS_VOICES,
     MAX_TTS_TEXT_CHARS,
 } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceRateLimit } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 
 const DEFAULT_TTS_MODEL = 'gemini-2.5-flash-preview-tts';
 
@@ -23,7 +23,7 @@ export const handler = async (event: any) => {
   }
 
   // #111: 익명 사용량 보호 — "전체 듣기"의 문장 묶음 버스트를 흡수하면서 남용은 429.
-  const limited = enforceRateLimit(event, AI_RATE_LIMITS.tts);
+  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.tts);
   if (limited) return limited;
 
   const userApiKey = event.headers['x-user-api-key'];

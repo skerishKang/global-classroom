@@ -12,7 +12,7 @@ import {
     MAX_TRANSLATE_BODY_BYTES,
     MAX_TRANSLATE_TEXT_CHARS,
 } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceRateLimit } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 import {
   TranslationTelemetry,
   classifyProviderError,
@@ -141,7 +141,7 @@ export const handler = async (event: any) => {
 
   // #111: 익명 사용량 보호 — 발화마다 번역 호출이 나가므로 정상 면접 턴이 여유 있게
   // 통과하는 선에서 버스트·분당 예산을 둔다.
-  const limited = enforceRateLimit(event, AI_RATE_LIMITS.translate);
+  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.translate);
   if (limited) return limited;
 
   const userApiKey = event.headers['x-user-api-key'];

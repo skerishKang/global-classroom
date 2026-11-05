@@ -18,6 +18,7 @@
 // arrives without any usable identity shares one tight 'unknown' bucket —
 // fail-closed for the expensive paths instead of silently unlimited.
 
+import { createHash } from 'crypto';
 import { errorResponse } from './_aiGuards';
 import type { AiJsonResponse } from './_aiGuards';
 
@@ -186,4 +187,171 @@ export function enforceRateLimit(
   const key = clientKeyFromHeaders((name) => event?.headers?.[name]);
   const decision = consumeRateLimit(key, rule, now);
   return decision.allowed ? null : rateLimitResponse(decision);
+}
+
+// ---- #120: 개인 키 > 반 키 > 공용 맛보기. 맛보기는 기기·세션 단위로 센다. ----
+// 대표 결정(2026-11-05 08:17, #120 댓글 6644758758): IP가 아니라 기기·세션 단위
+// (교실은 한 반이 같은 IP를 쓴다). 키가 있는 요청(개인·반)은 맛보기 한도 밖이다.
+
+export const USER_KEY_HEADER = 'x-user-api-key';
+export const DEVICE_ID_HEADER = 'x-device-id';
+export const TRIAL_SESSION_HEADER = 'x-trial-session';
+/** 대표 확정 전 기본값(#120): 기기 누적 30회, 세션 10회. 상수 하나로만 존재한다. */
+export const TRIAL_DEVICE_LIMIT = 30;
+export const TRIAL_SESSION_LIMIT = 10;
+
+const DEVICE_TOKEN_RE = /^[A-Za-z0-9_-]{8,64}$/;
+
+/** 기기 번호·세션 번호는 그 원문을 저장하지 않고 해시해서만 쓴다. */
+export function hashedTokenFromHeaders(getHeader: (name: string) => string | undefined | null, header: string): string | null {
+  const raw = getHeader(header);
+  if (typeof raw !== 'string' || !DEVICE_TOKEN_RE.test(raw.trim())) return null;
+  return createHash('sha256').update(raw.trim()).digest('hex').slice(0, 32);
+}
+
+type TrialRecord = { count: number; last: string };
+
+/** 기기 누적 카운터: Netlify Blobs(런타임 내장) 우선, 불가하면 인스턴스 메모리. */
+const memoryDeviceTrials = new Map<string, TrialRecord>();
+let trialStorePromise: Promise<any | null> | null = null;
+
+async function trialStore(): Promise<any | null> {
+  if (trialStorePromise === null) {
+    // Netlify Functions 런타임은 @netlify/blobs를 내장 제공한다(의존성 추가
+    // 불필요). 로컬 시험처럼 모듈이 없으면 null로 귀결되고 인스턴스 메모리가
+    // 대신한다(PR 본문 한계 명시).
+    // @ts-expect-error - the module ships with the Netlify Functions runtime.
+    trialStorePromise = import('@netlify/blobs')
+      .then((mod: any) => mod.getStore({ name: 'padiem-trial-usage', consistency: 'strong' }))
+      .catch(() => null);
+  }
+  return trialStorePromise;
+}
+
+async function readDeviceTrial(key: string): Promise<TrialRecord> {
+  const store = await trialStore();
+  if (store) {
+    try {
+      const raw = await store.get(key, { type: 'json' });
+      if (raw && typeof raw.count === 'number' && raw.count >= 0) return raw;
+    } catch { /* 읽기 실패는 메모리 값으로 계속한다. */ }
+  }
+  return memoryDeviceTrials.get(key) || { count: 0, last: '' };
+}
+
+async function writeDeviceTrial(key: string, record: TrialRecord): Promise<void> {
+  memoryDeviceTrials.set(key, record);
+  const store = await trialStore();
+  if (store) {
+    try { await store.setJSON(key, record); } catch { /* 메모리 값은 이미 갱신됐다. */ }
+  }
+}
+
+/** 세션 카운터: 세션은 짧아 메모리만으로 충분하다(기기 누적이 실 게이트). */
+const memorySessionTrials = new Map<string, { count: number; startedAt: number }>();
+
+/** 시험 전용: 카운터 상태를 모두 비운다. */
+export function resetTrialCountersForTests(): void {
+  memoryDeviceTrials.clear();
+  memorySessionTrials.clear();
+  trialStorePromise = null;
+  trialChains.clear();
+}
+
+const trialChains = new Map<string, Promise<number>>();
+
+/** 기기 누적 1회 소비. 같은 기기의 동시 호출은 직렬화해 이중 가산을 막는다. */
+async function consumeDeviceTrial(key: string, now: number): Promise<number> {
+  const previous = trialChains.get(key) || Promise.resolve();
+  const run = previous.catch(() => undefined).then(async () => {
+    const record = await readDeviceTrial(key);
+    const next: TrialRecord = { count: record.count + 1, last: new Date(now).toISOString() };
+    await writeDeviceTrial(key, next);
+    return next.count;
+  });
+  trialChains.set(key, run);
+  run.catch(() => undefined); // 대기자가 없어도 예외가 무시되지 않게 한다.
+  trialChains.delete(key);
+  return run;
+}
+
+export interface TrialDecision {
+  allowed: boolean;
+  reason: 'device_limit' | 'session_limit' | null;
+  retryAfterSeconds: number;
+  /** 카운터가 실제로 저장된 곳. Blobs 불가 환경에서는 memory(PR 본문 한계 명시). */
+  storeMode: 'blobs' | 'memory' | 'unknown';
+}
+
+async function consumeTrialUsage(
+  deviceHash: string, sessionHash: string | null, now: number,
+): Promise<TrialDecision> {
+  const store = await trialStore();
+  const storeMode: 'blobs' | 'memory' = store ? 'blobs' : 'memory';
+
+  const deviceCount = await consumeDeviceTrial(`device:${deviceHash}`, now);
+  if (deviceCount > TRIAL_DEVICE_LIMIT) {
+    return { allowed: false, reason: 'device_limit', retryAfterSeconds: 3600, storeMode };
+  }
+
+  if (sessionHash) {
+    const sessionKey = `session:${deviceHash}:${sessionHash}`;
+    const row = memorySessionTrials.get(sessionKey) || { count: 0, startedAt: now };
+    row.count += 1;
+    memorySessionTrials.set(sessionKey, row);
+    if (row.count > TRIAL_SESSION_LIMIT) {
+      return { allowed: false, reason: 'session_limit', retryAfterSeconds: 3600, storeMode };
+    }
+  }
+  return { allowed: true, reason: null, retryAfterSeconds: 0, storeMode };
+}
+
+function trialExhaustedResponse(reason: 'device_limit' | 'session_limit'): AiJsonResponse {
+  return {
+    statusCode: 429,
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'no-store',
+      'Retry-After': '3600',
+    },
+    body: JSON.stringify({
+      error: '무료 체험 횟수를 모두 사용했습니다. 설정에서 개인 API 키를 등록하면 계속 사용할 수 있습니다.',
+      code: 'trial_exhausted',
+      reason,
+    }),
+  };
+}
+
+/**
+ * #120 통합 게이트. 메서드 검사 직후, 본문 해석보다 앞서 await로 호출한다.
+ * - x-user-api-key가 있으면(개인·반 키) #119의 버스트·분당 한도만 적용하고
+ *   맛보기 카운터는 세지 않는다 — 반 키는 개인 키와 동급 자격이다.
+ * - 키가 없으면 공용 맛보기: 기기 번호가 있으면 기기 버스트 + 기기 누적(30)·
+ *   세션(10) 카운터, 기기 번호가 없으면 IP 보조 버킷만(누적은 미적용).
+ * - 한도를 넘지 않았으면 null(계속 진행), 넘었으면 429 응답을 돌려준다.
+ */
+export async function enforceAiUsageGate(
+  event: any,
+  rule: RateLimitRule,
+  now: () => number = Date.now,
+): Promise<AiJsonResponse | null> {
+  const getHeader = (name: string) => event?.headers?.[name];
+  const hasUserKey = typeof getHeader(USER_KEY_HEADER) === 'string'
+    && getHeader(USER_KEY_HEADER).trim() !== '';
+  const deviceHash = hashedTokenFromHeaders(getHeader, DEVICE_ID_HEADER);
+  const sessionHash = deviceHash ? hashedTokenFromHeaders(getHeader, TRIAL_SESSION_HEADER) : null;
+
+  const ipKey = clientKeyFromHeaders(getHeader);
+  // 기기 없는 요청은 #119와 같은 IP 버킷 키를 그대로 쓴다(보조 버킷 — 사전
+  // 충전·운영 관찰이 같은 네임스페이스를 유지한다).
+  const burstKey = hasUserKey ? `keyed:${ipKey}`
+    : deviceHash ? `device:${deviceHash}`
+    : ipKey;
+  const decision = consumeRateLimit(burstKey, rule, now);
+  if (!decision.allowed) return rateLimitResponse(decision);
+
+  if (hasUserKey || !deviceHash) return null;
+  const trial = await consumeTrialUsage(deviceHash, sessionHash, now());
+  if (trial.allowed) return null;
+  return trialExhaustedResponse(trial.reason as 'device_limit' | 'session_limit');
 }

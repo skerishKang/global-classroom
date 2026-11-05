@@ -1,4 +1,5 @@
 import { base64ToUint8Array, arrayBufferToBase64 } from './audioUtils';
+import { buildAiHeaders, bumpTrialCount, isTrialCall } from './apiKey';
 
 const MAX_TTS_CHARS = 200;
 
@@ -73,12 +74,15 @@ export const generateTtsBase64 = async (
         const pcmChunks: Uint8Array[] = [];
 
         for (const chunk of chunks) {
-            // Key policy parity with the in-app TTS path (#32/#35): a personal
-            // key set in the browser travels as x-user-api-key; without one the
-            // server env fallback applies.
-            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-            if (userApiKey) {
-                headers['x-user-api-key'] = userApiKey;
+            // Key policy parity with the in-app TTS path (#32/#120): personal
+            // key > class key > shared trial, all resolved in one place. The
+            // trial lane rides with device/session ids for the server counter.
+            const headers: Record<string, string> = {
+                'Content-Type': 'application/json',
+                ...buildAiHeaders({ userApiKey }),
+            };
+            if (isTrialCall({ userApiKey })) {
+                bumpTrialCount();
             }
             const res = await fetch('/api/tts', {
                 method: 'POST',

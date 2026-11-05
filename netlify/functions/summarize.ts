@@ -8,7 +8,7 @@ import {
     safeErrorDetail,
     MAX_SUMMARY_TEXT_CHARS,
 } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceRateLimit } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 
 // History summaries use the owner's chosen Gemma order (#76).
 const SUMMARY_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite'];
@@ -19,7 +19,7 @@ export const handler = async (event: any) => {
     }
 
     // #111: 익명 사용량 보호 — 요약은 비용이 큰 일회성 호출이라 한도를 더 타이트히 둔다.
-    const limited = enforceRateLimit(event, AI_RATE_LIMITS.summarize);
+    const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.summarize);
     if (limited) return limited;
 
     const userApiKey = event.headers['x-user-api-key'];

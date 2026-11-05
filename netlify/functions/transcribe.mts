@@ -1,5 +1,5 @@
 import { redactSecrets } from './_aiGuards';
-import { AI_RATE_LIMITS, clientKeyFromHeaders, consumeRateLimit } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
 
 const STT_MODELS = ['whisper-large-v3-turbo', 'whisper-large-v3'];
 const MAX_AUDIO_BYTES = 3 * 1024 * 1024;
@@ -126,21 +126,17 @@ export default async (req: Request) => {
     return json(405, { error: '허용되지 않은 메서드입니다.' });
   }
 
-  // #111: 익명 사용량 보호 — 파일 전사(transcribe-file)와 마찬가지로 비용이 큰
-  // 호출이다. 플랫폼 헤더로 만든 클라이언트 키에 버스트·분당 예산을 둔다.
-  const clientKey = clientKeyFromHeaders((name) => req.headers.get(name));
-  const decision = consumeRateLimit(clientKey, AI_RATE_LIMITS.transcribe);
-  if (!decision.allowed) {
+  // #111/#120: 사용량 보호 — 통합 게이트가 버스트·분당 예산과 함께 공용
+  // 맛보기(기기·세션 단위) 누적을 센다. 키가 있는 요청은 맛보기 대상이 아니다.
+  const limited = await enforceAiUsageGate(
+    { headers: Object.fromEntries(req.headers) } as any,
+    AI_RATE_LIMITS.transcribe,
+  );
+  if (limited) {
     return json(
-      429,
-      {
-        error: 'AI 기능 사용량이 일시적으로 제한에 도달했습니다. 잠시 후 다시 시도해 주세요.',
-        retryAfterSeconds: decision.retryAfterSeconds,
-      },
-      {
-        'Retry-After': String(Math.max(1, decision.retryAfterSeconds)),
-        'Cache-Control': 'no-store',
-      },
+      limited.statusCode,
+      JSON.parse(limited.body),
+      limited.headers,
     );
   }
 
