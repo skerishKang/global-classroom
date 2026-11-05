@@ -29,8 +29,8 @@ export function parseVisionResult(raw: string): { originalText: string; translat
 export const handler = async (event: any) => {
   if (event.httpMethod !== 'POST') return errorResponse(405, 'Method not allowed');
   // #111: 익명 사용량 보호 — 칠판 촬영(비전) 호출에 버스트·분당 예산을 둔다.
-  const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.vision);
-  if (limited) return limited;
+  const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.vision, 'vision');
+  if (gate.blocked) return gate.blocked;
   const oversized = enforceBodySize(event, MAX_VISION_BODY_BYTES);
   if (oversized) return oversized;
   const payload = readJsonBody(event);
@@ -100,7 +100,7 @@ export const handler = async (event: any) => {
       if (!parsed) throw new Error('Invalid vision JSON');
       return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...gate.headers },
         body: JSON.stringify(parsed),
       };
     } catch (error) {
@@ -127,7 +127,7 @@ export const handler = async (event: any) => {
       if (!parsed) throw new Error('Invalid Groq vision JSON');
       return {
         statusCode: 200,
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...gate.headers },
         body: JSON.stringify(parsed),
       };
     } catch (error) {

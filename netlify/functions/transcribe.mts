@@ -128,15 +128,16 @@ export default async (req: Request) => {
 
   // #111/#120: 사용량 보호 — 통합 게이트가 버스트·분당 예산과 함께 공용
   // 맛보기(기기·세션 단위) 누적을 센다. 키가 있는 요청은 맛보기 대상이 아니다.
-  const limited = await enforceAiUsageGate(
+  const gate = await enforceAiUsageGate(
     { headers: Object.fromEntries(req.headers) } as any,
     AI_RATE_LIMITS.transcribe,
+    'transcribe',
   );
-  if (limited) {
+  if (gate.blocked) {
     return json(
-      limited.statusCode,
-      JSON.parse(limited.body),
-      limited.headers,
+      gate.blocked.statusCode,
+      JSON.parse(gate.blocked.body),
+      gate.blocked.headers,
     );
   }
 
@@ -196,7 +197,7 @@ export default async (req: Request) => {
         text: result.text,
         provider: 'groq',
         model,
-      });
+      }, gate.headers);
     }
 
     lastError = result.error;
@@ -209,7 +210,7 @@ export default async (req: Request) => {
     error: '음성 전사에 실패했습니다.',
     detail: redactSecrets(lastError),
     outcome: lastOutcome,
-  });
+  }, gate.headers);
 };
 
 export const config = {

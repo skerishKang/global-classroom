@@ -8,7 +8,7 @@ import {
     safeErrorDetail,
     MAX_SUMMARY_TEXT_CHARS,
 } from './_aiGuards';
-import { AI_RATE_LIMITS, enforceAiUsageGate } from './_rateLimit';
+import { AI_RATE_LIMITS, enforceAiUsageGate, withTrialHeaders } from './_rateLimit';
 
 // History summaries use the owner's chosen Gemma order (#76).
 const SUMMARY_MODELS = ['gemma-4-31b-it', 'gemma-4-26b-a4b-it', 'gemini-2.5-flash-lite'];
@@ -19,8 +19,8 @@ export const handler = async (event: any) => {
     }
 
     // #111: 익명 사용량 보호 — 요약은 비용이 큰 일회성 호출이라 한도를 더 타이트히 둔다.
-    const limited = await enforceAiUsageGate(event, AI_RATE_LIMITS.summarize);
-    if (limited) return limited;
+    const gate = await enforceAiUsageGate(event, AI_RATE_LIMITS.summarize, 'summarize');
+    if (gate.blocked) return gate.blocked;
 
     const userApiKey = event.headers['x-user-api-key'];
     const apiKey = userApiKey || process.env.GEMINI_API_KEY || process.env.API_KEY;
@@ -78,7 +78,7 @@ export const handler = async (event: any) => {
                 throw new Error(`${model} returned an empty summary`);
             }
 
-            return jsonResponse(200, { summary: resultText });
+            return withTrialHeaders(jsonResponse(200, { summary: resultText }), gate);
         } catch (error) {
             lastDetail = safeErrorDetail(error);
             console.error(`summarize: ${model} failed:`, lastDetail);
@@ -100,7 +100,7 @@ export const handler = async (event: any) => {
                 const response = await groq.chat.completions.create(request);
                 const summary = response.choices?.[0]?.message?.content?.trim() || '';
                 if (!summary) throw new Error('empty summary');
-                return jsonResponse(200, { summary });
+                return withTrialHeaders(jsonResponse(200, { summary }), gate);
             } catch (error) {
                 lastDetail = safeErrorDetail(error);
                 console.error(`summarize: Groq ${model} failed:`, lastDetail);

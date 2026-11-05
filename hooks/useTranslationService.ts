@@ -11,7 +11,7 @@ import {
     buildAnswerRequest,
     resolveAnswerTranslationTarget,
 } from '../utils/interviewAnswer';
-import { buildAiHeaders, bumpTrialCount, isTrialCall } from '../utils/apiKey';
+import { buildAiHeaders, bumpTrialCount, isTrialCall, rememberTrialRemaining } from '../utils/apiKey';
 
 interface UseTranslationServiceProps {
     settings: AppSettings;
@@ -56,6 +56,9 @@ export function useTranslationService({
             body: JSON.stringify(body),
             signal: options?.signal,
         });
+        // The server's remaining count is authoritative when present; the
+        // local bump above only covers the window before the response.
+        rememberTrialRemaining(resp.headers);
         const text = await resp.text();
         if (!resp.ok) {
             // 서버가 반환한 에러 메시지와 status를 포함해 디버그
